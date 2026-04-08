@@ -1,0 +1,49 @@
+package jinn
+
+import (
+	"fmt"
+	"os/exec"
+	"strconv"
+	"strings"
+)
+
+func (e *Engine) listDir(args map[string]interface{}) string {
+	listPath := "."
+	if p, ok := args["path"].(string); ok && p != "" {
+		listPath = p
+	}
+	depth := 3
+	if d, ok := args["depth"].(float64); ok {
+		depth = int(d)
+	}
+	if depth < 1 {
+		depth = 1
+	}
+	if depth > 10 {
+		depth = 10
+	}
+
+	if _, err := e.checkPath(listPath); err != nil {
+		return fmt.Sprintf("[blocked: %s]", err)
+	}
+
+	out := &boundedWriter{limit: 1 << 20}
+	c := exec.Command("find", listPath, "-maxdepth", strconv.Itoa(depth), "-not", "-path", "*/.*")
+	c.Dir = e.workDir
+	c.Stderr = out
+	sortCmd := exec.Command("sort")
+	sortCmd.Stdin, _ = c.StdoutPipe()
+	sortCmd.Stdout = out
+	sortCmd.Stderr = out
+	sortCmd.Start()
+	c.Run()
+	sortCmd.Wait()
+	result := strings.TrimSpace(out.String())
+	if result == "" {
+		return "(empty directory)"
+	}
+	if out.Truncated() {
+		result += "\n[output truncated at 1 MB]"
+	}
+	return truncateOutput(result, 200)
+}
