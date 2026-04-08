@@ -20,12 +20,30 @@ func (e *Engine) resolvePath(p string) string {
 func (e *Engine) checkPath(p string) (string, error) {
 	resolved := e.resolvePath(p)
 
+	// Resolve symlinks to detect escape attempts.
+	// If the file doesn't exist, try the parent directory.
+	real, err := filepath.EvalSymlinks(resolved)
+	if err != nil {
+		if os.IsNotExist(err) {
+			parentReal, err2 := filepath.EvalSymlinks(filepath.Dir(resolved))
+			if err2 == nil {
+				real = filepath.Join(parentReal, filepath.Base(resolved))
+			} else {
+				// Parent doesn't exist either; use the cleaned path.
+				real = resolved
+			}
+		} else {
+			real = resolved
+		}
+	}
+
+	// Check sensitive segments on the resolved path.
 	for _, seg := range sensitiveSegments {
-		if strings.Contains(resolved, seg) {
+		if strings.Contains(real, seg) {
 			return "", fmt.Errorf("sensitive path: %s", p)
 		}
 	}
-	base := filepath.Base(resolved)
+	base := filepath.Base(real)
 	for _, dir := range sensitiveDirs {
 		if base == dir {
 			return "", fmt.Errorf("sensitive path: %s", p)
@@ -35,22 +53,9 @@ func (e *Engine) checkPath(p string) (string, error) {
 		return "", fmt.Errorf("sensitive path: %s", p)
 	}
 
-	if strings.Contains(resolved, "/..") {
-		return "", fmt.Errorf("unable to resolve path: %s", p)
-	}
-	fi, err := os.Lstat(resolved)
-	if err == nil && fi.Mode()&os.ModeSymlink != 0 {
-		target, _ := os.Readlink(resolved)
-		target = e.resolvePath(target)
-		if strings.Contains(target, "/..") {
-			return "", fmt.Errorf("unable to resolve symlink target: %s", p)
-		}
-		if !strings.HasPrefix(target, e.workDir+"/") && target != e.workDir {
-			return "", fmt.Errorf("%s is a symlink outside working directory", p)
-		}
-	}
-	if !strings.HasPrefix(resolved, e.workDir+"/") && resolved != e.workDir {
+	// Check workdir boundary on the resolved path.
+	if !strings.HasPrefix(real, e.workDir+"/") && real != e.workDir {
 		return "", fmt.Errorf("%s is outside working directory", p)
 	}
-	return resolved, nil
+	return real, nil
 }

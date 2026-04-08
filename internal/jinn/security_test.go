@@ -1,6 +1,7 @@
 package jinn
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -68,5 +69,17 @@ func TestCheckPath_SensitiveDirRoots(t *testing.T) {
 				t.Errorf("checkPath(%q) should have returned error for bare sensitive dir", p)
 			}
 		})
+	}
+}
+
+func TestCheckPath_SymlinkEscape(t *testing.T) {
+	t.Parallel()
+	e, dir := testEngine(t)
+	// Create a symlink inside workdir pointing outside.
+	target := t.TempDir() // different temp dir = outside workdir
+	os.Symlink(target, filepath.Join(dir, "escape"))
+	_, err := e.checkPath("escape/anything")
+	if err == nil {
+		t.Error("symlink escape should be blocked")
 	}
 }

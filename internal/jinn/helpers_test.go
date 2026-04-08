@@ -9,6 +9,12 @@ import (
 func testEngine(t *testing.T) (*Engine, string) {
 	t.Helper()
 	dir := t.TempDir()
+	// Resolve symlinks so the engine's workDir matches paths returned by
+	// filepath.EvalSymlinks in checkPath (critical on macOS where /var ->
+	// /private/var).
+	if real, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = real
+	}
 	return New(dir), dir
 }
 
