@@ -10,7 +10,10 @@ import (
 func TestWriteFile_Basic(t *testing.T) {
 	t.Parallel()
 	e, dir := testEngine(t)
-	result := e.writeFile(args("path", "out.txt", "content", "hello world"))
+	result, err := e.writeFile(args("path", "out.txt", "content", "hello world"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if !strings.Contains(result, "wrote 11 bytes") {
 		t.Errorf("expected 'wrote 11 bytes', got: %s", result)
 	}
@@ -23,7 +26,10 @@ func TestWriteFile_Basic(t *testing.T) {
 func TestWriteFile_CreatesParentDirs(t *testing.T) {
 	t.Parallel()
 	e, dir := testEngine(t)
-	result := e.writeFile(args("path", "a/b/c.txt", "content", "deep"))
+	result, err := e.writeFile(args("path", "a/b/c.txt", "content", "deep"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if !strings.Contains(result, "wrote") {
 		t.Errorf("expected success, got: %s", result)
 	}
@@ -36,7 +42,10 @@ func TestWriteFile_CreatesParentDirs(t *testing.T) {
 func TestWriteFile_NoLeftoverTemp(t *testing.T) {
 	t.Parallel()
 	e, dir := testEngine(t)
-	e.writeFile(args("path", "clean.txt", "content", "data"))
+	_, err := e.writeFile(args("path", "clean.txt", "content", "data"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	entries, _ := os.ReadDir(dir)
 	for _, entry := range entries {
 		if strings.HasPrefix(entry.Name(), ".jinn-") {
@@ -53,7 +62,10 @@ func TestWriteFile_UpdatesTracker(t *testing.T) {
 	e.readFile(args("path", "tracked.txt"))
 	e.writeFile(args("path", "tracked.txt", "content", "v2"))
 
-	result := e.writeFile(args("path", "tracked.txt", "content", "v3"))
+	result, err := e.writeFile(args("path", "tracked.txt", "content", "v3"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if strings.Contains(result, "blocked") {
 		t.Errorf("second write should not be blocked after tracker update, got: %s", result)
 	}

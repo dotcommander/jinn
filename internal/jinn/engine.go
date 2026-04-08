@@ -3,6 +3,7 @@ package jinn
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"runtime/debug"
 )
 
@@ -13,7 +14,12 @@ type Engine struct {
 }
 
 // New creates an Engine rooted at the given working directory.
+// The workDir is resolved via EvalSymlinks so that path boundary checks
+// work correctly on platforms where temp dirs are symlinks (e.g., macOS).
 func New(workDir string) *Engine {
+	if resolved, err := filepath.EvalSymlinks(workDir); err == nil {
+		workDir = resolved
+	}
 	return &Engine{workDir: workDir, tracker: newFileTracker()}
 }
 
@@ -21,21 +27,23 @@ func New(workDir string) *Engine {
 func (e *Engine) Dispatch(ctx context.Context, tool string, args map[string]interface{}) (string, error) {
 	switch tool {
 	case "run_shell":
-		return e.runShell(ctx, args), nil
+		return e.runShell(ctx, args)
 	case "read_file":
-		return e.readFile(args), nil
+		return e.readFile(args)
 	case "write_file":
-		return e.writeFile(args), nil
+		return e.writeFile(args)
 	case "edit_file":
-		return e.editFile(args), nil
+		return e.editFile(args)
 	case "multi_edit":
-		return e.multiEdit(args), nil
+		return e.multiEdit(args)
 	case "search_files":
-		return e.searchFiles(args), nil
+		return e.searchFiles(args)
 	case "stat_file":
-		return e.statFile(args), nil
+		return e.statFile(args)
 	case "list_dir":
-		return e.listDir(args), nil
+		return e.listDir(args)
+	case "list_tools":
+		return Schema, nil
 	default:
 		return "", fmt.Errorf("unknown tool: %s", tool)
 	}

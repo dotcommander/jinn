@@ -10,7 +10,10 @@ func TestSearchFiles_Basic(t *testing.T) {
 	e, dir := testEngine(t)
 	writeTestFile(t, dir, "a.go", "package main\nfunc hello() {}\n")
 	writeTestFile(t, dir, "b.go", "package main\nfunc world() {}\n")
-	result := e.searchFiles(args("pattern", "hello"))
+	result, err := e.searchFiles(args("pattern", "hello"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if !strings.Contains(result, "a.go") {
 		t.Errorf("expected a.go in results, got: %s", result)
 	}
@@ -19,9 +22,9 @@ func TestSearchFiles_Basic(t *testing.T) {
 func TestSearchFiles_InvalidRegex(t *testing.T) {
 	t.Parallel()
 	e, _ := testEngine(t)
-	result := e.searchFiles(args("pattern", "[invalid"))
-	if !strings.Contains(result, "invalid regex") {
-		t.Errorf("expected 'invalid regex', got: %s", result)
+	_, err := e.searchFiles(args("pattern", "[invalid"))
+	if err == nil || !strings.Contains(err.Error(), "invalid regex") {
+		t.Errorf("expected 'invalid regex' error, got: %v", err)
 	}
 }
 
@@ -29,7 +32,10 @@ func TestSearchFiles_CaseInsensitive(t *testing.T) {
 	t.Parallel()
 	e, dir := testEngine(t)
 	writeTestFile(t, dir, "ci.txt", "Hello World\n")
-	result := e.searchFiles(args("pattern", "hello", "case_insensitive", true))
+	result, err := e.searchFiles(args("pattern", "hello", "case_insensitive", true))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if !strings.Contains(result, "Hello") {
 		t.Errorf("expected case-insensitive match, got: %s", result)
 	}
@@ -40,7 +46,10 @@ func TestSearchFiles_IncludeFilter(t *testing.T) {
 	e, dir := testEngine(t)
 	writeTestFile(t, dir, "needle.go", "needle\n")
 	writeTestFile(t, dir, "needle.txt", "needle\n")
-	result := e.searchFiles(args("pattern", "needle", "include", "*.go"))
+	result, err := e.searchFiles(args("pattern", "needle", "include", "*.go"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if !strings.Contains(result, "needle.go") {
 		t.Errorf("expected needle.go, got: %s", result)
 	}

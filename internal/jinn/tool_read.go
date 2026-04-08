@@ -9,30 +9,30 @@ import (
 
 const maxFileSize = 50 << 20 // 50 MB
 
-func (e *Engine) readFile(args map[string]interface{}) string {
+func (e *Engine) readFile(args map[string]interface{}) (string, error) {
 	path, _ := args["path"].(string)
 	resolved, err := e.checkPath(path)
 	if err != nil {
-		return fmt.Sprintf("[blocked: %s]", err)
+		return "", fmt.Errorf("blocked: %s", err)
 	}
 
 	info, err := os.Stat(resolved)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return fmt.Sprintf("[error: file not found: %s]", path)
+			return "", fmt.Errorf("file not found: %s", path)
 		}
-		return fmt.Sprintf("[error: %s]", err)
+		return "", err
 	}
 	if !info.Mode().IsRegular() {
-		return fmt.Sprintf("[error: not a regular file: %s]", path)
+		return "", fmt.Errorf("not a regular file: %s", path)
 	}
 	if info.Size() > maxFileSize {
-		return fmt.Sprintf("[error: file too large: %d MB (max 50 MB)]", info.Size()>>20)
+		return "", fmt.Errorf("file too large: %d MB (max 50 MB)", info.Size()>>20)
 	}
 
 	data, err := os.ReadFile(resolved)
 	if err != nil {
-		return fmt.Sprintf("[error: %s]", err)
+		return "", err
 	}
 
 	e.tracker.record(resolved, info.ModTime())
@@ -42,7 +42,7 @@ func (e *Engine) readFile(args map[string]interface{}) string {
 		check = check[:512]
 	}
 	if strings.ContainsRune(string(check), 0) {
-		return fmt.Sprintf("[binary file: %d bytes]", len(data))
+		return fmt.Sprintf("[binary file: %d bytes]", len(data)), nil
 	}
 
 	startLine := 1
@@ -62,7 +62,7 @@ func (e *Engine) readFile(args map[string]interface{}) string {
 		total--
 	}
 	if startLine > total {
-		return fmt.Sprintf("[error: file has %d lines, start_line %d is past end]", total, startLine)
+		return "", fmt.Errorf("file has %d lines, start_line %d is past end", total, startLine)
 	}
 	if endLine > total {
 		endLine = total
@@ -78,5 +78,5 @@ func (e *Engine) readFile(args map[string]interface{}) string {
 		result += fmt.Sprintf("\n[file has %d lines; showing %d-%d. Use start_line=%d to continue]",
 			total, startLine, endLine, endLine+1)
 	}
-	return result
+	return result, nil
 }

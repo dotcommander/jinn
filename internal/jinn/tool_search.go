@@ -10,7 +10,7 @@ import (
 
 var grepExcludeDirs = []string{".git", "node_modules", "vendor", "__pycache__", ".cache", "dist", "build"}
 
-func (e *Engine) searchFiles(args map[string]interface{}) string {
+func (e *Engine) searchFiles(args map[string]interface{}) (string, error) {
 	pattern, _ := args["pattern"].(string)
 	searchPath := "."
 	if p, ok := args["path"].(string); ok && p != "" {
@@ -18,10 +18,10 @@ func (e *Engine) searchFiles(args map[string]interface{}) string {
 	}
 
 	if _, err := e.checkPath(searchPath); err != nil {
-		return fmt.Sprintf("[blocked: %s]", err)
+		return "", err
 	}
 	if _, err := regexp.Compile(pattern); err != nil {
-		return fmt.Sprintf("[error: invalid regex: %s]", err)
+		return "", fmt.Errorf("invalid regex: %s", err)
 	}
 
 	grepArgs := []string{"-r", "-n"}
@@ -57,5 +57,5 @@ func (e *Engine) searchFiles(args map[string]interface{}) string {
 	if out.Truncated() {
 		raw += "\n[output truncated at 1 MB]"
 	}
-	return truncateOutput(raw, 100)
+	return truncateOutput(raw, 100), nil
 }

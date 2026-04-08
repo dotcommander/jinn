@@ -34,22 +34,22 @@ func (e *Engine) atomicWriteFile(resolved, content string) error {
 	return nil
 }
 
-func (e *Engine) writeFile(args map[string]interface{}) string {
+func (e *Engine) writeFile(args map[string]interface{}) (string, error) {
 	path, _ := args["path"].(string)
 	content, _ := args["content"].(string)
 
 	resolved, err := e.checkPath(path)
 	if err != nil {
-		return fmt.Sprintf("[blocked: %s]", err)
+		return "", err
 	}
 	if err := e.tracker.checkStale(resolved); err != nil {
-		return fmt.Sprintf("[blocked: %s]", err)
+		return "", err
 	}
 	if err := os.MkdirAll(filepath.Dir(resolved), 0755); err != nil {
-		return fmt.Sprintf("[error: mkdir: %s]", err)
+		return "", fmt.Errorf("mkdir: %s", err)
 	}
 	if err := e.atomicWriteFile(resolved, content); err != nil {
-		return fmt.Sprintf("[error: %s]", err)
+		return "", err
 	}
-	return fmt.Sprintf("wrote %d bytes to %s", len(content), path)
+	return fmt.Sprintf("wrote %d bytes to %s", len(content), path), nil
 }

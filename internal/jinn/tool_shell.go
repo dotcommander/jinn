@@ -7,10 +7,10 @@ import (
 	"os/exec"
 )
 
-func (e *Engine) runShell(ctx context.Context, args map[string]interface{}) string {
+func (e *Engine) runShell(ctx context.Context, args map[string]interface{}) (string, error) {
 	cmd, _ := args["command"].(string)
 	if dryRun, ok := args["dry_run"].(bool); ok && dryRun {
-		return fmt.Sprintf("[dry-run] would execute: %s", cmd)
+		return fmt.Sprintf("[dry-run] would execute: %s", cmd), nil
 	}
 
 	timeout := 30
@@ -57,5 +57,5 @@ func (e *Engine) runShell(ctx context.Context, args map[string]interface{}) stri
 	if exitCode == 124 {
 		raw += fmt.Sprintf("\n[killed: exceeded %ds timeout]", timeout)
 	}
-	return fmt.Sprintf("[exit: %d]\n%s", exitCode, truncateTail(raw, 200))
+	return fmt.Sprintf("[exit: %d]\n%s", exitCode, truncateTail(raw, 200)), nil
 }

@@ -6,25 +6,25 @@ import (
 	"strings"
 )
 
-func (e *Engine) editFile(args map[string]interface{}) string {
+func (e *Engine) editFile(args map[string]interface{}) (string, error) {
 	path, _ := args["path"].(string)
 	oldText, _ := args["old_text"].(string)
 	newText, _ := args["new_text"].(string)
 
 	resolved, err := e.checkPath(path)
 	if err != nil {
-		return fmt.Sprintf("[blocked: %s]", err)
+		return "", err
 	}
 	if err := e.tracker.checkStale(resolved); err != nil {
-		return fmt.Sprintf("[blocked: %s]", err)
+		return "", err
 	}
 
 	data, err := os.ReadFile(resolved)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return fmt.Sprintf("[error: file not found: %s]", path)
+			return "", fmt.Errorf("file not found: %s", path)
 		}
-		return fmt.Sprintf("[error: %s]", err)
+		return "", err
 	}
 
 	content, bom := stripBom(string(data))
@@ -47,16 +47,16 @@ func (e *Engine) editFile(args map[string]interface{}) string {
 	}
 
 	if count == 0 {
-		return "[error: old_text not found in file]"
+		return "", fmt.Errorf("old_text not found in file")
 	}
 	if count > 1 {
-		return fmt.Sprintf("[error: old_text matches %d locations — must be unique. Add surrounding context to disambiguate]", count)
+		return "", fmt.Errorf("old_text matches %d locations — must be unique. Add surrounding context to disambiguate", count)
 	}
 
 	updated := bom + restoreLineEndings(strings.Replace(content, oldText, newText, 1), ending)
 
 	if err := e.atomicWriteFile(resolved, updated); err != nil {
-		return fmt.Sprintf("[error: %s]", err)
+		return "", err
 	}
 
 	oldLines := strings.Count(oldText, "\n") + 1
@@ -65,5 +65,5 @@ func (e *Engine) editFile(args map[string]interface{}) string {
 	if fuzzy {
 		result += " (fuzzy match: normalized whitespace/quotes)"
 	}
-	return result
+	return result, nil
 }

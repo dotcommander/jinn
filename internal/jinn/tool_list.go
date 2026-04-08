@@ -1,13 +1,12 @@
 package jinn
 
 import (
-	"fmt"
 	"os/exec"
 	"strconv"
 	"strings"
 )
 
-func (e *Engine) listDir(args map[string]interface{}) string {
+func (e *Engine) listDir(args map[string]interface{}) (string, error) {
 	listPath := "."
 	if p, ok := args["path"].(string); ok && p != "" {
 		listPath = p
@@ -24,7 +23,7 @@ func (e *Engine) listDir(args map[string]interface{}) string {
 	}
 
 	if _, err := e.checkPath(listPath); err != nil {
-		return fmt.Sprintf("[blocked: %s]", err)
+		return "", err
 	}
 
 	out := &boundedWriter{limit: 1 << 20}
@@ -40,10 +39,10 @@ func (e *Engine) listDir(args map[string]interface{}) string {
 	sortCmd.Wait()
 	result := strings.TrimSpace(out.String())
 	if result == "" {
-		return "(empty directory)"
+		return "(empty directory)", nil
 	}
 	if out.Truncated() {
 		result += "\n[output truncated at 1 MB]"
 	}
-	return truncateOutput(result, 200)
+	return truncateOutput(result, 200), nil
 }

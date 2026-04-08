@@ -136,6 +136,17 @@ const Schema = `[
         }
       }
     }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "list_tools",
+      "description": "List available tools and their descriptions.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
   }
 ]`
 
