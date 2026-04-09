@@ -3,6 +3,7 @@ package jinn
 import (
 	"context"
 	"fmt"
+	"os/exec"
 	"path/filepath"
 	"runtime/debug"
 )
@@ -11,6 +12,7 @@ import (
 type Engine struct {
 	workDir string
 	tracker *fileTracker
+	rgPath  string // path to rg binary, empty if unavailable
 }
 
 // New creates an Engine rooted at the given working directory.
@@ -20,7 +22,8 @@ func New(workDir string) *Engine {
 	if resolved, err := filepath.EvalSymlinks(workDir); err == nil {
 		workDir = resolved
 	}
-	return &Engine{workDir: workDir, tracker: newFileTracker()}
+	rgPath, _ := exec.LookPath("rg")
+	return &Engine{workDir: workDir, tracker: newFileTracker(), rgPath: rgPath}
 }
 
 // Dispatch routes a tool call to the appropriate handler.

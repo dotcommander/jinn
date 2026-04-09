@@ -24,23 +24,39 @@ func (e *Engine) searchFiles(args map[string]interface{}) (string, error) {
 		return "", fmt.Errorf("invalid regex: %s", err)
 	}
 
-	grepArgs := []string{"-r", "-n"}
-	for _, dir := range grepExcludeDirs {
-		grepArgs = append(grepArgs, "--exclude-dir="+dir)
+	var cmd string
+	var cmdArgs []string
+
+	if e.rgPath != "" {
+		cmd = e.rgPath
+		cmdArgs = []string{"-n", "--no-heading"}
+		for _, dir := range grepExcludeDirs {
+			cmdArgs = append(cmdArgs, "--glob=!"+dir)
+		}
+		if include, ok := args["include"].(string); ok && include != "" {
+			cmdArgs = append(cmdArgs, "--glob="+include)
+		}
+	} else {
+		cmd = "grep"
+		cmdArgs = []string{"-r", "-n"}
+		for _, dir := range grepExcludeDirs {
+			cmdArgs = append(cmdArgs, "--exclude-dir="+dir)
+		}
+		if include, ok := args["include"].(string); ok && include != "" {
+			cmdArgs = append(cmdArgs, "--include="+include)
+		}
 	}
-	if include, ok := args["include"].(string); ok && include != "" {
-		grepArgs = append(grepArgs, "--include="+include)
-	}
+
 	if ctx, ok := args["context_lines"].(float64); ok && int(ctx) > 0 {
-		grepArgs = append(grepArgs, "-C", strconv.Itoa(int(ctx)))
+		cmdArgs = append(cmdArgs, "-C", strconv.Itoa(int(ctx)))
 	}
 	if ci, ok := args["case_insensitive"].(bool); ok && ci {
-		grepArgs = append(grepArgs, "-i")
+		cmdArgs = append(cmdArgs, "-i")
 	}
-	grepArgs = append(grepArgs, "--", pattern, searchPath)
+	cmdArgs = append(cmdArgs, "--", pattern, searchPath)
 
 	out := &boundedWriter{limit: 1 << 20}
-	c := exec.Command("grep", grepArgs...)
+	c := exec.Command(cmd, cmdArgs...)
 	c.Dir = e.workDir
 	c.Stdout = out
 	c.Stderr = out

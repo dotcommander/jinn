@@ -7,8 +7,15 @@ import (
 )
 
 // atomicWriteFile writes content to resolved via temp+rename and records the new mtime.
+// It preserves existing file permissions and fsyncs before rename for crash safety.
 // Returns a non-nil error on failure; caller is responsible for user-facing formatting.
 func (e *Engine) atomicWriteFile(resolved, content string) error {
+	// Capture existing file permissions before overwriting.
+	perm := os.FileMode(0644)
+	if info, err := os.Stat(resolved); err == nil {
+		perm = info.Mode().Perm()
+	}
+
 	dir := filepath.Dir(resolved)
 	tmp, err := os.CreateTemp(dir, ".jinn-")
 	if err != nil {
@@ -19,6 +26,16 @@ func (e *Engine) atomicWriteFile(resolved, content string) error {
 		tmp.Close()
 		os.Remove(tmpPath)
 		return fmt.Errorf("write: %w", err)
+	}
+	if err := tmp.Chmod(perm); err != nil {
+		tmp.Close()
+		os.Remove(tmpPath)
+		return fmt.Errorf("chmod: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		os.Remove(tmpPath)
+		return fmt.Errorf("sync: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
 		os.Remove(tmpPath)
