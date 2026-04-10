@@ -2,10 +2,27 @@ package jinn
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 )
+
+// shellAllowList is the set of environment variables passed to shell subprocesses.
+// All other host variables (API keys, credentials, tokens) are excluded.
+var shellAllowList = []string{"PATH", "HOME", "LANG", "LC_ALL", "TERM", "USER", "LOGNAME", "TMPDIR", "TZ", "SHELL"}
+
+// shellEnv returns a minimal environment for shell commands, preventing
+// accidental leakage of host secrets (API keys, credentials) to the subprocess.
+func shellEnv() []string {
+	env := make([]string, 0, len(shellAllowList))
+	for _, key := range shellAllowList {
+		if v, ok := os.LookupEnv(key); ok {
+			env = append(env, key+"="+v)
+		}
+	}
+	return env
+}
 
 func (e *Engine) runShell(ctx context.Context, args map[string]interface{}) (string, error) {
 	cmd, _ := args["command"].(string)
@@ -34,11 +51,13 @@ func (e *Engine) runShell(ctx context.Context, args map[string]interface{}) (str
 
 	out := &boundedWriter{limit: 1 << 20} // 1 MB cap
 	c := exec.CommandContext(ctx, "bash", "-c", shellCmd)
+	c.Env = shellEnv()
 	c.Stdout = out
 	c.Stderr = out
 	exitCode := 0
 	if err := c.Run(); err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
 			exitCode = exitErr.ExitCode()
 		} else {
 			exitCode = 1
