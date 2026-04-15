@@ -10,6 +10,14 @@ jinn exposes 8 file/shell tools via a one-shot JSON protocol compatible with Ope
 go install github.com/dotcommander/jinn@latest
 ```
 
+### Building from Source
+
+```bash
+git clone https://github.com/dotcommander/jinn.git
+cd jinn
+go build ./cmd/jinn/
+```
+
 ## Usage
 
 ```bash
@@ -107,9 +115,13 @@ RESULT=$(echo "$TOOL_CALL_JSON" | jinn)
 ## Design Decisions
 
 - **Zero dependencies** — `go.mod` has no `require` block. Stdlib only. No supply chain risk, trivial builds.
-- **Single file** — everything in `main.go` (~860 lines). No packages to navigate.
+- **Clean architecture** — `cmd/jinn/main.go` (~50 lines: flags, signal, JSON I/O) wires to `internal/jinn/`, a focused core package with engine, tools, security, normalization, and output pipeline across 11+ files.
 - **One-shot** — no persistent server, no state between invocations. The calling agent manages session state.
 - **Security by default** — not opt-in. Every path goes through confinement checks before any I/O.
+
+## Contributing
+
+PRs welcome. Please run `go test -race ./...` before pushing.
 
 ## License
 

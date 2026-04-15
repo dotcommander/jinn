@@ -1,2 +1,28 @@
+# Build
 /jinn
+*.exe
+*.test
+*.out
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Environment
+.env
+.env.*
+
+# Profiling
+*.prof
+*.cpuprofile
+*.memprofile
+
+# Scratch
 .work/
