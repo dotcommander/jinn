@@ -1,0 +1,125 @@
+title: Jinn
+breadcrumb: "cmd/jinn → Engine.Dispatch → checkPath → tool handler → output pipeline → JSON response"
+
+phases:
+  - name: Entry
+    kind: Mode Gate
+    description: "detect invocation mode and guard against interactive use"
+    stages:
+      - { label: "jinn CLI", style: boot }
+      - fork:
+          gate: "os.Args[1]"
+          branches:
+            - { condition: "--schema", label: "dump OpenAI schema", subtitle: "function-calling JSON to stdout" }
+            - { condition: "--version", label: "resolve version", subtitle: "ldflags → VCS → module" }
+            - { condition: "--help / -h", label: "print usage" }
+            - { condition: "no args", label: "stdin guard", subtitle: "TTY → help · pipe → execute" }
+      - { label: "signal handler", subtitle: "SIGINT + SIGTERM → ctx cancel" }
+    files:
+      - cmd/jinn/main.go
+
+  - name: Bootstrap
+    kind: Parse
+    description: "resolve sandbox root and decode the single JSON request"
+    stages:
+      - { label: "resolve workDir", subtitle: "Getwd → EvalSymlinks" }
+      - { label: "probe rg", subtitle: "exec.LookPath for ripgrep", style: io }
+      - { label: "New(workDir)", subtitle: "allocate Engine + fileTracker", style: boot }
+      - fork:
+          gate: "json.Decode(stdin)"
+          branches:
+            - { condition: "EOF", label: "no input error" }
+            - { condition: "invalid JSON", label: "decode error" }
+            - { condition: "ok", label: "Request parsed" }
+    files:
+      - internal/jinn/engine.go
+      - internal/jinn/tracker.go
+
+  - name: Security
+    kind: Gate
+    description: "every filesystem path passes five checks before any I/O"
+    stages:
+      - { label: "checkPath", subtitle: "synchronous gate · all-or-reject", style: gate, wide: true }
+      - { label: "resolve path", subtitle: "relative → abs · filepath.Clean" }
+      - { label: "eval symlinks", subtitle: "real path for macOS /tmp" }
+      - { label: "sensitive check", subtitle: "reject .git .ssh .aws .gnupg .env" }
+      - { label: "boundary check", subtitle: "HasPrefix(real, workDir)" }
+    files:
+      - internal/jinn/security.go
+
+  - name: Dispatch
+    kind: Execute
+    description: "route to one of eight tool handlers"
+    stages:
+      - fork:
+          gate: "tool name"
+          branches:
+            - { condition: "read_file", label: "readFile", subtitle: "50 MB guard · binary detect · windowed lines" }
+            - { condition: "write_file", label: "writeFile", subtitle: "stale check → atomic write → rename" }
+            - { condition: "edit_file", label: "editFile", subtitle: "exact match · fuzzy fallback · atomic write" }
+            - { condition: "multi_edit", label: "multiEdit", subtitle: "validate-all-then-apply-all batch", wide: true }
+            - { condition: "search_files", label: "searchFiles", subtitle: "rg preferred · grep fallback" }
+            - { condition: "run_shell", label: "runShell", subtitle: "bash -c · env allow-list · 300s max", wide: true }
+            - { condition: "stat_file", label: "statFile", subtitle: "type + size + lines + mtime" }
+            - { condition: "list_dir", label: "listDir", subtitle: "find → sort · hidden excluded" }
+      - fork:
+          gate: "edit match count"
+          branches:
+            - { condition: "0 exact", label: "fuzzy retry", subtitle: "smart quotes → ASCII · strip trailing ws" }
+            - { condition: "1 exact", label: "apply edit" }
+            - { condition: "> 1", label: "ambiguous error" }
+    files:
+      - internal/jinn/tool_read.go
+      - internal/jinn/tool_write.go
+      - internal/jinn/tool_edit.go
+      - internal/jinn/tool_multi_edit.go
+      - internal/jinn/tool_search.go
+      - internal/jinn/tool_shell.go
+      - internal/jinn/tool_stat.go
+      - internal/jinn/tool_list.go
+
+  - name: Output
+    kind: Transform
+    description: "normalize and truncate tool results before encoding"
+    stages:
+      - { label: "collapseRepeated", subtitle: "3+ identical lines → collapsed" }
+      - { label: "boundedWriter", subtitle: "1 MB hard cap · spill to tempfile", wide: true }
+      - fork:
+          gate: "truncation mode"
+          branches:
+            - { condition: "shell", label: "truncateTail", subtitle: "keep last 200 lines (errors at end)" }
+            - { condition: "read / list", label: "truncateOutput", subtitle: "head 50% + tail 50% at 200 lines" }
+            - { condition: "search", label: "truncateOutput", subtitle: "100 lines · per-line 200 rune cap" }
+      - { label: "normalize", subtitle: "stripBom · detectLineEnding · restore after edit" }
+    files:
+      - internal/jinn/output.go
+      - internal/jinn/normalize.go
+
+  - name: Respond
+    kind: Emit
+    description: "encode one JSON response to stdout and exit"
+    stages:
+      - fork:
+          gate: "Dispatch result"
+          branches:
+            - { condition: "ok", label: "success response", subtitle: '{"ok": true, "result": ...}' }
+            - { condition: "error", label: "error response", subtitle: '{"error": ...} → exit 1' }
+      - { label: "json.Encode", subtitle: "NewEncoder(stdout) · single object", style: io }
+    files:
+      - cmd/jinn/main.go
+
+stores:
+  - name: "fileTracker.times"
+    writers:
+      - { stage: "readFile", access: "w", note: "record mtime on read for TOCTOU" }
+      - { stage: "writeFile", access: "r/w", note: "checkStale before write · update after rename" }
+      - { stage: "editFile", access: "r/w", note: "checkStale before edit · update after rename" }
+      - { stage: "multiEdit", access: "r/w", note: "checkStale all in validate phase" }
+  - name: "jinn-shell-*.log"
+    writers:
+      - { stage: "runShell", access: "w", note: "overflow spill when stdout exceeds 1 MB" }
+  - name: ".jinn-* (atomic temp)"
+    writers:
+      - { stage: "writeFile", access: "w", note: "write → chmod → sync → rename to target" }
+      - { stage: "editFile", access: "w", note: "same atomic pattern" }
+      - { stage: "multiEdit", access: "w", note: "one temp per file in apply phase" }
