@@ -1,6 +1,7 @@
 package jinn
 
 import (
+	"fmt"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -31,10 +32,16 @@ func (e *Engine) listDir(args map[string]interface{}) (string, error) {
 	c.Dir = e.workDir
 	c.Stderr = out
 	sortCmd := exec.Command("sort")
-	sortCmd.Stdin, _ = c.StdoutPipe()
+	pipe, err := c.StdoutPipe()
+	if err != nil {
+		return "", fmt.Errorf("listDir: pipe: %w", err)
+	}
+	sortCmd.Stdin = pipe
 	sortCmd.Stdout = out
 	sortCmd.Stderr = out
-	sortCmd.Start()
+	if err := sortCmd.Start(); err != nil {
+		return "", fmt.Errorf("listDir: sort: %w", err)
+	}
 	c.Run()
 	sortCmd.Wait()
 	result := strings.TrimSpace(out.String())
