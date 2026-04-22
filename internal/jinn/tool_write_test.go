@@ -113,3 +113,51 @@ func TestWriteFile_NewFileGetsDefault(t *testing.T) {
 		t.Errorf("permissions = %o, want 0644", info.Mode().Perm())
 	}
 }
+
+func TestWriteFile_DryRun_NewFile(t *testing.T) {
+	t.Parallel()
+	e, dir := testEngine(t)
+
+	result, err := e.writeFile(args("path", "new.txt", "content", "fresh", "dry_run", true))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result, "[dry-run] would create") {
+		t.Errorf("expected creation preview, got: %s", result)
+	}
+	if !strings.Contains(result, "5 bytes") {
+		t.Errorf("expected byte count, got: %s", result)
+	}
+
+	// File must not exist on disk.
+	_, err = os.Stat(filepath.Join(dir, "new.txt"))
+	if err == nil {
+		t.Error("file should not exist after dry_run")
+	}
+}
+
+func TestWriteFile_DryRun_ExistingFile(t *testing.T) {
+	t.Parallel()
+	e, dir := testEngine(t)
+	writeTestFile(t, dir, "existing.txt", "old content\n")
+
+	result, err := e.writeFile(args("path", "existing.txt", "content", "new content\n", "dry_run", true))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result, "[dry-run] diff for existing.txt:") {
+		t.Errorf("expected diff header, got: %s", result)
+	}
+	if !strings.Contains(result, "- old content") {
+		t.Errorf("diff should show removed line, got: %s", result)
+	}
+	if !strings.Contains(result, "+ new content") {
+		t.Errorf("diff should show added line, got: %s", result)
+	}
+
+	// File must be unchanged on disk.
+	data, _ := os.ReadFile(filepath.Join(dir, "existing.txt"))
+	if string(data) != "old content\n" {
+		t.Errorf("file should be unchanged after dry_run, got: %q", data)
+	}
+}

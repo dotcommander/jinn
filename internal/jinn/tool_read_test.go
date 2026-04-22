@@ -109,6 +109,67 @@ func TestReadFile_SensitivePath(t *testing.T) {
 	}
 }
 
+func TestReadFile_Tail(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		total  int
+		tail   int
+		want   string // must appear in output
+		noWant string // must NOT appear
+	}{
+		{"last 3 of 10", 10, 3, "8\tline8", "line7"},
+		{"tail exceeds file", 5, 100, "1\tline1", ""},
+		{"tail 1", 10, 1, "10\tline10", "line9"},
+		{"tail 0 disabled", 10, 0, "1\tline1", ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			e, dir := testEngine(t)
+			var b strings.Builder
+			for i := 1; i <= tc.total; i++ {
+				fmt.Fprintf(&b, "line%d\n", i)
+			}
+			writeTestFile(t, dir, "tail.txt", b.String())
+			result, err := e.readFile(args("path", "tail.txt", "tail", float64(tc.tail)))
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !strings.Contains(result, tc.want) {
+				t.Errorf("expected %q in output, got:\n%s", tc.want, result)
+			}
+			if tc.noWant != "" && strings.Contains(result, tc.noWant) {
+				t.Errorf("expected %q NOT in output, got:\n%s", tc.noWant, result)
+			}
+		})
+	}
+}
+
+func TestReadFile_TailTakesPrecedence(t *testing.T) {
+	t.Parallel()
+	e, dir := testEngine(t)
+	var b strings.Builder
+	for i := 1; i <= 20; i++ {
+		fmt.Fprintf(&b, "line%d\n", i)
+	}
+	writeTestFile(t, dir, "prec.txt", b.String())
+	result, err := e.readFile(args("path", "prec.txt", "tail", float64(3), "start_line", float64(1), "end_line", float64(5)))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result, "18\tline18") {
+		t.Errorf("tail should override start_line/end_line, got:\n%s", result)
+	}
+	resultLines := strings.Split(result, "\n")
+	for _, l := range resultLines {
+		if l == "1\tline1" || l == "5\tline5" {
+			t.Errorf("start_line/end_line should be ignored when tail is set, got:\n%s", result)
+			break
+		}
+	}
+}
+
 func TestReadFile_ContinuationHint(t *testing.T) {
 	t.Parallel()
 	e, dir := testEngine(t)

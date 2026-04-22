@@ -1,6 +1,57 @@
 package jinn
 
-import "strings"
+import (
+	"strings"
+	"unicode/utf8"
+)
+
+// closestLine finds the line in content that best matches the first line of oldText.
+// Returns the 1-based line number and the matched line text.
+// Uses character overlap ratio (shared runes / max runes) for scoring.
+func closestLine(oldText, content string) (int, string) {
+	firstLine := strings.SplitN(oldText, "\n", 2)[0]
+	firstLine = strings.TrimSpace(firstLine)
+	if firstLine == "" {
+		return 0, ""
+	}
+	needles := []rune(firstLine)
+	bestScore := -1.0
+	bestIdx := 0
+	bestText := ""
+	lines := strings.Split(content, "\n")
+	for i, line := range lines {
+		haystack := []rune(line)
+		// Count shared runes using a set for haystack membership.
+		haySet := make(map[rune]struct{}, len(haystack))
+		for _, r := range haystack {
+			haySet[r] = struct{}{}
+		}
+		shared := 0
+		seen := make(map[rune]struct{}, len(needles))
+		for _, r := range needles {
+			if _, ok := haySet[r]; ok {
+				if _, dup := seen[r]; !dup {
+					shared++
+					seen[r] = struct{}{}
+				}
+			}
+		}
+		maxRunes := utf8.RuneCountInString(firstLine)
+		if len(haystack) > maxRunes {
+			maxRunes = len(haystack)
+		}
+		if maxRunes == 0 {
+			continue
+		}
+		score := float64(shared) / float64(maxRunes)
+		if score > bestScore {
+			bestScore = score
+			bestIdx = i
+			bestText = line
+		}
+	}
+	return bestIdx + 1, bestText
+}
 
 // stripBom removes a UTF-8 BOM if present. Returns content and the BOM prefix.
 func stripBom(s string) (string, string) {

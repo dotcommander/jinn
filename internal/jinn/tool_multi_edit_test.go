@@ -84,3 +84,59 @@ func TestMultiEdit_FuzzyAndCRLF(t *testing.T) {
 		t.Error("edit should have been applied")
 	}
 }
+
+func TestMultiEdit_FuzzyIndent(t *testing.T) {
+	t.Parallel()
+	e, dir := testEngine(t)
+	content := "func main() {\n\tx := 1\n\ty := 2\n}\n"
+	writeTestFile(t, dir, "mi_indent.go", content)
+
+	result, err := e.multiEdit(args("edits", []interface{}{
+		map[string]interface{}{
+			"path":         "mi_indent.go",
+			"old_text":     "x := 1",
+			"new_text":     "x := 42\n\tz := x + 1",
+			"fuzzy_indent": true,
+		},
+	}))
+	if err != nil {
+		t.Fatalf("multi_edit with fuzzy_indent failed: %v", err)
+	}
+	if strings.Contains(result, "error") {
+		t.Fatalf("multi_edit returned error: %s", result)
+	}
+	data, _ := os.ReadFile(filepath.Join(dir, "mi_indent.go"))
+	s := string(data)
+	if !strings.Contains(s, "\tx := 42") {
+		t.Errorf("replacement should have tab indent from fuzzy_indent, got:\n%s", s)
+	}
+	if !strings.Contains(s, "\tz := x + 1") {
+		t.Errorf("second line should have tab indent, got:\n%s", s)
+	}
+	if !strings.Contains(s, "\ty := 2") {
+		t.Error("unchanged line should still have tab indent")
+	}
+}
+
+func TestMultiEdit_FuzzyIndentDefaultFalse(t *testing.T) {
+	t.Parallel()
+	e, dir := testEngine(t)
+	content := "func main() {\n\tx := 1\n}\n"
+	writeTestFile(t, dir, "mi_noindent.go", content)
+
+	_, err := e.multiEdit(args("edits", []interface{}{
+		map[string]interface{}{
+			"path":     "mi_noindent.go",
+			"old_text": "x := 1",
+			"new_text": "a := 1\nb := 2",
+		},
+	}))
+	if err != nil {
+		t.Fatalf("multi_edit failed: %v", err)
+	}
+	data, _ := os.ReadFile(filepath.Join(dir, "mi_noindent.go"))
+	s := string(data)
+	if !strings.Contains(s, "a := 1\nb := 2") {
+		t.Errorf("replacement should not be re-indented without fuzzy_indent, got:\n%s", s)
+	}
+}

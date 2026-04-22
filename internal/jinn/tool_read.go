@@ -45,15 +45,22 @@ func (e *Engine) readFile(args map[string]interface{}) (string, error) {
 		return fmt.Sprintf("[binary file: %d bytes]", len(data)), nil
 	}
 
+	tail := 0
+	if t, ok := args["tail"].(float64); ok && int(t) > 0 {
+		tail = int(t)
+	}
+
 	startLine := 1
 	endLine := startLine + 199
-	if s, ok := args["start_line"].(float64); ok && int(s) >= 1 {
-		startLine = int(s)
-	}
-	if el, ok := args["end_line"].(float64); ok && int(el) >= startLine {
-		endLine = int(el)
-	} else {
-		endLine = startLine + 199
+	if tail == 0 {
+		if s, ok := args["start_line"].(float64); ok && int(s) >= 1 {
+			startLine = int(s)
+		}
+		if el, ok := args["end_line"].(float64); ok && int(el) >= startLine {
+			endLine = int(el)
+		} else {
+			endLine = startLine + 199
+		}
 	}
 
 	lines := strings.Split(string(data), "\n")
@@ -61,6 +68,15 @@ func (e *Engine) readFile(args map[string]interface{}) (string, error) {
 	if lines[total-1] == "" {
 		total--
 	}
+
+	if tail > 0 {
+		startLine = total - tail + 1
+		if startLine < 1 {
+			startLine = 1
+		}
+		endLine = total
+	}
+
 	if startLine > total {
 		return "", fmt.Errorf("file has %d lines, start_line %d is past end", total, startLine)
 	}

@@ -62,6 +62,15 @@ func (e *Engine) writeFile(args map[string]interface{}) (string, error) {
 	if err := e.tracker.checkStale(resolved); err != nil {
 		return "", err
 	}
+
+	if dryRun, ok := args["dry_run"].(bool); ok && dryRun {
+		existing, err := os.ReadFile(resolved)
+		if err != nil {
+			return fmt.Sprintf("[dry-run] would create %s (%d bytes)", path, len(content)), nil
+		}
+		return unifiedDiff(string(existing), content, path, 3), nil
+	}
+
 	if err := os.MkdirAll(filepath.Dir(resolved), 0755); err != nil {
 		return "", fmt.Errorf("mkdir: %s", err)
 	}

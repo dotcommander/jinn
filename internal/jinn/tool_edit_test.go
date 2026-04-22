@@ -65,7 +65,7 @@ func TestEditFile_Multiline(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(result, "replaced 2 lines with 1 lines") {
+	if !strings.Contains(result, "lines 1-2 (2 lines) replaced with 1 lines") {
 		t.Errorf("expected line count, got: %s", result)
 	}
 	data, _ := os.ReadFile(filepath.Join(dir, "multi.txt"))
@@ -175,5 +175,91 @@ func TestEditFile_BOM_Preserved(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "goodbye") {
 		t.Error("edit should have been applied")
+	}
+}
+
+func TestEditFile_DryRun(t *testing.T) {
+	t.Parallel()
+	e, dir := testEngine(t)
+	writeTestFile(t, dir, "dry.txt", "foo bar baz\n")
+
+	result, err := e.editFile(args("path", "dry.txt", "old_text", "bar", "new_text", "qux", "dry_run", true))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result, "[dry-run]") {
+		t.Errorf("expected dry-run indicator, got: %s", result)
+	}
+	if !strings.Contains(result, "- foo bar baz") {
+		t.Errorf("dry run should show removed line, got: %s", result)
+	}
+	if !strings.Contains(result, "+ foo qux baz") {
+		t.Errorf("dry run should show added line, got: %s", result)
+	}
+
+	// File must be unchanged on disk.
+	data, _ := os.ReadFile(filepath.Join(dir, "dry.txt"))
+	if string(data) != "foo bar baz\n" {
+		t.Errorf("file should be unchanged after dry_run, got: %q", data)
+	}
+}
+
+func TestEditFile_FuzzyIndent(t *testing.T) {
+	t.Parallel()
+	e, dir := testEngine(t)
+	content := "func main() {\n\tfmt.Println(\"hello\")\n}\n"
+	writeTestFile(t, dir, "indent.go", content)
+
+	// Agent provides replacement without tabs, but fuzzy_indent fixes it.
+	result, err := e.editFile(args(
+		"path", "indent.go",
+		"old_text", "fmt.Println(\"hello\")",
+		"new_text", "fmt.Println(\"world\")\nfmt.Println(\"again\")",
+		"fuzzy_indent", true,
+	))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result, "edited") {
+		t.Errorf("expected 'edited', got: %s", result)
+	}
+	data, _ := os.ReadFile(filepath.Join(dir, "indent.go"))
+	s := string(data)
+	if !strings.Contains(s, "\tfmt.Println(\"world\")") {
+		t.Errorf("new_text should be indented with tab, got:\n%s", s)
+	}
+	if !strings.Contains(s, "\tfmt.Println(\"again\")") {
+		t.Errorf("second line should also be indented, got:\n%s", s)
+	}
+}
+
+func TestEditFile_FuzzyIndentPreservesContent(t *testing.T) {
+	t.Parallel()
+	e, dir := testEngine(t)
+	content := "func main() {\n    x := 1\n    y := 2\n}\n"
+	writeTestFile(t, dir, "spaces.go", content)
+
+	result, err := e.editFile(args(
+		"path", "spaces.go",
+		"old_text", "x := 1",
+		"new_text", "x := 42\n    z := x + 1",
+		"fuzzy_indent", true,
+	))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result, "edited") {
+		t.Errorf("expected 'edited', got: %s", result)
+	}
+	data, _ := os.ReadFile(filepath.Join(dir, "spaces.go"))
+	s := string(data)
+	if !strings.Contains(s, "    x := 42") {
+		t.Errorf("replacement should have 4-space indent, got:\n%s", s)
+	}
+	if !strings.Contains(s, "    z := x + 1") {
+		t.Errorf("second line should have 4-space indent, got:\n%s", s)
+	}
+	if !strings.Contains(s, "    y := 2") {
+		t.Error("unchanged line should still have 4-space indent")
 	}
 }
