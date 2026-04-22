@@ -4,13 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-jinn is a sandboxed tool executor for AI coding agents. Single binary, zero external dependencies — stdlib only. It exposes 9 tools via a one-shot JSON-over-stdin/stdout protocol compatible with OpenAI function calling.
+jinn is a sandboxed tool executor for AI coding agents. Single binary, zero external dependencies — stdlib only. It exposes 11 tools via a one-shot JSON-over-stdin/stdout protocol compatible with OpenAI function calling.
 
 ## Build / Test / Install
 
 ```bash
 go build ./cmd/jinn/          # produces ./jinn
-go test -race ./...            # 97 tests
+go test -race ./...            # 132 tests
 go install github.com/dotcommander/jinn@latest
 jinn --schema                  # emit tool definitions as JSON
 jinn --version                 # version from ldflags or VCS info
@@ -25,13 +25,15 @@ No linter config, no Makefile — intentionally minimal.
 |------|-------------|
 | `run_shell` | Bash with timeout (default 30s, max 300s), `dry_run` flag |
 | `read_file` | Line-numbered output, windowing, 50 MB gate, binary detection |
-| `write_file` | Atomic temp+rename, parent dir creation, TOCTOU check |
-| `edit_file` | old_text/new_text replacement, uniqueness enforcement, fuzzy fallback, CRLF/BOM preservation |
+| `write_file` | Atomic temp+rename, parent dir creation, TOCTOU check, `dry_run` preview |
+| `edit_file` | old_text/new_text replacement, uniqueness enforcement, fuzzy fallback, `fuzzy_indent` re-indentation, `dry_run` preview, CRLF/BOM preservation |
 | `multi_edit` | Array of edits across files — validates all first, applies atomically, same fuzzy/CRLF/BOM as edit_file |
-| `search_files` | Grep with `--exclude-dir`, regex validation, per-line truncation |
+| `search_files` | Grep with `--exclude-dir`, regex validation, per-line truncation, `format:"json"` for structured results |
 | `stat_file` | File metadata (size/lines/mtime/type) without reading content |
 | `list_dir` | Recursive find with depth control, hidden files excluded |
 | `list_tools` | Returns the JSON schema for all tools jinn exposes — same content as `jinn --schema`, but accessible in-protocol |
+| `checksum_tree` | SHA-256 hashes for a file tree, with optional glob filter |
+| `detect_project` | Detect language, framework, build/test/lint commands from config files |
 
 ## Architecture
 
@@ -52,6 +54,9 @@ internal/jinn/
   tool_search.go                 # (e) searchFiles + grepExcludeDirs
   tool_stat.go                   # (e) statFile
   tool_list.go                   # (e) listDir
+  tool_checksum.go               # (e) checksumTree
+  tool_detect.go                 # (e) detectProject
+  diff.go                        # unifiedDiff, formatEditPreview
 ```
 
 Key design:
