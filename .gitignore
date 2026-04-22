@@ -1,5 +1,6 @@
 # Build
 /jinn
+/demo
 *.exe
 *.test
 *.out
