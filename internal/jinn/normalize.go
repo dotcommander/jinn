@@ -65,8 +65,3 @@ func normalizeForFuzzyMatch(s string) string {
 	}
 	return b.String()
 }
-
-// shellescape wraps a string in single quotes for safe shell use.
-func shellescape(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
-}

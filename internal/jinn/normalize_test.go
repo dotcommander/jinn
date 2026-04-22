@@ -109,24 +109,3 @@ func TestNormalizeForFuzzyMatch_UnicodeSpaces(t *testing.T) {
 		t.Errorf("unicode spaces: got %q, want %q", got, "hello world end")
 	}
 }
-
-// --- shellescape ---
-
-func TestShellescape(t *testing.T) {
-	t.Parallel()
-	cases := []struct {
-		in, want string
-	}{
-		{"hello", "'hello'"},
-		{"it's", "'it'\\''s'"},
-		{"", "''"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.in, func(t *testing.T) {
-			t.Parallel()
-			if got := shellescape(tc.in); got != tc.want {
-				t.Errorf("shellescape(%q) = %q, want %q", tc.in, got, tc.want)
-			}
-		})
-	}
-}

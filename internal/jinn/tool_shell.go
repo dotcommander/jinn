@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 )
 
 // shellAllowList is the set of environment variables passed to shell subprocesses.
@@ -38,19 +39,19 @@ func (e *Engine) runShell(ctx context.Context, args map[string]interface{}) (str
 		timeout = 300
 	}
 
-	var shellCmd string
 	timeoutBin, _ := exec.LookPath("timeout")
 	if timeoutBin == "" {
 		timeoutBin, _ = exec.LookPath("gtimeout")
 	}
+
+	var c *exec.Cmd
 	if timeoutBin != "" {
-		shellCmd = fmt.Sprintf("%s %d bash -c %s", timeoutBin, timeout, shellescape(cmd))
+		c = exec.CommandContext(ctx, timeoutBin, strconv.Itoa(timeout), "bash", "-c", cmd)
 	} else {
-		shellCmd = fmt.Sprintf("bash -c %s", shellescape(cmd))
+		c = exec.CommandContext(ctx, "bash", "-c", cmd)
 	}
 
 	out := &boundedWriter{limit: 1 << 20} // 1 MB cap
-	c := exec.CommandContext(ctx, "bash", "-c", shellCmd)
 	c.Env = shellEnv()
 	c.Stdout = out
 	c.Stderr = out
