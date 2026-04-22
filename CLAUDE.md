@@ -4,13 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-jinn is a sandboxed tool executor for AI coding agents. Single binary, zero external dependencies — stdlib only. It exposes 8 tools via a one-shot JSON-over-stdin/stdout protocol compatible with OpenAI function calling.
+jinn is a sandboxed tool executor for AI coding agents. Single binary, zero external dependencies — stdlib only. It exposes 9 tools via a one-shot JSON-over-stdin/stdout protocol compatible with OpenAI function calling.
 
 ## Build / Test / Install
 
 ```bash
 go build ./cmd/jinn/          # produces ./jinn
-go test -race ./...            # 93 tests
+go test -race ./...            # 97 tests
 go install github.com/dotcommander/jinn@latest
 jinn --schema                  # emit tool definitions as JSON
 jinn --version                 # version from ldflags or VCS info
@@ -31,6 +31,7 @@ No linter config, no Makefile — intentionally minimal.
 | `search_files` | Grep with `--exclude-dir`, regex validation, per-line truncation |
 | `stat_file` | File metadata (size/lines/mtime/type) without reading content |
 | `list_dir` | Recursive find with depth control, hidden files excluded |
+| `list_tools` | Returns the JSON schema for all tools jinn exposes — same content as `jinn --schema`, but accessible in-protocol |
 
 ## Architecture
 

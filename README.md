@@ -2,7 +2,7 @@
 
 Sandboxed tool executor for AI coding agents. Single binary, zero dependencies, stdlib only.
 
-jinn exposes 8 file/shell tools via a one-shot JSON protocol compatible with OpenAI function calling. An agent sends a JSON request on stdin and gets a JSON response on stdout. No server, no daemon, no config.
+jinn exposes 9 file/shell tools via a one-shot JSON protocol compatible with OpenAI function calling. An agent sends a JSON request on stdin and gets a JSON response on stdout. No server, no daemon, no config.
 
 ## Install
 
@@ -25,8 +25,8 @@ go build ./cmd/jinn/
 jinn --schema
 
 # Execute a tool
-echo '{"tool":"read_file","args":{"path":"main.go"}}' | jinn
-# → {"ok":true,"result":"1\tpackage main\n..."}
+echo '{"tool":"read_file","args":{"path":"go.mod"}}' | jinn
+# → {"ok":true,"result":"1\tmodule github.com/dotcommander/jinn\n2\t\n3\tgo 1.26\n... (5 lines total, showing 3)"}
 
 echo '{"tool":"run_shell","args":{"command":"go version"}}' | jinn
 # → {"ok":true,"result":"[exit: 0]\ngo version go1.26.2 ..."}
@@ -59,6 +59,9 @@ One invocation, one request, one response. The calling agent handles all user in
 | `search_files` | Grep with regex, glob filter, context lines, case-insensitive option |
 | `stat_file` | File metadata (size, lines, mtime, type) without reading content |
 | `list_dir` | Recursive directory listing with depth control, hidden files excluded |
+| `list_tools` | Returns the JSON schema for all tools jinn exposes — same content as `jinn --schema`, but accessible in-protocol |
+
+Architecture diagram: [`docs/architecture.yaml`](docs/architecture.yaml) (rendered by [repoflow](https://github.com/dotcommander/repoflow)).
 
 ## Security
 
@@ -95,7 +98,7 @@ import subprocess, json
 
 def call_jinn(tool, args):
     req = json.dumps({"tool": tool, "args": args})
-    result = subprocess.run(["jinn"], input=req, capture_output=True, text=True)
+    result = subprocess.run(["jinn"], input=req, capture_output=True, text=True, timeout=60)
     return json.loads(result.stdout)
 
 call_jinn("read_file", {"path": "main.go"})
