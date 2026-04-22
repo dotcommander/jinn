@@ -47,6 +47,10 @@ func (e *Engine) Dispatch(ctx context.Context, tool string, args map[string]inte
 		return e.listDir(args)
 	case "list_tools":
 		return Schema, nil
+	case "checksum_tree":
+		return e.checksumTree(args)
+	case "detect_project":
+		return e.detectProject(args)
 	default:
 		return "", fmt.Errorf("unknown tool: %s", tool)
 	}

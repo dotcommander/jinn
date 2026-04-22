@@ -28,7 +28,8 @@ const Schema = `[
         "properties": {
           "path": {"type": "string", "description": "file path to read"},
           "start_line": {"type": "integer", "description": "first line (1-indexed, default: 1)"},
-          "end_line": {"type": "integer", "description": "last line (default: start_line+199)"}
+          "end_line": {"type": "integer", "description": "last line (default: start_line+199)"},
+          "tail": {"type": "integer", "description": "Read the last N lines of the file. Takes precedence over start_line/end_line. 0 = disabled.", "default": 0}
         },
         "required": ["path"]
       }
@@ -43,7 +44,8 @@ const Schema = `[
         "type": "object",
         "properties": {
           "path": {"type": "string", "description": "file path to write"},
-          "content": {"type": "string", "description": "file content"}
+          "content": {"type": "string", "description": "file content"},
+          "dry_run": {"type": "boolean", "description": "preview changes without writing (default: false)"}
         },
         "required": ["path", "content"]
       }
@@ -59,7 +61,10 @@ const Schema = `[
         "properties": {
           "path": {"type": "string", "description": "file path to edit"},
           "old_text": {"type": "string", "description": "exact text to find (must be unique in file)"},
-          "new_text": {"type": "string", "description": "replacement text"}
+          "new_text": {"type": "string", "description": "replacement text"},
+          "dry_run": {"type": "boolean", "description": "preview changes without writing (default: false)"},
+          "fuzzy_indent": {"type": "boolean", "description": "auto-detect indentation at match site and apply to new_text (default: false)"},
+          "show_context": {"type": "integer", "description": "Number of context lines to show around the edit after applying. 0 = no context.", "default": 0}
         },
         "required": ["path", "old_text", "new_text"]
       }
@@ -81,7 +86,9 @@ const Schema = `[
               "properties": {
                 "path": {"type": "string", "description": "file path to edit"},
                 "old_text": {"type": "string", "description": "exact text to find (must be unique)"},
-                "new_text": {"type": "string", "description": "replacement text"}
+                "new_text": {"type": "string", "description": "replacement text"},
+                "fuzzy_indent": {"type": "boolean", "description": "Re-indent old_text to match surrounding indentation before matching", "default": false},
+                "show_context": {"type": "integer", "description": "Number of context lines to show around the edit after applying", "default": 0}
               },
               "required": ["path", "old_text", "new_text"]
             }
@@ -103,7 +110,9 @@ const Schema = `[
           "path": {"type": "string", "description": "directory to search (default: .)"},
           "include": {"type": "string", "description": "file glob filter, e.g. *.go"},
           "context_lines": {"type": "integer", "description": "lines of context around matches (default: 0)"},
-          "case_insensitive": {"type": "boolean", "description": "case-insensitive search (default: false)"}
+          "case_insensitive": {"type": "boolean", "description": "case-insensitive search (default: false)"},
+          "max_results": {"type": "integer", "description": "Maximum number of results to return. 0 = unlimited.", "default": 0},
+          "format": {"type": "string", "description": "output format: 'text' (default), 'json' (structured results), or 'filenames' (filenames with match counts)", "enum": ["text", "json", "filenames"]}
         },
         "required": ["pattern"]
       }
@@ -145,6 +154,33 @@ const Schema = `[
       "parameters": {
         "type": "object",
         "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "checksum_tree",
+      "description": "Compute SHA-256 hashes for a file tree. Returns JSON map of {path: hash}.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {"type": "string", "description": "directory to checksum (default: .)"},
+          "pattern": {"type": "string", "description": "filepath glob filter, e.g. *.go"}
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "detect_project",
+      "description": "Detect project language, framework, build tool, test command, and linter from config files.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {"type": "string", "description": "directory to analyze (default: .)"}
+        }
       }
     }
   }
