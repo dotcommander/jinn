@@ -43,33 +43,11 @@ func (e *Engine) multiEdit(args map[string]interface{}) (string, error) {
 			return "", fmt.Errorf("edit[%d] %s: %s", i, path, err)
 		}
 
-		content, bom := stripBom(string(data))
-		ending := detectLineEnding(content)
-		content = normalizeToLF(content)
-		oldText = normalizeToLF(oldText)
-		newText = normalizeToLF(newText)
-
-		count := strings.Count(content, oldText)
-		fuzzy := false
-		if count == 0 {
-			normContent := normalizeForFuzzyMatch(content)
-			normOld := normalizeForFuzzyMatch(oldText)
-			count = strings.Count(normContent, normOld)
-			if count == 1 {
-				content = normContent
-				oldText = normOld
-				fuzzy = true
-			}
+		updated, fuzzy, err := applyEdit(data, oldText, newText)
+		if err != nil {
+			return "", fmt.Errorf("edit[%d] %s: %w", i, path, err)
 		}
 
-		if count == 0 {
-			return "", fmt.Errorf("edit[%d] %s: old_text not found", i, path)
-		}
-		if count > 1 {
-			return "", fmt.Errorf("edit[%d] %s: old_text matches %d locations", i, path, count)
-		}
-
-		updated := bom + restoreLineEndings(strings.Replace(content, oldText, newText, 1), ending)
 		edits = append(edits, pendingEdit{
 			path:     path,
 			resolved: resolved,
