@@ -2,12 +2,12 @@
 
 A minimal coding-agent REPL built on jinn's tool-executor protocol. Demonstrates how to consume jinn as a subprocess.
 
-**This is an example, not a dependency.** jinn itself is stdlib-only. This demo links an HTTP client, SSE parser, and REPL — if you build `demo`, you are opting into those via stdlib; if you only build `jinn`, you get nothing from this directory.
+**This is an example, not a dependency.** jinn itself is stdlib-only. This demo lives in its own nested module (`examples/demo/go.mod`) so it can pull in `charmbracelet/glamour` for markdown rendering without polluting jinn's zero-dep guarantee. If you only build `jinn`, you get nothing from this directory.
 
 ## Build
 
 ```bash
-go build -o demo ./examples/demo/
+cd examples/demo && go build -o demo .
 ```
 
 ## Requirements
@@ -50,7 +50,8 @@ demo --resume --session s-1713873600
 | `--base-url` | OpenRouter endpoint | Chat/completions URL |
 | `--local` | off | Auto-detect local LLM server |
 | `--max-turns` | `25` | Maximum agent turns per session |
-| `--max-history` | `40` | Max messages kept in conversation history (system prompt always preserved) |
+| `--compact-every` | `3` | Compact history every N user turns (`0` disables) |
+| `--compact-prompt-file` | — | Path to custom compaction prompt (defaults to embedded) |
 | `--max-tool-output` | `32768` | Max tool output bytes before truncation |
 | `--temperature` | `1.0` | LLM sampling temperature |
 | `--top-p` | `1.0` | LLM top-p sampling |
@@ -72,7 +73,8 @@ demo --resume --session s-1713873600
 | `DEMO_MODEL` | `openai/gpt-5.4-mini` | Model identifier |
 | `DEMO_BASE_URL` | OpenRouter endpoint | LLM API base URL |
 | `DEMO_MAX_TURNS` | `25` | Maximum agent turns per session |
-| `DEMO_MAX_HISTORY` | `40` | Max messages in history (overrides via `--max-history`) |
+| `DEMO_COMPACT_EVERY` | `3` | Compact history every N user turns (`0` disables) |
+| `DEMO_COMPACT_PROMPT_FILE` | — | Path to custom compaction prompt |
 | `DEMO_MAX_TOOL_OUTPUT` | `32768` | Max tool output bytes before truncation |
 | `JINN_BIN` | `jinn` | Path to jinn binary |
 | `DEFUDDLE_BIN` | `defuddle` | Path to defuddle binary |
@@ -101,6 +103,15 @@ The embedded default is itself the contents of `examples/demo/AGENTS.md` in this
 
 Ctrl-C cancels the current turn and re-prompts.
 
+## Compaction
+
+Instead of a fixed message-window, demo periodically asks the LLM to summarize the conversation and replaces older turns with that summary. Default: every 3 user inputs. The summary preserves intent, decisions, files touched, pending work, and the next step.
+
+- `--compact-every 0` disables compaction (unbounded history — your tokens, your problem).
+- `--compact-prompt-file path/to/prompt.md` overrides the built-in prompt.
+- `/reset` in the REPL clears conversation *and* resets the compaction counter.
+- If a summarization call fails, demo logs a warning to stderr and proceeds with full history. The next trigger retries.
+
 ## Tools
 
 The agent has access to 11 tools — 10 from jinn plus `web_fetch` via defuddle:
@@ -123,7 +134,7 @@ The agent has access to 11 tools — 10 from jinn plus `web_fetch` via defuddle:
 
 In REPL mode the output is ANSI-formatted:
 
-- **Markdown rendering** — bold, inline code, fenced code blocks, headers, and blockquotes are styled in the terminal
+- **Markdown rendering** — full CommonMark + GFM via `charmbracelet/glamour`: syntax-highlighted code blocks, tables, task lists, wrapped paragraphs, styled headings and blockquotes. Theme auto-selected from `$TERM` / `COLORFGBG`.
 - **Spinner** — braille-dot animation while waiting for the LLM
 - **Tool calls** — highlighted with name, args, and elapsed time
 - Colors respect `NO_COLOR` and `TERM=dumb`

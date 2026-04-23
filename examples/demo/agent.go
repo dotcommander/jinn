@@ -4,6 +4,7 @@ import (
 	"context"
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,6 +16,11 @@ import (
 
 //go:embed AGENTS.md
 var systemPromptTemplate string
+
+// errCompactionCanceled signals that compaction was interrupted (Ctrl-C).
+// Callers should discard the old ctx and derive a fresh one from the REPL's
+// root signal source before proceeding with the turn.
+var errCompactionCanceled = errors.New("compaction canceled")
 
 // applyPromptTokens substitutes {{workdir}} and {{os}} in a prompt template.
 func applyPromptTokens(tmpl, workDir string) string {
@@ -46,6 +52,7 @@ type turnHooks struct {
 	OnToolCall   func(name, args string)
 	OnToolResult func(name string, elapsed time.Duration, err error)
 	BeforeTurn   func()
+	Timer        *toolTimer
 }
 
 // runTurns drives the assistant through one or more turns until it stops
@@ -83,6 +90,15 @@ func runTurns(ctx context.Context, cfg *config, tools []map[string]any, messages
 		}
 
 		results := make([]message, len(final.ToolCalls))
+		names := make([]string, len(final.ToolCalls))
+		for i, tc := range final.ToolCalls {
+			names[i] = tc.Function.Name
+		}
+		timer := hooks.Timer
+		if timer != nil {
+			timer.SetNames(names)
+			timer.Start()
+		}
 		var wg sync.WaitGroup
 		for i, tc := range final.ToolCalls {
 			wg.Add(1)
@@ -94,6 +110,9 @@ func runTurns(ctx context.Context, cfg *config, tools []map[string]any, messages
 				start := time.Now()
 				result, err := dispatchTool(ctx, cfg, tc.Function.Name, tc.Function.Arguments)
 				elapsed := time.Since(start)
+				if timer != nil {
+					timer.Finish(i)
+				}
 				if hooks.OnToolResult != nil {
 					hooks.OnToolResult(tc.Function.Name, elapsed, err)
 				}
@@ -112,11 +131,13 @@ func runTurns(ctx context.Context, cfg *config, tools []map[string]any, messages
 			}(i, tc)
 		}
 		wg.Wait()
+		if timer != nil {
+			timer.Stop()
+		}
 
 		for _, res := range results {
 			messages = append(messages, res)
 		}
-		messages = pruneMessages(messages, cfg.maxHistory)
 		_ = saveSession(cfg, messages)
 	}
 	return messages, fmt.Errorf("max turns reached (%d) without completion", cfg.maxTurns)
@@ -133,7 +154,13 @@ func runOneShot(ctx context.Context, cfg *config, messages []message) error {
 	p := newPalette(useColor())
 	md := newMDStream(os.Stdout, p)
 
+	var mu sync.Mutex
+	var timer *toolTimer
+	if !cfg.quiet {
+		timer = newToolTimer(os.Stderr, p, &mu)
+	}
 	hooks := turnHooks{
+		Timer:     timer,
 		OnContent: func(delta string) { md.Write(delta) },
 		OnStreamEnd: func(hadContent bool) {
 			md.Flush()
@@ -206,30 +233,68 @@ func previewArgs(argsJSON string) string {
 	return truncate(s, 120)
 }
 
-// pruneMessages keeps the system prompt (if present) and the last max messages.
-// It ensures that if a tool message is kept, the preceding assistant message
-// that initiated the tool call is also kept.
-func pruneMessages(msgs []message, max int) []message {
-	if len(msgs) <= max || max <= 0 {
-		return msgs
+// maybeCompact summarizes older history when the user-turn counter hits
+// cfg.compactEvery. Returns the updated messages and updated counter.
+//
+// Behavior on failure:
+//   - ctx.Canceled: returns sentinel errCompactionCanceled — caller must
+//     derive a fresh turnCtx before continuing (see repl.go).
+//   - any other error: logs a warning, returns original messages, returns nil
+//     (the turn proceeds with full history).
+//
+// Callers increment the counter BEFORE calling, then treat the returned
+// counter as authoritative (it is reset to 0 on a successful compaction).
+func maybeCompact(ctx context.Context, cfg *config, messages []message, counter int) ([]message, int, error) {
+	if cfg.compactEvery <= 0 || counter < cfg.compactEvery {
+		return messages, counter, nil
 	}
 
-	var kept []message
-	if len(msgs) > 0 && msgs[0].Role == "system" {
-		kept = append(kept, msgs[0])
-		msgs = msgs[1:]
+	p := newPalette(useColor())
+	var spin *spinner
+	var spinMu sync.Mutex
+	if stderrIsTTY() {
+		spin = newSpinner(os.Stderr, p, &spinMu)
+		spin.start()
 	}
 
-	start := len(msgs) - max
-	if start < 0 {
-		start = 0
+	start := time.Now()
+	compacted, err := compactHistory(ctx, cfg, messages, cfg.compactPrompt)
+	elapsed := time.Since(start)
+
+	if spin != nil {
+		spin.halt()
 	}
 
-	// If the first kept message is a 'tool' result, we must also keep the
-	// 'assistant' message that preceded it.
-	for start > 0 && msgs[start].Role == "tool" {
-		start--
+	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			if stderrIsTTY() {
+				fmt.Fprintf(os.Stderr, "%s⚠ compaction canceled — continuing with full history%s\n", p.dim, p.reset)
+			}
+			return messages, counter, errCompactionCanceled
+		}
+		if stderrIsTTY() {
+			fmt.Fprintf(os.Stderr, "%s⚠ compaction skipped: %s%s\n", p.dim, shortErr(err), p.reset)
+		} else {
+			fmt.Fprintf(os.Stderr, "warning: compaction failed: %v — continuing with full history\n", err)
+		}
+		return messages, counter, nil
 	}
 
-	return append(kept, msgs[start:]...)
+	if stderrIsTTY() {
+		fmt.Fprintf(os.Stderr, "%s%s✓ history compacted · %.1fs%s\n", p.dim, p.success, elapsed.Seconds(), p.reset)
+	}
+	return compacted, 0, nil
+}
+
+// shortErr extracts a compact reason from a wrapped error for status display.
+// Keeps the last colon-separated segment, trimmed. Falls back to full string.
+func shortErr(err error) string {
+	if err == nil {
+		return ""
+	}
+	s := err.Error()
+	if i := strings.LastIndex(s, ": "); i >= 0 && i+2 < len(s) {
+		s = s[i+2:]
+	}
+	return truncate(s, 80)
 }
