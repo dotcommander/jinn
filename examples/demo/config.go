@@ -155,22 +155,27 @@ func parseArgs(argv []string) (*config, string, error) {
 // probeLocalServer tries GET /v1/models on common local LLM ports and returns
 // the chat/completions base URL for the first port that responds HTTP 200.
 func probeLocalServer() (string, error) {
-	ports := []int{8080, 8000, 1234, 11434}
+	return probeServer("127.0.0.1", []int{8080, 8000, 1234, 11434})
+}
+
+// probeServer tries GET /v1/models on each port of host and returns the
+// chat/completions URL for the first port that responds HTTP 200.
+func probeServer(host string, ports []int) (string, error) {
 	client := &http.Client{Timeout: 2 * time.Second}
 	for _, port := range ports {
-		url := fmt.Sprintf("http://localhost:%d/v1/models", port)
+		url := fmt.Sprintf("http://%s:%d/v1/models", host, port)
 		resp, err := client.Get(url)
 		if err != nil {
 			continue
 		}
 		resp.Body.Close()
 		if resp.StatusCode == http.StatusOK {
-			base := fmt.Sprintf("http://localhost:%d/v1/chat/completions", port)
+			base := fmt.Sprintf("http://%s:%d/v1/chat/completions", host, port)
 			fmt.Fprintf(os.Stderr, "detected local server on port %d\n", port)
 			return base, nil
 		}
 	}
-	return "", errors.New("no local LLM server found (tried ports 8080, 8000, 1234, 11434)")
+	return "", fmt.Errorf("no local LLM server found (tried ports %v)", ports)
 }
 
 func readPrompt(args []string) (string, error) {
