@@ -72,6 +72,37 @@ echo '{"tool":"write_file","args":{"path":"data.json","content":"{\"status\":\"o
 
 If the process crashes mid-write, the target file is never left in a partial state. The rename is atomic on all major filesystems. The temp file is cleaned up on error.
 
+## Command Risk Classifier
+
+Before executing any shell command, `run_shell` classifies it by examining the leading verb and flags:
+
+| Level | Behavior | Examples |
+|-------|----------|---------|
+| `safe` | Executed normally | `ls`, `cat`, `grep`, `find`, `echo` |
+| `caution` | Executed normally; modifies state | `cp`, `mv`, `mkdir`, `sed -i`, `curl`, unknown verbs |
+| `dangerous` | **Blocked** unless `force: true` | `rm`, `dd`, `sudo`, `kill`, `shutdown`, pipe to `sh`/`bash` |
+
+The `risk` field is always present in `run_shell` responses. Dangerous commands return an error with `risk: "dangerous"` and a `suggestion` unless `force: true` is set:
+
+```json
+{
+  "ok": false,
+  "error": "blocked by risk classifier: dangerous — removes files — irreversible",
+  "suggestion": "pass force:true in args to override, or use a less-destructive command",
+  "risk": "dangerous"
+}
+```
+
+To override the block for a known-safe case:
+
+```bash
+echo '{"tool":"run_shell","args":{"command":"rm -rf /tmp/build-cache","force":true}}' | jinn
+```
+
+Pipelines return the maximum risk of any component (`cmd1 | cmd2` inherits the higher classification). Pipe-to-shell (`cmd | bash`) is always `dangerous`. Unknown verbs default to `caution`, not `safe`.
+
+---
+
 ## Shell Environment Scrubbing
 
 `run_shell` does not inherit your full shell environment. jinn scrubs the environment down to an allowlist before executing the command:
@@ -108,6 +139,22 @@ When shell output exceeds 1 MB, it spills to a temp file (`jinn-shell-*.log`). j
 
 The repeated line collapse replaces 3 or more identical consecutive output lines with `[... N identical lines collapsed ...]`. This keeps build output and log dumps readable without losing the line count.
 
+## Special File Reads
+
+`read_file` applies type-specific handling before returning content:
+
+| File type | Behavior |
+|-----------|---------|
+| `.pdf` | Returns `ok: false` with `suggestion: "convert the PDF to text first (pdftotext, pdftk, or a cloud OCR service) and read the text file"` |
+| Images (`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.svg`, `.bmp`) | Returns `data:<mime>;base64,<payload>` so callers can pass it directly to a vision model. MIME normalization: `.jpg` → `image/jpeg`, `.svg` → `image/svg+xml`. |
+| Binary (null byte in first 512 bytes) | Returns `[binary file: N bytes — use checksum_tree for integrity or skip content reads]` (success, not error) |
+
+## Memory Persistence
+
+The `memory` tool stores its file at `~/.config/jinn/memory.json` (or `$JINN_CONFIG_DIR/jinn/memory.json` when the env var is set). The directory is created with mode `0700`. The file is written with mode `0600` via atomic temp+rename, so partial writes cannot corrupt the store.
+
+---
+
 ## Summary
 
 | Mechanism | Scope | Configurable |
@@ -117,6 +164,8 @@ The repeated line collapse replaces 3 or more identical consecutive output lines
 | TOCTOU tracking | `read_file` records, `write_file`/`edit_file`/`multi_edit` enforce | No |
 | Atomic writes | `write_file`, `edit_file`, `multi_edit` | No |
 | Environment scrubbing | `run_shell` | No |
+| Risk classifier | `run_shell` | `force: true` overrides dangerous block |
 | Output bounds | All tools | No |
+| Memory file permissions | `memory` | `$JINN_CONFIG_DIR` relocates storage |
 
-Security in jinn is enforced at the engine level. Every tool goes through the same path resolution and checks -- there are no bypasses, no flags to disable protection, and no per-tool exceptions.
+Security in jinn is enforced at the engine level. Path confinement, sensitive path blocking, TOCTOU tracking, and environment scrubbing have no bypass. The risk classifier has one intentional override (`force: true`) for callers that have verified the command is safe for their context.

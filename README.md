@@ -6,7 +6,7 @@
 
 - **Zero dependencies.** Built with Go's standard library only.
 - **Single binary.** Trivial to distribute and run.
-- **Security by default.** No escape hatches, no "disable-sandbox" flags.
+- **Security by default.** Path confinement, TOCTOU protection, and a risk classifier that blocks destructive commands.
 
 ---
 
@@ -56,21 +56,23 @@ echo '{"tool":"run_shell","args":{"command":"go test ./..."}}' | jinn
 
 ## Toolset
 
-`jinn` exposes 11 specialized tools for coding agents:
+`jinn` exposes 13 specialized tools for coding agents:
 
 | Tool | Description |
 | :--- | :--- |
-| `read_file` | Read windowed chunks of a file with line numbers (max 50MB). |
+| `read_file` | Read windowed chunks of a file with line numbers (max 50MB). PDFs return a structured error; images return a base64 data URI. |
 | `write_file` | Atomic full-file write. Creates parent directories automatically. |
-| `edit_file` | Targeted text replacement. Handles fuzzy whitespace/quotes. |
+| `edit_file` | Targeted text replacement. Handles fuzzy whitespace/quotes, CRLF/BOM preservation, `dry_run` diff preview. |
 | `multi_edit` | Apply batch edits across multiple files atomically (2-phase commit). |
 | `search_files` | Fast grep/regex search with glob filtering and context lines. |
-| `run_shell` | Controlled bash execution with environment scrubbing and timeouts. |
+| `run_shell` | Controlled bash execution with risk classification. Dangerous commands blocked unless `force: true`. |
 | `stat_file` | Get metadata (size, lines, mtime) without reading contents. |
 | `list_dir` | Recursive directory tree exploration (skips hidden files). |
 | `detect_project` | Auto-detect language, frameworks, and build/test/lint commands. |
 | `checksum_tree` | Compute SHA-256 hashes for a tree to verify workspace integrity. |
 | `list_tools` | Programmatic access to the tool schema from within the protocol. |
+| `memory` | Persistent key/value store across sessions. Actions: `save`, `recall`, `list`, `forget`. |
+| `lsp_query` | Query a language server for `definition`, `references`, `hover`, or `symbols`. |
 
 ---
 
@@ -82,7 +84,8 @@ Security is not an opt-in feature; it is the core of the engine.
 2. **Sensitive Blocklist:** Direct access to `.git`, `.ssh`, `.aws`, `.env`, and `.gnupg` is always denied.
 3. **TOCTOU Protection:** `jinn` records file `mtime` during `read_file`. If a file is modified externally before an agent calls `write_file` or `edit_file`, the update is rejected.
 4. **Environment Scrubbing:** `run_shell` runs with a minimal allowlist of environment variables (e.g., `PATH`, `LANG`, `TMPDIR`). Your `STRIPE_API_KEY` stays safe.
-5. **Output Caps:** Stdout/stderr is capped at 1MB. Excess output spills to a temp file, and the agent receives a truncated tail.
+5. **Risk Classifier:** Every `run_shell` command is classified as `safe`, `caution`, or `dangerous`. Dangerous commands (e.g., `rm -rf`, `dd`, `sudo`) are blocked outright unless the caller passes `"force": true`.
+6. **Output Caps:** Stdout/stderr is capped at 1MB. Excess output spills to a temp file, and the agent receives a truncated tail.
 
 ---
 

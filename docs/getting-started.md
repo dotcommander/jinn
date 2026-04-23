@@ -76,6 +76,20 @@ Every response is one of two shapes:
 {"ok": false, "error": "..."}
 ```
 
+Some tools add optional fields to the envelope:
+
+| Field | When present | Description |
+|-------|-------------|-------------|
+| `suggestion` | On structured errors | One-sentence next-step hint — read it before retrying |
+| `classification` | `run_shell` (always) | Exit-code class: `success`, `expected_nonzero`, `error`, `timeout`, `signal` |
+| `risk` | `run_shell` (always) | Pre-execution risk: `safe`, `caution`, `dangerous` |
+
+Example with extended fields:
+
+```json
+{"ok": true, "result": "[exit: 0]\nok\n[classification: success — exit 0]", "risk": "safe", "classification": "success"}
+```
+
 The protocol is **one-shot**: one JSON request on stdin, one JSON response on stdout. jinn is not a daemon. It starts, handles one request, and exits.
 
 If stdin is a terminal (you run `jinn` with no pipe), jinn prints a short help message and exits. You must pipe input or redirect from a file.
@@ -136,7 +150,38 @@ Each line in `requests.jsonl` is a complete JSON request object. jinn processes 
 | `--version` | Print the version and exit |
 | `--help`, `-h` | Print usage information and exit |
 
+## Persistent Memory
+
+The `memory` tool stores key/value pairs across jinn invocations at `~/.config/jinn/memory.json`:
+
+```bash
+# Save a value
+echo '{"tool":"memory","args":{"action":"save","key":"db_url","value":"postgres://localhost/myapp"}}' | jinn
+
+# Recall it later
+echo '{"tool":"memory","args":{"action":"recall","key":"db_url"}}' | jinn
+
+# List all keys
+echo '{"tool":"memory","args":{"action":"list"}}' | jinn
+```
+
+Keys must match `[a-zA-Z0-9_.-]` (max 128 chars). Values are capped at 16 KiB; the total store at 1 MiB.
+
+## Language Server Queries
+
+The `lsp_query` tool connects to a running language server to answer semantic questions about source code. The server is auto-selected from the file extension:
+
+```bash
+# Jump to definition at line 12, character 5
+echo '{"tool":"lsp_query","args":{"action":"definition","path":"main.go","line":12,"character":5}}' | jinn
+
+# List all symbols in a file
+echo '{"tool":"lsp_query","args":{"action":"symbols","path":"internal/jinn/engine.go"}}' | jinn
+```
+
+Supported actions: `definition`, `references`, `hover`, `symbols`. Supported extensions: `.go`, `.rs`, `.py`, `.ts`, `.tsx`, `.js`, `.jsx`. The server binary must be on `PATH`; if missing, the response includes a `suggestion` with the install command.
+
 ## What's Next
 
 - [Tool Reference](tool-reference.md) -- every tool with full parameter tables and examples
-- [Security](security.md) -- path confinement, TOCTOU protection, and atomic writes
+- [Security](security.md) -- path confinement, TOCTOU protection, atomic writes, and the risk classifier
