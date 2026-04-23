@@ -71,9 +71,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	result, err := e.Dispatch(ctx, req.Tool, req.Args)
+	result, meta, err := e.Dispatch(ctx, req.Tool, req.Args)
 	if err != nil {
-		resp := jinn.Response{Error: err.Error()}
+		resp := jinn.Response{
+			Error:          err.Error(),
+			Risk:           meta["risk"],
+			Classification: meta["classification"],
+		}
 		// Populate suggestion field when the error carries one.
 		var sErr *jinn.ErrWithSuggestion
 		if errors.As(err, &sErr) {
@@ -83,5 +87,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	json.NewEncoder(os.Stdout).Encode(jinn.Response{OK: true, Result: result})
+	json.NewEncoder(os.Stdout).Encode(jinn.Response{
+		OK:             true,
+		Result:         result,
+		Classification: meta["classification"],
+		Risk:           meta["risk"],
+	})
 }

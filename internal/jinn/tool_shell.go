@@ -25,10 +25,24 @@ func shellEnv() []string {
 	return env
 }
 
-func (e *Engine) runShell(ctx context.Context, args map[string]interface{}) (string, error) {
+// runShell executes a shell command and returns (result, meta, error).
+// Meta keys: "risk" (pre-execution risk level) and "classification" (exit-code class).
+// Dangerous commands are blocked unless args["force"] is true.
+func (e *Engine) runShell(ctx context.Context, args map[string]interface{}) (string, map[string]string, error) {
 	cmd, _ := args["command"].(string)
 	if dryRun, ok := args["dry_run"].(bool); ok && dryRun {
-		return fmt.Sprintf("[dry-run] would execute: %s", cmd), nil
+		return fmt.Sprintf("[dry-run] would execute: %s", cmd), nil, nil
+	}
+
+	// Risk classification — block dangerous commands unless force=true.
+	riskLevel, riskReason := ClassifyCommand(cmd)
+	if riskLevel == RiskDangerous {
+		if force, _ := args["force"].(bool); !force {
+			return "", map[string]string{"risk": riskLevel.String()}, &ErrWithSuggestion{
+				Err:        fmt.Errorf("blocked by risk classifier: %s — %s", riskLevel, riskReason),
+				Suggestion: `pass force:true in args to override, or use a less-destructive command`,
+			}
+		}
 	}
 
 	timeout := intArg(args, "timeout", 30)
@@ -82,5 +96,11 @@ func (e *Engine) runShell(ctx context.Context, args map[string]interface{}) (str
 	// rather than an error, so the LLM sees the command's output alongside
 	// the classification and does not misinterpret a semantic non-zero as failure.
 	output := fmt.Sprintf("[exit: %d]\n%s", exitCode, truncateTail(raw, 200))
-	return fmt.Sprintf("%s\n[classification: %s — %s]", output, class, reason), nil
+	result := fmt.Sprintf("%s\n[classification: %s — %s]", output, class, reason)
+
+	meta := map[string]string{
+		"risk":           riskLevel.String(),
+		"classification": string(class),
+	}
+	return result, meta, nil
 }

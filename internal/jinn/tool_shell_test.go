@@ -9,7 +9,7 @@ import (
 func TestRunShell_Echo(t *testing.T) {
 	t.Parallel()
 	e, _ := testEngine(t)
-	result, err := e.runShell(context.Background(), args("command", "echo hello"))
+	result, _, err := e.runShell(context.Background(), args("command", "echo hello"))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -21,7 +21,7 @@ func TestRunShell_Echo(t *testing.T) {
 func TestRunShell_ExitCode(t *testing.T) {
 	t.Parallel()
 	e, _ := testEngine(t)
-	result, err := e.runShell(context.Background(), args("command", "exit 42"))
+	result, _, err := e.runShell(context.Background(), args("command", "exit 42"))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -33,7 +33,7 @@ func TestRunShell_ExitCode(t *testing.T) {
 func TestRunShell_TimeoutClamp(t *testing.T) {
 	t.Parallel()
 	e, _ := testEngine(t)
-	result, err := e.runShell(context.Background(), args("command", "echo ok", "timeout", float64(9999)))
+	result, _, err := e.runShell(context.Background(), args("command", "echo ok", "timeout", float64(9999)))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -45,7 +45,7 @@ func TestRunShell_TimeoutClamp(t *testing.T) {
 func TestRunShell_DryRun(t *testing.T) {
 	t.Parallel()
 	e, _ := testEngine(t)
-	result, err := e.runShell(context.Background(), args("command", "rm -rf /", "dry_run", true))
+	result, _, err := e.runShell(context.Background(), args("command", "rm -rf /", "dry_run", true))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -60,7 +60,7 @@ func TestRunShell_DryRun(t *testing.T) {
 func TestRunShell_CollapseRepeated(t *testing.T) {
 	t.Parallel()
 	e, _ := testEngine(t)
-	result, err := e.runShell(context.Background(), args("command", "for i in $(seq 1 10); do echo same; done"))
+	result, _, err := e.runShell(context.Background(), args("command", "for i in $(seq 1 10); do echo same; done"))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -74,7 +74,7 @@ func TestRunShell_CollapseRepeated(t *testing.T) {
 func TestRunShell_Classification_Success(t *testing.T) {
 	t.Parallel()
 	e, _ := testEngine(t)
-	result, err := e.runShell(context.Background(), args("command", "echo hi"))
+	result, _, err := e.runShell(context.Background(), args("command", "echo hi"))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -88,7 +88,7 @@ func TestRunShell_Classification_GrepNoMatch(t *testing.T) {
 	e, dir := testEngine(t)
 	_ = dir
 	// grep exits 1 when no match — should be expected_nonzero.
-	result, err := e.runShell(context.Background(), args("command", "grep ZZZNOMATCH /dev/null; true"))
+	result, _, err := e.runShell(context.Background(), args("command", "grep ZZZNOMATCH /dev/null; true"))
 	// We run 'grep ... ; true' to ensure exit 0 from the shell, then test
 	// the classifier directly.
 	if err != nil {

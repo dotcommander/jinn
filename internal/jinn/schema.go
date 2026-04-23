@@ -12,7 +12,8 @@ const Schema = `[
         "properties": {
           "command": {"type": "string", "description": "bash command to execute"},
           "timeout": {"type": "integer", "description": "max seconds (default: 30)"},
-          "dry_run": {"type": "boolean", "description": "preview command without executing (default: false)"}
+          "dry_run": {"type": "boolean", "description": "preview command without executing (default: false)"},
+          "force":   {"type": "boolean", "description": "If true, execute commands even when risk classification is 'dangerous'. Default false."}
         },
         "required": ["command"]
       }
@@ -185,6 +186,39 @@ const Schema = `[
         }
       }
     }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "memory",
+      "description": "Persistent key/value memory for the agent. Save, recall, list, or forget keys across sessions. Stored at ~/.config/jinn/memory.json (or $JINN_CONFIG_DIR/memory.json).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "action": {"type": "string", "enum": ["save", "recall", "list", "forget"], "description": "Operation to perform."},
+          "key":    {"type": "string", "description": "Key name (1-128 chars, [a-zA-Z0-9_.-]). Required for save, recall, forget."},
+          "value":  {"type": "string", "description": "Value to store (max 16 KiB). Required for save."}
+        },
+        "required": ["action"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "lsp_query",
+      "description": "Query a language server (gopls, rust-analyzer, pylsp, typescript-language-server) for semantic info at a source location. Auto-detects the right server from file extension.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "action":    {"type": "string", "enum": ["definition", "references", "hover", "symbols"], "description": "Query type."},
+          "path":      {"type": "string", "description": "Path to source file, relative to workDir."},
+          "line":      {"type": "integer", "description": "1-based line number. Required for definition/references/hover."},
+          "character": {"type": "integer", "description": "1-based character offset within the line. Required for definition/references/hover."}
+        },
+        "required": ["action", "path"]
+      }
+    }
   }
 ]`
 
@@ -196,8 +230,10 @@ type Request struct {
 
 // Response is the one-shot tool result envelope.
 type Response struct {
-	OK         bool   `json:"ok"`
-	Result     string `json:"result,omitempty"`
-	Error      string `json:"error,omitempty"`
-	Suggestion string `json:"suggestion,omitempty"`
+	OK             bool   `json:"ok"`
+	Result         string `json:"result,omitempty"`
+	Error          string `json:"error,omitempty"`
+	Suggestion     string `json:"suggestion,omitempty"`
+	Classification string `json:"classification,omitempty"` // exit-code class: "success", "expected_nonzero", "error", "timeout", "signal"
+	Risk           string `json:"risk,omitempty"`           // pre-execution risk: "safe", "caution", "dangerous" — only set by run_shell
 }

@@ -1,9 +1,11 @@
 package jinn
 
 import (
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -68,6 +70,28 @@ func (e *Engine) readFile(args map[string]interface{}) (string, error) {
 
 	e.tracker.record(resolved, info.ModTime())
 
+	// PDF: reject before image/binary checks — pdftotext is a better tool.
+	ext := strings.ToLower(filepath.Ext(resolved))
+	if ext == ".pdf" {
+		return "", &ErrWithSuggestion{
+			Err:        fmt.Errorf("pdf extraction not supported in zero-dep mode"),
+			Suggestion: "convert the PDF to text first (pdftotext, pdftk, or a cloud OCR service) and read the text file",
+		}
+	}
+
+	// Image: return a data URI so callers can pass it to a vision model directly.
+	if isImageExt(ext) {
+		encoded := base64.StdEncoding.EncodeToString(data)
+		mime := "image/" + strings.TrimPrefix(ext, ".")
+		if ext == ".jpg" {
+			mime = "image/jpeg"
+		}
+		if ext == ".svg" {
+			mime = "image/svg+xml"
+		}
+		return "data:" + mime + ";base64," + encoded, nil
+	}
+
 	check := data
 	if len(check) > 512 {
 		check = check[:512]
@@ -131,4 +155,13 @@ func (e *Engine) readFile(args map[string]interface{}) (string, error) {
 			total, startLine, endLine, endLine+1)
 	}
 	return result, nil
+}
+
+// isImageExt reports whether ext (lowercase, dot-prefixed) is a supported image type.
+func isImageExt(ext string) bool {
+	switch ext {
+	case ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp":
+		return true
+	}
+	return false
 }
