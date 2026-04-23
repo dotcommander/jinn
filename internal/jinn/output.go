@@ -119,3 +119,10 @@ func collapseRepeatedLines(s string) string {
 	}
 	return strings.TrimRight(b.String(), "\n")
 }
+
+// formatTruncatedHint returns the standard hint string appended when list_dir
+// or search_files truncates results. shown and total are entry counts;
+// narrowHint names the parameter the agent can use to reduce the result set.
+func formatTruncatedHint(shown, total int, narrowHint string) string {
+	return fmt.Sprintf("[TRUNCATED: %d of %d entries. Use %s to narrow.]", shown, total, narrowHint)
+}

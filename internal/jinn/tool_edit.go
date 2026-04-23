@@ -12,6 +12,50 @@ type matchInfo struct {
 	endLine   int // 1-based line number where the match ends
 }
 
+// collectMatchLines returns 1-based line numbers for every occurrence of
+// needle in haystack, capped at maxMatches. If the total exceeds maxMatches
+// the returned slice has exactly maxMatches entries and overflow > 0.
+func collectMatchLines(haystack, needle string, maxMatches int) (lines []int, overflow int) {
+	pos := 0
+	total := 0
+	for {
+		idx := strings.Index(haystack[pos:], needle)
+		if idx < 0 {
+			break
+		}
+		absIdx := pos + idx
+		total++
+		if total <= maxMatches {
+			lineNum := strings.Count(haystack[:absIdx], "\n") + 1
+			lines = append(lines, lineNum)
+		}
+		pos = absIdx + len(needle)
+		if pos >= len(haystack) {
+			break
+		}
+	}
+	overflow = total - len(lines)
+	return lines, overflow
+}
+
+// multiMatchError builds the "matches N locations (lines: …)" error message.
+// Cap at 10 line numbers; append "... and K more" when the total exceeds 10.
+func multiMatchError(count int, haystack, needle string) error {
+	const cap = 10
+	lines, overflow := collectMatchLines(haystack, needle, cap)
+	nums := make([]string, len(lines))
+	for i, l := range lines {
+		nums[i] = fmt.Sprintf("%d", l)
+	}
+	lineList := strings.Join(nums, ", ")
+	msg := fmt.Sprintf("old_text matches %d locations (lines: %s)", count, lineList)
+	if overflow > 0 {
+		msg += fmt.Sprintf(" ... and %d more", overflow)
+	}
+	msg += " — must be unique. Add surrounding context to disambiguate"
+	return fmt.Errorf("%s", msg)
+}
+
 func applyEdit(content []byte, oldText, newText string, fuzzyIndent bool) (string, bool, matchInfo, error) {
 	var info matchInfo
 	raw, bom := stripBom(string(content))
@@ -37,7 +81,7 @@ func applyEdit(content []byte, oldText, newText string, fuzzyIndent bool) (strin
 		return "", false, info, fmt.Errorf("old_text not found in file")
 	}
 	if count > 1 {
-		return "", false, info, fmt.Errorf("old_text matches %d locations — must be unique. Add surrounding context to disambiguate", count)
+		return "", false, info, multiMatchError(count, raw, oldText)
 	}
 
 	idx := strings.Index(raw, oldText)

@@ -10,6 +10,15 @@ import (
 var sensitiveSegments = []string{"/.git/", "/.ssh/", "/.aws/", "/.gnupg/"}
 var sensitiveDirs = []string{".git", ".ssh", ".aws", ".gnupg"}
 
+// sensitivePathErr builds the standard "blocked path" error with
+// a single canonical suggestion string shared by all sensitive-path guards.
+func sensitivePathErr(p string) error {
+	return &ErrWithSuggestion{
+		Err:        fmt.Errorf("sensitive path: %s", p),
+		Suggestion: "this path is blocked for security; request the specific field or artifact from the user instead",
+	}
+}
+
 func (e *Engine) resolvePath(p string) string {
 	if !strings.HasPrefix(p, "/") {
 		p = filepath.Join(e.workDir, p)
@@ -33,29 +42,37 @@ func (e *Engine) checkPath(p string) (string, error) {
 				real = resolved
 			}
 		} else {
-			real = resolved
+			// Symlink resolution failed for a non-existence reason — likely a
+			// symlink whose target is outside the sandbox.
+			return "", &ErrWithSuggestion{
+				Err:        fmt.Errorf("symlink target is outside the sandbox: %s", p),
+				Suggestion: "symlink target is outside the sandbox; follow the symlink manually via its absolute path if authorized",
+			}
 		}
 	}
 
 	// Check sensitive segments on the resolved path.
 	for _, seg := range sensitiveSegments {
 		if strings.Contains(real, seg) {
-			return "", fmt.Errorf("sensitive path: %s", p)
+			return "", sensitivePathErr(p)
 		}
 	}
 	base := filepath.Base(real)
 	for _, dir := range sensitiveDirs {
 		if base == dir {
-			return "", fmt.Errorf("sensitive path: %s", p)
+			return "", sensitivePathErr(p)
 		}
 	}
 	if base == ".env" || strings.HasPrefix(base, ".env.") {
-		return "", fmt.Errorf("sensitive path: %s", p)
+		return "", sensitivePathErr(p)
 	}
 
 	// Check workdir boundary on the resolved path.
 	if !strings.HasPrefix(real, e.workDir+"/") && real != e.workDir {
-		return "", fmt.Errorf("%s is outside working directory", p)
+		return "", &ErrWithSuggestion{
+			Err:        fmt.Errorf("%s is outside working directory", p),
+			Suggestion: "path resolves outside the sandbox root; supply a path inside the workdir",
+		}
 	}
 	return real, nil
 }

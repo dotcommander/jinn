@@ -6,7 +6,7 @@ const Schema = `[
     "type": "function",
     "function": {
       "name": "run_shell",
-      "description": "Run a bash command. Returns stdout/stderr (first 200 lines), prefixed with [exit: N].",
+      "description": "Run a bash command. Returns stdout/stderr (first 200 lines), prefixed with [exit: N] and a classification field indicating whether a non-zero exit is a semantic signal (expected_nonzero) or a real failure (error).",
       "parameters": {
         "type": "object",
         "properties": {
@@ -22,7 +22,7 @@ const Schema = `[
     "type": "function",
     "function": {
       "name": "read_file",
-      "description": "Read file contents with line numbers. Up to 200 lines per call. Use start_line/end_line for large files.",
+      "description": "Read file contents with line numbers. Up to 200 lines per call. Use start_line/end_line for large files. On error, a 'suggestion' field provides a one-sentence next-step hint.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -55,7 +55,7 @@ const Schema = `[
     "type": "function",
     "function": {
       "name": "edit_file",
-      "description": "Replace exact text in a file. old_text must appear exactly once. Atomic via temp+rename.",
+      "description": "Replace exact text in a file. old_text must appear exactly once. On multi-match failure, the error includes line numbers of all matches (up to 10) so you can add surrounding context to disambiguate. Atomic via temp+rename.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -74,7 +74,7 @@ const Schema = `[
     "type": "function",
     "function": {
       "name": "multi_edit",
-      "description": "Apply multiple edits across files atomically. All edits are validated first; if any fail, none are applied.",
+      "description": "Apply multiple edits across files atomically. All edits are validated first; if any fail, none are applied. On multi-match failure, line numbers are included in the error.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -102,7 +102,7 @@ const Schema = `[
     "type": "function",
     "function": {
       "name": "search_files",
-      "description": "Search file contents with grep. Returns file:line:match. Max 100 results.",
+      "description": "Search file contents with grep. Returns file:line:match. Default limit is 500 matches; set max_matches to adjust. When truncated, response includes truncated=true and total_count.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -111,8 +111,9 @@ const Schema = `[
           "include": {"type": "string", "description": "file glob filter, e.g. *.go"},
           "context_lines": {"type": "integer", "description": "lines of context around matches (default: 0)"},
           "case_insensitive": {"type": "boolean", "description": "case-insensitive search (default: false)"},
-          "max_results": {"type": "integer", "description": "Maximum number of results to return. 0 = unlimited.", "default": 0},
-          "format": {"type": "string", "description": "output format: 'text' (default), 'json' (structured results), or 'filenames' (filenames with match counts)", "enum": ["text", "json", "filenames"]}
+          "max_matches": {"type": "integer", "description": "Maximum number of matches to return (default: 500). Distinct from per-line truncation. When exceeded, response includes truncated=true and total_count.", "default": 500},
+          "max_results": {"type": "integer", "description": "Deprecated alias for max_matches. Use max_matches instead.", "default": 0},
+          "format": {"type": "string", "description": "output format: 'text' (default), 'json' (structured results with truncation metadata), or 'filenames' (filenames with match counts)", "enum": ["text", "json", "filenames"]}
         },
         "required": ["pattern"]
       }
@@ -136,12 +137,13 @@ const Schema = `[
     "type": "function",
     "function": {
       "name": "list_dir",
-      "description": "List directory contents. Hidden files excluded.",
+      "description": "List directory contents. Hidden files excluded. Default limit is 500 entries (max 10000); set max_entries to adjust. When truncated, response includes truncated=true and total_count.",
       "parameters": {
         "type": "object",
         "properties": {
           "path": {"type": "string", "description": "directory to list (default: .)"},
-          "depth": {"type": "integer", "description": "max depth (default: 3)"}
+          "depth": {"type": "integer", "description": "max depth (default: 3)"},
+          "max_entries": {"type": "integer", "description": "Maximum number of entries to return (default: 500, cap: 10000). When exceeded, response includes truncated=true and total_count.", "default": 500}
         }
       }
     }
@@ -194,7 +196,8 @@ type Request struct {
 
 // Response is the one-shot tool result envelope.
 type Response struct {
-	OK     bool   `json:"ok"`
-	Result string `json:"result,omitempty"`
-	Error  string `json:"error,omitempty"`
+	OK         bool   `json:"ok"`
+	Result     string `json:"result,omitempty"`
+	Error      string `json:"error,omitempty"`
+	Suggestion string `json:"suggestion,omitempty"`
 }

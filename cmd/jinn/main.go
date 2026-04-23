@@ -73,7 +73,13 @@ func main() {
 
 	result, err := e.Dispatch(ctx, req.Tool, req.Args)
 	if err != nil {
-		json.NewEncoder(os.Stdout).Encode(jinn.Response{Error: err.Error()})
+		resp := jinn.Response{Error: err.Error()}
+		// Populate suggestion field when the error carries one.
+		var sErr *jinn.ErrWithSuggestion
+		if errors.As(err, &sErr) {
+			resp.Suggestion = sErr.Suggestion
+		}
+		json.NewEncoder(os.Stdout).Encode(resp)
 		os.Exit(1)
 	}
 

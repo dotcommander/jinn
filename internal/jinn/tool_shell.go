@@ -31,10 +31,7 @@ func (e *Engine) runShell(ctx context.Context, args map[string]interface{}) (str
 		return fmt.Sprintf("[dry-run] would execute: %s", cmd), nil
 	}
 
-	timeout := 30
-	if t, ok := args["timeout"].(float64); ok && t >= 1 {
-		timeout = int(t)
-	}
+	timeout := intArg(args, "timeout", 30)
 	if timeout > 300 {
 		timeout = 300
 	}
@@ -77,5 +74,13 @@ func (e *Engine) runShell(ctx context.Context, args map[string]interface{}) (str
 	if exitCode == 124 {
 		raw += fmt.Sprintf("\n[killed: exceeded %ds timeout]", timeout)
 	}
-	return fmt.Sprintf("[exit: %d]\n%s", exitCode, truncateTail(raw, 200)), nil
+
+	argv0 := extractArgv0(cmd)
+	class, reason := classifyExitCode(argv0, exitCode)
+
+	// Expected-nonzero exits return a success envelope (output + annotation)
+	// rather than an error, so the LLM sees the command's output alongside
+	// the classification and does not misinterpret a semantic non-zero as failure.
+	output := fmt.Sprintf("[exit: %d]\n%s", exitCode, truncateTail(raw, 200))
+	return fmt.Sprintf("%s\n[classification: %s — %s]", output, class, reason), nil
 }

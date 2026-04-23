@@ -34,20 +34,26 @@ func TestSearchFiles_JSONFormat(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Must be valid JSON array
-	if !strings.HasPrefix(result, "[") {
-		t.Fatalf("expected JSON array, got: %s", result)
+	// Result is now a JSON object with results/truncated/total_count fields.
+	if !strings.HasPrefix(result, "{") {
+		t.Fatalf("expected JSON object, got: %s", result)
 	}
 
-	var results []searchResult
-	if err := json.Unmarshal([]byte(result), &results); err != nil {
+	var resp struct {
+		Results    []searchResult `json:"results"`
+		Truncated  bool           `json:"truncated"`
+		TotalCount int            `json:"total_count"`
+	}
+	// Unmarshal only the first JSON object (hint may follow on next line).
+	dec := json.NewDecoder(strings.NewReader(result))
+	if err := dec.Decode(&resp); err != nil {
 		t.Fatalf("failed to parse JSON: %v\ninput: %s", err, result)
 	}
-	if len(results) == 0 {
+	if len(resp.Results) == 0 {
 		t.Fatal("expected at least one result")
 	}
 
-	r := results[0]
+	r := resp.Results[0]
 	// rg outputs ./src.go, grep outputs src.go — accept either
 	if !strings.HasSuffix(r.File, "src.go") {
 		t.Errorf("expected file ending in src.go, got: %s", r.File)
@@ -84,15 +90,18 @@ func TestSearchFiles_JSONWithContext(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	var results []searchResult
-	if err := json.Unmarshal([]byte(result), &results); err != nil {
+	var resp struct {
+		Results []searchResult `json:"results"`
+	}
+	dec := json.NewDecoder(strings.NewReader(result))
+	if err := dec.Decode(&resp); err != nil {
 		t.Fatalf("failed to parse JSON: %v\ninput: %s", err, result)
 	}
-	if len(results) == 0 {
+	if len(resp.Results) == 0 {
 		t.Fatal("expected at least one result")
 	}
 
-	r := results[0]
+	r := resp.Results[0]
 	if r.ContextBefore == "" {
 		t.Error("expected non-empty context_before with context_lines=1")
 	}
@@ -107,6 +116,39 @@ func TestSearchFiles_JSONWithContext(t *testing.T) {
 	}
 }
 
+func TestSearchFiles_JSONWithContextOrder(t *testing.T) {
+	t.Parallel()
+	e, dir := testEngine(t)
+	// alpha=line1, beta=line2, gamma=line3, TARGET=line4, delta=line5, epsilon=line6
+	writeTestFile(t, dir, "order.go", "alpha\nbeta\ngamma\nTARGET\ndelta\nepsilon\n")
+
+	result, err := e.searchFiles(args("pattern", "TARGET", "format", "json", "context_lines", 2.0))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var resp struct {
+		Results []searchResult `json:"results"`
+	}
+	if err := json.NewDecoder(strings.NewReader(result)).Decode(&resp); err != nil {
+		t.Fatalf("failed to parse JSON: %v\ninput: %s", err, result)
+	}
+	if len(resp.Results) == 0 {
+		t.Fatal("expected at least one result")
+	}
+
+	r := resp.Results[0]
+	// ContextBefore must be top-to-bottom: "beta" before "gamma".
+	betaIdx := strings.Index(r.ContextBefore, "beta")
+	gammaIdx := strings.Index(r.ContextBefore, "gamma")
+	if betaIdx < 0 || gammaIdx < 0 {
+		t.Errorf("expected both 'beta' and 'gamma' in context_before, got: %q", r.ContextBefore)
+	} else if betaIdx > gammaIdx {
+		t.Errorf("context_before order is reversed: 'beta' (idx %d) should appear before 'gamma' (idx %d), got: %q",
+			betaIdx, gammaIdx, r.ContextBefore)
+	}
+}
+
 func TestSearchFiles_NoMatch(t *testing.T) {
 	t.Parallel()
 	e, dir := testEngine(t)
@@ -116,8 +158,8 @@ func TestSearchFiles_NoMatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result != "[]" {
-		t.Errorf("expected empty JSON array for no match, got: %s", result)
+	if !strings.Contains(result, `"results":[]`) {
+		t.Errorf("expected empty results array for no match, got: %s", result)
 	}
 }
 
@@ -130,115 +172,84 @@ func TestSearchFiles_InvalidRegex(t *testing.T) {
 	}
 }
 
-func TestParseSearchResults(t *testing.T) {
+func TestSearchFiles_DefaultMatchCap(t *testing.T) {
 	t.Parallel()
-
-	tests := []struct {
-		name string
-		raw  string
-		want int // expected number of results
-	}{
-		{
-			name: "basic match",
-			raw:  "file.txt:10:hello world\n",
-			want: 1,
-		},
-		{
-			name: "multiple files",
-			raw:  "a.go:5:func foo() {}\nb.go:12:func bar() {}\n",
-			want: 2,
-		},
-		{
-			name: "group separator",
-			raw:  "a.go:5:match one\n--\nb.go:10:match two\n",
-			want: 2,
-		},
-		{
-			name: "context lines with dash separator",
-			raw:  "a.go-4-before\na.go:5:MATCH\na.go-6-after\n",
-			want: 1,
-		},
-		{
-			name: "empty input",
-			raw:  "",
-			want: 0,
-		},
-		{
-			name: "rg column format",
-			raw:  "file.go:42:10:some text\n",
-			want: 1,
-		},
-		{
-			name: "no match returns empty slice not nil",
-			raw:  "Binary file foo.bin matches\n",
-			want: 0,
-		},
+	e, dir := testEngine(t)
+	// Create a file with more than searchDefaultMax matches.
+	var b strings.Builder
+	for range searchDefaultMax + 10 {
+		b.WriteString("needle\n")
 	}
+	writeTestFile(t, dir, "many.txt", b.String())
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			results := parseSearchResults(tc.raw)
-			if len(results) != tc.want {
-				t.Errorf("expected %d results, got %d (raw=%q)", tc.want, len(results), tc.raw)
-			}
-			// Verify nil safety: empty results should be an empty slice, not nil
-			if tc.want == 0 && results == nil {
-				t.Error("expected non-nil empty slice")
-			}
-		})
+	result, err := e.searchFiles(args("pattern", "needle", "format", "json"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var resp struct {
+		Results    []searchResult `json:"results"`
+		Truncated  bool           `json:"truncated"`
+		TotalCount int            `json:"total_count"`
+	}
+	dec := json.NewDecoder(strings.NewReader(result))
+	if err := dec.Decode(&resp); err != nil {
+		t.Fatalf("failed to parse JSON: %v\ninput: %s", err, result)
+	}
+	if !resp.Truncated {
+		t.Errorf("expected truncated=true for >%d matches, got: %+v", searchDefaultMax, resp)
+	}
+	if resp.TotalCount != searchDefaultMax+10 {
+		t.Errorf("expected total_count=%d, got %d", searchDefaultMax+10, resp.TotalCount)
 	}
 }
 
-func TestParseSearchResults_ContextFields(t *testing.T) {
+func TestSearchFiles_ExplicitMatchCap(t *testing.T) {
 	t.Parallel()
-	// Context lines use '-' separator, match lines use ':'
-	raw := "f.txt-4-before line\nf.txt:5:MATCH\nf.txt-6-after line\n"
-	results := parseSearchResults(raw)
-	if len(results) != 1 {
-		t.Fatalf("expected 1 result, got %d", len(results))
+	e, dir := testEngine(t)
+	var b strings.Builder
+	for range 20 {
+		b.WriteString("target\n")
 	}
-	r := results[0]
-	if r.Line != 5 {
-		t.Errorf("expected line 5, got %d", r.Line)
+	writeTestFile(t, dir, "cap.txt", b.String())
+
+	result, err := e.searchFiles(args("pattern", "target", "max_matches", float64(5), "format", "json"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(r.ContextBefore, "before line") {
-		t.Errorf("expected 'before line' in context_before, got %q", r.ContextBefore)
+	var resp struct {
+		Results    []searchResult `json:"results"`
+		Truncated  bool           `json:"truncated"`
+		TotalCount int            `json:"total_count"`
 	}
-	if !strings.Contains(r.ContextAfter, "after line") {
-		t.Errorf("expected 'after line' in context_after, got %q", r.ContextAfter)
+	dec := json.NewDecoder(strings.NewReader(result))
+	if err := dec.Decode(&resp); err != nil {
+		t.Fatalf("failed to parse JSON: %v\ninput: %s", err, result)
+	}
+	if !resp.Truncated {
+		t.Errorf("expected truncated=true with max_matches=5, got: %+v", resp)
+	}
+	if resp.TotalCount != 20 {
+		t.Errorf("expected total_count=20, got %d", resp.TotalCount)
 	}
 }
 
-func TestParseSearchResults_ColumnField(t *testing.T) {
+func TestSearchFiles_TruncatedHint(t *testing.T) {
 	t.Parallel()
-	raw := "f.go:42:10:code here\n"
-	results := parseSearchResults(raw)
-	if len(results) != 1 {
-		t.Fatalf("expected 1 result, got %d", len(results))
+	e, dir := testEngine(t)
+	var b strings.Builder
+	for range 10 {
+		b.WriteString("hint\n")
 	}
-	r := results[0]
-	if r.Line != 42 {
-		t.Errorf("expected line 42, got %d", r.Line)
-	}
-	if r.Column != 10 {
-		t.Errorf("expected column 10, got %d", r.Column)
-	}
-	if r.Text != "code here" {
-		t.Errorf("expected text 'code here', got %q", r.Text)
-	}
-}
+	writeTestFile(t, dir, "hint.txt", b.String())
 
-func TestParseSearchResults_MatchText(t *testing.T) {
-	t.Parallel()
-	// Standard grep format: file:line:text (leading ':' stripped)
-	raw := "file.go:10:some text here\n"
-	results := parseSearchResults(raw)
-	if len(results) != 1 {
-		t.Fatalf("expected 1 result, got %d", len(results))
+	result, err := e.searchFiles(args("pattern", "hint", "max_matches", float64(3), "format", "json"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	r := results[0]
-	if r.Text != "some text here" {
-		t.Errorf("expected text 'some text here', got %q", r.Text)
+	if !strings.Contains(result, "TRUNCATED") {
+		t.Errorf("expected TRUNCATED hint, got: %s", result)
+	}
+	if !strings.Contains(result, "max_matches") {
+		t.Errorf("expected 'max_matches' in hint, got: %s", result)
 	}
 }

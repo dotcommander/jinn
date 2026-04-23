@@ -53,6 +53,7 @@ func (e *Engine) multiEdit(args map[string]interface{}) (string, error) {
 
 		updated, fuzzy, info, err := applyEdit(data, oldText, newText, fuzzyIndent)
 		if err != nil {
+			// applyEdit already formats line-number disambiguation via multiMatchError.
 			return "", fmt.Errorf("edit[%d] %s: %w", i, path, err)
 		}
 

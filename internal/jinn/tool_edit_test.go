@@ -263,3 +263,112 @@ func TestEditFile_FuzzyIndentPreservesContent(t *testing.T) {
 		t.Error("unchanged line should still have 4-space indent")
 	}
 }
+
+// --- Feature 8: line-number disambiguation tests ---
+
+func TestEditFile_Ambiguous_LineNumbers(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		content     string
+		oldText     string
+		wantLines   string // expected substring in error, e.g. "lines: 1, 3"
+		wantCount   string // e.g. "matches 2 locations"
+		wantNoMatch bool   // test no-match path instead
+	}{
+		{
+			name:      "single match succeeds",
+			content:   "aaa\nbbb\naaa\n",
+			oldText:   "bbb",
+			wantLines: "", // no error
+		},
+		{
+			name:      "two matches report line numbers",
+			content:   "aaa\nbbb\naaa\n",
+			oldText:   "aaa",
+			wantCount: "matches 2 locations",
+			wantLines: "lines: 1, 3",
+		},
+		{
+			name: "fifteen matches truncated at 10",
+			content: func() string {
+				var b strings.Builder
+				for range 15 {
+					b.WriteString("dup\n")
+				}
+				return b.String()
+			}(),
+			oldText:   "dup",
+			wantCount: "matches 15 locations",
+			wantLines: "... and 5 more",
+		},
+		{
+			name:        "no match error unchanged",
+			content:     "hello world\n",
+			oldText:     "MISSING",
+			wantNoMatch: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			e, dir := testEngine(t)
+			writeTestFile(t, dir, "dis.txt", tc.content)
+			_, err := e.editFile(args("path", "dis.txt", "old_text", tc.oldText, "new_text", "X"))
+			if tc.wantLines == "" && tc.wantCount == "" && !tc.wantNoMatch {
+				// Single-match: success expected.
+				if err != nil {
+					t.Fatalf("expected success, got error: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			msg := err.Error()
+			if tc.wantNoMatch {
+				if !strings.Contains(msg, "not found") {
+					t.Errorf("expected 'not found', got: %s", msg)
+				}
+				return
+			}
+			if tc.wantCount != "" && !strings.Contains(msg, tc.wantCount) {
+				t.Errorf("expected %q in error, got: %s", tc.wantCount, msg)
+			}
+			if tc.wantLines != "" && !strings.Contains(msg, tc.wantLines) {
+				t.Errorf("expected %q in error, got: %s", tc.wantLines, msg)
+			}
+			if !strings.Contains(msg, "Add surrounding context to disambiguate") {
+				t.Errorf("expected disambiguation hint, got: %s", msg)
+			}
+		})
+	}
+}
+
+func TestMultiEdit_AmbiguousLineNumbers(t *testing.T) {
+	t.Parallel()
+	e, dir := testEngine(t)
+	writeTestFile(t, dir, "me.txt", "dup\nother\ndup\n")
+	// Read the file so tracker records it.
+	e.readFile(args("path", "me.txt"))
+
+	edits := []interface{}{
+		map[string]interface{}{
+			"path":     "me.txt",
+			"old_text": "dup",
+			"new_text": "replaced",
+		},
+	}
+	_, err := e.multiEdit(args("edits", edits))
+	if err == nil {
+		t.Fatal("expected error for ambiguous match, got nil")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "matches 2 locations") {
+		t.Errorf("expected 'matches 2 locations' in error, got: %s", msg)
+	}
+	if !strings.Contains(msg, "lines:") {
+		t.Errorf("expected 'lines:' in error, got: %s", msg)
+	}
+}

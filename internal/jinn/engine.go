@@ -27,6 +27,8 @@ func New(workDir string) *Engine {
 }
 
 // Dispatch routes a tool call to the appropriate handler.
+// When the returned error wraps *ErrWithSuggestion, callers can extract
+// the suggestion via errors.As for inclusion in their response envelope.
 func (e *Engine) Dispatch(ctx context.Context, tool string, args map[string]interface{}) (string, error) {
 	switch tool {
 	case "run_shell":
@@ -54,6 +56,15 @@ func (e *Engine) Dispatch(ctx context.Context, tool string, args map[string]inte
 	default:
 		return "", fmt.Errorf("unknown tool: %s", tool)
 	}
+}
+
+// intArg reads an int-valued argument from the JSON args map.
+// Returns def when the key is absent, non-numeric, or <= 0.
+func intArg(args map[string]interface{}, key string, def int) int {
+	if v, ok := args[key].(float64); ok && int(v) > 0 {
+		return int(v)
+	}
+	return def
 }
 
 // ResolveVersion returns a human-readable version string, preferring

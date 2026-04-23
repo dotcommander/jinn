@@ -1,11 +1,24 @@
 package jinn
 
 import (
+	"encoding/json"
 	"fmt"
 	"os/exec"
 	"strconv"
 	"strings"
 )
+
+const (
+	listDefaultMax = 500
+	listCapMax     = 10000
+)
+
+// listDirResult is the structured response for list_dir, including truncation metadata.
+type listDirResult struct {
+	Entries    []string `json:"entries"`
+	Truncated  bool     `json:"truncated"`
+	TotalCount int      `json:"total_count"`
+}
 
 func (e *Engine) listDir(args map[string]interface{}) (string, error) {
 	listPath := "."
@@ -23,10 +36,16 @@ func (e *Engine) listDir(args map[string]interface{}) (string, error) {
 		depth = 10
 	}
 
+	maxEntries := intArg(args, "max_entries", listDefaultMax)
+	if maxEntries > listCapMax {
+		maxEntries = listCapMax
+	}
+
 	if _, err := e.checkPath(listPath); err != nil {
 		return "", err
 	}
 
+	// Collect all entries via find | sort into a single buffer.
 	out := &boundedWriter{limit: 1 << 20}
 	c := exec.Command("find", listPath, "-maxdepth", strconv.Itoa(depth), "-not", "-path", "*/.*")
 	c.Dir = e.workDir
@@ -44,12 +63,38 @@ func (e *Engine) listDir(args map[string]interface{}) (string, error) {
 	}
 	c.Run()
 	sortCmd.Wait()
-	result := strings.TrimSpace(out.String())
-	if result == "" {
-		return "(empty directory)", nil
+
+	raw := strings.TrimSpace(out.String())
+	if raw == "" {
+		res := listDirResult{Entries: []string{}, Truncated: false, TotalCount: 0}
+		b, _ := json.Marshal(res)
+		return string(b), nil
+	}
+
+	all := strings.Split(raw, "\n")
+	total := len(all)
+	truncated := total > maxEntries
+
+	shown := all
+	if truncated {
+		shown = all[:maxEntries]
+	}
+
+	res := listDirResult{
+		Entries:    shown,
+		Truncated:  truncated,
+		TotalCount: total,
+	}
+	b, err := json.Marshal(res)
+	if err != nil {
+		return "", fmt.Errorf("listDir: marshal: %w", err)
+	}
+	result := string(b)
+	if truncated {
+		result += "\n" + formatTruncatedHint(maxEntries, total, "'max_entries' or 'pattern'")
 	}
 	if out.Truncated() {
 		result += "\n[output truncated at 1 MB]"
 	}
-	return truncateOutput(result, 200), nil
+	return result, nil
 }

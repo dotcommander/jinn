@@ -1,6 +1,7 @@
 package jinn
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -184,5 +185,128 @@ func TestReadFile_ContinuationHint(t *testing.T) {
 	}
 	if !strings.Contains(result, "Use start_line=11 to continue") {
 		t.Errorf("expected continuation hint, got: %s", result)
+	}
+}
+
+// --- Feature 4: error suggestions tests ---
+
+func TestReadFile_Suggestion_Directory(t *testing.T) {
+	t.Parallel()
+	e, dir := testEngine(t)
+	os.Mkdir(filepath.Join(dir, "adir"), 0o755)
+	_, err := e.readFile(args("path", "adir"))
+	if err == nil {
+		t.Fatal("expected error for directory path")
+	}
+	var sErr *ErrWithSuggestion
+	if !errors.As(err, &sErr) {
+		t.Fatalf("expected *ErrWithSuggestion, got %T: %v", err, err)
+	}
+	if !strings.Contains(sErr.Suggestion, "list_dir") {
+		t.Errorf("expected 'list_dir' in suggestion, got: %s", sErr.Suggestion)
+	}
+}
+
+func TestReadFile_Suggestion_NotFound(t *testing.T) {
+	t.Parallel()
+	e, _ := testEngine(t)
+	_, err := e.readFile(args("path", "no-such-file.txt"))
+	if err == nil {
+		t.Fatal("expected error for missing file")
+	}
+	var sErr *ErrWithSuggestion
+	if !errors.As(err, &sErr) {
+		t.Fatalf("expected *ErrWithSuggestion, got %T: %v", err, err)
+	}
+	if !strings.Contains(sErr.Suggestion, "list_dir") {
+		t.Errorf("expected 'list_dir' in suggestion, got: %s", sErr.Suggestion)
+	}
+}
+
+func TestReadFile_Suggestion_Binary(t *testing.T) {
+	t.Parallel()
+	// Binary detection returns a result (not an error) with a hint for the LLM.
+	e, dir := testEngine(t)
+	writeTestFile(t, dir, "bin.dat", "hello\x00world")
+	result, err := e.readFile(args("path", "bin.dat"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result, "binary file") {
+		t.Errorf("expected 'binary file' in result, got: %s", result)
+	}
+	if !strings.Contains(result, "checksum_tree") {
+		t.Errorf("expected 'checksum_tree' hint in binary result, got: %s", result)
+	}
+}
+
+func TestReadFile_Suggestion_WindowOutOfRange(t *testing.T) {
+	t.Parallel()
+	e, dir := testEngine(t)
+	writeTestFile(t, dir, "small.txt", "one\ntwo\n")
+	_, err := e.readFile(args("path", "small.txt", "start_line", float64(999)))
+	if err == nil {
+		t.Fatal("expected error for window past end")
+	}
+	var sErr *ErrWithSuggestion
+	if !errors.As(err, &sErr) {
+		t.Fatalf("expected *ErrWithSuggestion, got %T: %v", err, err)
+	}
+	if !strings.Contains(sErr.Suggestion, "reduce start_line") {
+		t.Errorf("expected 'reduce start_line' in suggestion, got: %s", sErr.Suggestion)
+	}
+}
+
+func TestReadFile_Suggestion_SensitivePath(t *testing.T) {
+	t.Parallel()
+	e, _ := testEngine(t)
+	_, err := e.readFile(args("path", ".git/config"))
+	if err == nil {
+		t.Fatal("expected error for sensitive path")
+	}
+	var sErr *ErrWithSuggestion
+	if !errors.As(err, &sErr) {
+		t.Fatalf("expected *ErrWithSuggestion, got %T: %v", err, err)
+	}
+	if !strings.Contains(sErr.Suggestion, "blocked for security") {
+		t.Errorf("expected security suggestion, got: %s", sErr.Suggestion)
+	}
+}
+
+func TestReadFile_Suggestion_OutsideWorkdir(t *testing.T) {
+	t.Parallel()
+	e, _ := testEngine(t)
+	_, err := e.readFile(args("path", "/etc/passwd"))
+	if err == nil {
+		t.Fatal("expected error for path outside workdir")
+	}
+	var sErr *ErrWithSuggestion
+	if !errors.As(err, &sErr) {
+		t.Fatalf("expected *ErrWithSuggestion, got %T: %v", err, err)
+	}
+	if !strings.Contains(sErr.Suggestion, "sandbox root") {
+		t.Errorf("expected sandbox suggestion, got: %s", sErr.Suggestion)
+	}
+}
+
+func TestReadFile_LargeFile_Suggestion(t *testing.T) {
+	t.Parallel()
+	// Can't easily create a 50MB file in a test; test the error path via the
+	// ErrWithSuggestion struct directly to verify suggestion text is correct.
+	sErr := &ErrWithSuggestion{
+		Err:        fmt.Errorf("file too large: 55 MB (max 50 MB)"),
+		Suggestion: "file is too large to read in one shot; use start_line/end_line to window, or search_files for a pattern",
+	}
+	if !strings.Contains(sErr.Suggestion, "start_line/end_line") {
+		t.Errorf("large file suggestion should mention start_line/end_line: %s", sErr.Suggestion)
+	}
+	if !strings.Contains(sErr.Suggestion, "search_files") {
+		t.Errorf("large file suggestion should mention search_files: %s", sErr.Suggestion)
+	}
+	if sErr.Error() != sErr.Err.Error() {
+		t.Errorf("ErrWithSuggestion.Error() should delegate to Err, got: %s", sErr.Error())
+	}
+	if sErr.Unwrap() != sErr.Err {
+		t.Error("ErrWithSuggestion.Unwrap() should return Err")
 	}
 }
