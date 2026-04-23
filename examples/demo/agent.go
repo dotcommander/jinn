@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	_ "embed"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -68,18 +67,52 @@ func runTurns(ctx context.Context, cfg *config, tools []map[string]any, messages
 			hooks.BeforeTurn()
 		}
 
+		// previews tracks one diffPreview per tool-call index within this turn.
+		// Keyed by tool-call stream index; created lazily on first arg delta.
+		previews := map[int]*diffPreview{}
+
 		var hadContent bool
 		final, _, err := chatStream(ctx, cfg, messages, tools, func(delta string) {
 			hadContent = true
 			if hooks.OnContent != nil {
 				hooks.OnContent(delta)
 			}
+		}, func(idx int, name, delta string) {
+			if !cfg.previewDiffs {
+				return
+			}
+			if name != "edit_file" && name != "write_file" {
+				// Name may arrive in the first chunk; once we know it's not a
+				// diff-preview target, gate out. If name is "" (not yet known),
+				// we buffer anyway — Reset() is cheap and Feed() is a no-op when
+				// the preview turns out to not be needed.
+				if p, ok := previews[idx]; ok {
+					_ = p // already created; keep buffering until name is confirmed
+				}
+				if name != "" {
+					// Name is now confirmed non-edit — discard any buffered preview.
+					delete(previews, idx)
+					return
+				}
+			}
+			p, ok := previews[idx]
+			if !ok {
+				p = newDiffPreview(true)
+				previews[idx] = p
+			}
+			p.Feed(delta)
+			p.Render()
 		})
 		if err != nil {
 			return messages, err
 		}
 		if hooks.OnStreamEnd != nil {
 			hooks.OnStreamEnd(hadContent)
+		}
+		// Final render + cleanup for any active diff previews.
+		for _, p := range previews {
+			p.Render()
+			p.Reset()
 		}
 
 		messages = append(messages, final)
@@ -184,57 +217,13 @@ func runOneShot(ctx context.Context, cfg *config, messages []message) error {
 	return err
 }
 
-// primaryField is the single most-informative field for each tool.
-// When only this field (after noise removal) remains, show its value directly.
-var primaryField = map[string]string{
-	"run_shell":      "command",
-	"read_file":      "path",
-	"write_file":     "path",
-	"edit_file":      "path",
-	"multi_edit":     "path",
-	"search_files":   "pattern",
-	"stat_file":      "path",
-	"list_dir":       "path",
-	"checksum_tree":  "path",
-	"detect_project": "path",
-}
-
-// filterToolArgs produces a compact display string from a tool's JSON args:
-//   - strips "dry_run": false (noise when false, meaningful only when true)
-//   - if a single primary field remains, returns just {value}
-//   - otherwise falls through to truncated JSON
-func filterToolArgs(name, argsJSON string) string {
-	var m map[string]any
-	if err := json.Unmarshal([]byte(argsJSON), &m); err != nil {
-		return previewArgs(argsJSON)
-	}
-	// Strip dry_run when false — it's the default, not useful to display.
-	if v, ok := m["dry_run"]; ok {
-		if b, ok := v.(bool); ok && !b {
-			delete(m, "dry_run")
-		}
-	}
-	// If only the primary field remains, show {value} instead of full JSON.
-	if pf, ok := primaryField[name]; ok && len(m) == 1 {
-		if val, ok := m[pf]; ok {
-			return fmt.Sprintf("{%v}", val)
-		}
-	}
-	out, err := json.Marshal(m)
-	if err != nil {
-		return previewArgs(argsJSON)
-	}
-	return previewArgs(string(out))
-}
-
-func previewArgs(argsJSON string) string {
-	s := strings.TrimSpace(argsJSON)
-	s = strings.ReplaceAll(s, "\n", " ")
-	return truncate(s, 120)
-}
-
-// maybeCompact summarizes older history when the user-turn counter hits
-// cfg.compactEvery. Returns the updated messages and updated counter.
+// maybeCompact summarizes older history when the token budget or user-turn
+// counter triggers compaction. Token-budget check takes precedence; counter
+// falls back for users who don't configure contextWindow.
+//
+// Trigger order:
+//  1. Token budget: ShouldCompact(tokens, cfg.contextWindow, cfg.compactThreshold)
+//  2. Counter fallback: counter >= cfg.compactEvery (when compactEvery > 0)
 //
 // Behavior on failure:
 //   - ctx.Canceled: returns sentinel errCompactionCanceled — caller must
@@ -245,8 +234,13 @@ func previewArgs(argsJSON string) string {
 // Callers increment the counter BEFORE calling, then treat the returned
 // counter as authoritative (it is reset to 0 on a successful compaction).
 func maybeCompact(ctx context.Context, cfg *config, messages []message, counter int) ([]message, int, error) {
-	if cfg.compactEvery <= 0 || counter < cfg.compactEvery {
-		return messages, counter, nil
+	tokensBefore := EstimateMessagesTokens(messages)
+	tokenTriggered := ShouldCompact(tokensBefore, cfg.contextWindow, cfg.compactThreshold)
+	if !tokenTriggered {
+		// Fall through to counter-based check.
+		if cfg.compactEvery <= 0 || counter < cfg.compactEvery {
+			return messages, counter, nil
+		}
 	}
 
 	p := newPalette(useColor())
@@ -280,9 +274,11 @@ func maybeCompact(ctx context.Context, cfg *config, messages []message, counter 
 		return messages, counter, nil
 	}
 
+	tokensAfter := EstimateMessagesTokens(compacted)
 	if stderrIsTTY() {
 		fmt.Fprintf(os.Stderr, "%s%s✓ history compacted · %.1fs%s\n", p.dim, p.success, elapsed.Seconds(), p.reset)
 	}
+	fmt.Fprintln(os.Stderr, FormatCompactLog(tokensBefore, tokensAfter))
 	return compacted, 0, nil
 }
 

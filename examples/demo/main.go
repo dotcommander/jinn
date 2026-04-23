@@ -19,27 +19,30 @@ import (
 var version = "dev"
 
 type config struct {
-	apiKey         string
-	baseURL        string
-	model          string
-	maxTurns       int
-	maxToolOutput  int
-	compactEvery   int    // compaction cadence in user turns; 0 disables
-	compactPrompt  string // summarization prompt text (loaded at startup)
-	rewritePrompts bool
-	rewriterPrompt string
-	temperature    float64
-	topP           float64
-	maxTokens      int
-	dryRun         bool
-	workDir        string
-	jinnBin        string
-	defuddleBin    string
-	sessionID      string
-	sessionDir     string
-	resume         bool
-	quiet          bool
-	local          bool
+	apiKey           string
+	baseURL          string
+	model            string
+	maxTurns         int
+	maxToolOutput    int
+	compactEvery     int     // compaction cadence in user turns; 0 disables
+	compactPrompt    string  // summarization prompt text (loaded at startup)
+	contextWindow    int     // max token budget for history before compaction
+	compactThreshold float64 // fraction of contextWindow that triggers compaction
+	previewDiffs     bool    // render streaming diff preview for edit_file/write_file
+	rewritePrompts   bool
+	rewriterPrompt   string
+	temperature      float64
+	topP             float64
+	maxTokens        int
+	dryRun           bool
+	workDir          string
+	jinnBin          string
+	defuddleBin      string
+	sessionID        string
+	sessionDir       string
+	resume           bool
+	quiet            bool
+	local            bool
 }
 
 func main() {

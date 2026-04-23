@@ -17,27 +17,30 @@ func parseArgs(argv []string) (*config, string, error) {
 	fs.SetOutput(io.Discard)
 
 	var (
-		model          = fs.String("model", envDefault("DEMO_MODEL", "openai/gpt-5.4-mini"), "LLM model identifier")
-		baseURL        = fs.String("base-url", envDefault("DEMO_BASE_URL", "https://openrouter.ai/api/v1/chat/completions"), "OpenAI-compatible chat/completions endpoint")
-		maxTurns       = fs.Int("max-turns", envIntDefault("DEMO_MAX_TURNS", 25), "maximum agent turns before aborting")
-		compactEvery   = fs.Int("compact-every", envIntDefaultAllowZero("DEMO_COMPACT_EVERY", 3), "compact history every N user turns (0 to disable)")
-		compactFile    = fs.String("compact-prompt-file", envDefault("DEMO_COMPACT_PROMPT_FILE", ""), "path to custom compaction prompt (defaults to embedded)")
-		rewritePrompts = fs.Bool("rewrite-prompts", envBoolDefault("DEMO_REWRITE_PROMPTS", false), "rewrite REPL user input via CRISP framework before sending (opt-in)")
-		rewriterFile   = fs.String("rewriter-prompt-file", envDefault("DEMO_REWRITER_PROMPT_FILE", ""), "path to custom rewriter prompt (defaults to embedded)")
-		maxOutput      = fs.Int("max-tool-output", envIntDefault("DEMO_MAX_TOOL_OUTPUT", 32768), "maximum tool output size in bytes before truncation")
-		temp           = fs.Float64("temperature", 1.0, "LLM sampling temperature")
-		topP           = fs.Float64("top-p", 1.0, "LLM top-p sampling")
-		maxTokens      = fs.Int("max-tokens", 4096, "maximum tokens in completion")
-		dryRun         = fs.Bool("dry-run", false, "intercept destructive tools and report intent instead of executing")
-		sessionID      = fs.String("session", "", "session id for save/resume (auto-generated if empty)")
-		resume         = fs.Bool("resume", false, "resume the session named by -session")
-		quiet          = fs.Bool("quiet", false, "suppress turn banners and tool previews")
-		local          = fs.Bool("local", false, "automatically detect local LLM server (probes ports 8080, 8000, 1234, 11434)")
-		jinnBin        = fs.String("jinn-bin", envDefault("JINN_BIN", "jinn"), "path to jinn binary")
-		defBin         = fs.String("defuddle-bin", envDefault("DEFUDDLE_BIN", "defuddle"), "path to defuddle binary")
-		sessionDir     = fs.String("session-dir", defaultSessionDir(), "session storage directory")
-		showHelp       = fs.Bool("help", false, "show help")
-		showVer        = fs.Bool("version", false, "show version")
+		model            = fs.String("model", envDefault("DEMO_MODEL", "openai/gpt-5.4-mini"), "LLM model identifier")
+		baseURL          = fs.String("base-url", envDefault("DEMO_BASE_URL", "https://openrouter.ai/api/v1/chat/completions"), "OpenAI-compatible chat/completions endpoint")
+		maxTurns         = fs.Int("max-turns", envIntDefault("DEMO_MAX_TURNS", 25), "maximum agent turns before aborting")
+		compactEvery     = fs.Int("compact-every", envIntDefaultAllowZero("DEMO_COMPACT_EVERY", 3), "compact history every N user turns (0 to disable)")
+		compactFile      = fs.String("compact-prompt-file", envDefault("DEMO_COMPACT_PROMPT_FILE", ""), "path to custom compaction prompt (defaults to embedded)")
+		rewritePrompts   = fs.Bool("rewrite-prompts", envBoolDefault("DEMO_REWRITE_PROMPTS", false), "rewrite REPL user input via CRISP framework before sending (opt-in)")
+		rewriterFile     = fs.String("rewriter-prompt-file", envDefault("DEMO_REWRITER_PROMPT_FILE", ""), "path to custom rewriter prompt (defaults to embedded)")
+		maxOutput        = fs.Int("max-tool-output", envIntDefault("DEMO_MAX_TOOL_OUTPUT", 32768), "maximum tool output size in bytes before truncation")
+		temp             = fs.Float64("temperature", 1.0, "LLM sampling temperature")
+		topP             = fs.Float64("top-p", 1.0, "LLM top-p sampling")
+		maxTokens        = fs.Int("max-tokens", 4096, "maximum tokens in completion")
+		dryRun           = fs.Bool("dry-run", false, "intercept destructive tools and report intent instead of executing")
+		sessionID        = fs.String("session", "", "session id for save/resume (auto-generated if empty)")
+		resume           = fs.Bool("resume", false, "resume the session named by -session")
+		quiet            = fs.Bool("quiet", false, "suppress turn banners and tool previews")
+		local            = fs.Bool("local", false, "automatically detect local LLM server (probes ports 8080, 8000, 1234, 11434)")
+		jinnBin          = fs.String("jinn-bin", envDefault("JINN_BIN", "jinn"), "path to jinn binary")
+		defBin           = fs.String("defuddle-bin", envDefault("DEFUDDLE_BIN", "defuddle"), "path to defuddle binary")
+		sessionDir       = fs.String("session-dir", defaultSessionDir(), "session storage directory")
+		contextWindow    = fs.Int("context-window", envIntDefault("DEMO_CONTEXT_WINDOW", DefaultContextWindow), "max token budget for conversation history before compaction kicks in")
+		compactThreshold = fs.Float64("compact-threshold", envFloatDefault("DEMO_COMPACT_THRESHOLD", DefaultCompactThreshold), "fraction of --context-window at which to trigger compaction (0.0-1.0)")
+		previewDiffs     = fs.Bool("preview-diffs", envBoolDefault("DEMO_PREVIEW_DIFFS", false), "render streaming diff preview for edit_file/write_file tool calls as they stream")
+		showHelp         = fs.Bool("help", false, "show help")
+		showVer          = fs.Bool("version", false, "show version")
 	)
 
 	if err := fs.Parse(argv); err != nil {
@@ -89,28 +92,41 @@ func parseArgs(argv []string) (*config, string, error) {
 		rewriterPromptText = string(data)
 	}
 
+	// Clamp contextWindow and compactThreshold to sane ranges.
+	cw := *contextWindow
+	if cw < 256 {
+		cw = DefaultContextWindow
+	}
+	ct := *compactThreshold
+	if ct < 0.0 || ct > 1.0 {
+		ct = DefaultCompactThreshold
+	}
+
 	cfg := &config{
-		apiKey:         apiKey,
-		baseURL:        *baseURL,
-		model:          *model,
-		maxTurns:       *maxTurns,
-		compactEvery:   *compactEvery,
-		compactPrompt:  compactPromptText,
-		rewritePrompts: *rewritePrompts,
-		rewriterPrompt: rewriterPromptText,
-		maxToolOutput:  *maxOutput,
-		temperature:    *temp,
-		topP:           *topP,
-		maxTokens:      *maxTokens,
-		dryRun:         *dryRun,
-		workDir:        wd,
-		jinnBin:        *jinnBin,
-		defuddleBin:    *defBin,
-		sessionID:      *sessionID,
-		sessionDir:     *sessionDir,
-		resume:         *resume,
-		quiet:          *quiet,
-		local:          *local,
+		apiKey:           apiKey,
+		baseURL:          *baseURL,
+		model:            *model,
+		maxTurns:         *maxTurns,
+		compactEvery:     *compactEvery,
+		compactPrompt:    compactPromptText,
+		contextWindow:    cw,
+		compactThreshold: ct,
+		previewDiffs:     *previewDiffs,
+		rewritePrompts:   *rewritePrompts,
+		rewriterPrompt:   rewriterPromptText,
+		maxToolOutput:    *maxOutput,
+		temperature:      *temp,
+		topP:             *topP,
+		maxTokens:        *maxTokens,
+		dryRun:           *dryRun,
+		workDir:          wd,
+		jinnBin:          *jinnBin,
+		defuddleBin:      *defBin,
+		sessionID:        *sessionID,
+		sessionDir:       *sessionDir,
+		resume:           *resume,
+		quiet:            *quiet,
+		local:            *local,
 	}
 	if cfg.sessionID == "" {
 		cfg.sessionID = defaultSessionID()
@@ -191,66 +207,13 @@ Environment:
   DEFUDDLE_BIN         defuddle binary for web_fetch (default: "defuddle" in PATH)
   DEMO_COMPACT_EVERY         Compact history every N user turns (0 disables; default 3)
   DEMO_COMPACT_PROMPT_FILE   Path to custom compaction prompt
+  DEMO_CONTEXT_WINDOW        Max token budget before token-triggered compaction (default 8192)
+  DEMO_COMPACT_THRESHOLD     Fraction of context window that triggers compaction (default 0.70)
+  DEMO_PREVIEW_DIFFS         Show streaming diff preview for edit_file/write_file (1/true/yes)
 
 Flags:`)
 	fs.SetOutput(os.Stderr)
 	fs.PrintDefaults()
-}
-
-func envDefault(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
-}
-
-func envIntDefault(key string, fallback int) int {
-	v := os.Getenv(key)
-	if v == "" {
-		return fallback
-	}
-	var n int
-	if _, err := fmt.Sscanf(v, "%d", &n); err != nil || n <= 0 {
-		return fallback
-	}
-	return n
-}
-
-// envIntDefaultAllowZero is envIntDefault but permits zero as a valid value.
-// Used where zero has semantic meaning (e.g., "disabled").
-func envIntDefaultAllowZero(key string, fallback int) int {
-	v := os.Getenv(key)
-	if v == "" {
-		return fallback
-	}
-	var n int
-	if _, err := fmt.Sscanf(v, "%d", &n); err != nil || n < 0 {
-		return fallback
-	}
-	return n
-}
-
-func envBoolDefault(key string, fallback bool) bool {
-	v := os.Getenv(key)
-	if v == "" {
-		return fallback
-	}
-	switch strings.ToLower(v) {
-	case "1", "true", "yes", "on":
-		return true
-	case "0", "false", "no", "off":
-		return false
-	}
-	return fallback
-}
-
-func firstNonEmpty(vs ...string) string {
-	for _, v := range vs {
-		if v != "" {
-			return v
-		}
-	}
-	return ""
 }
 
 func defaultSessionDir() string {

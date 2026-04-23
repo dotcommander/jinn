@@ -49,7 +49,7 @@ func compactHistory(ctx context.Context, cfg *config, messages []message, prompt
 
 	// tools=nil ensures the model emits plain text, not tool calls.
 	// onContent=nil — we don't stream the summary to the user.
-	reply, _, err := chatStream(ctx, cfg, summaryReq, nil, nil)
+	reply, _, err := chatStream(ctx, cfg, summaryReq, nil, nil, nil)
 	if err != nil {
 		return messages, fmt.Errorf("compact: llm: %w", err)
 	}

@@ -72,7 +72,11 @@ var httpClient = &http.Client{Timeout: 10 * time.Minute}
 // for each text delta. Tool calls are accumulated by index (per OpenAI spec)
 // and returned assembled in the final message. Returns usage if the upstream
 // reports it (zero-value otherwise).
-func chatStream(ctx context.Context, cfg *config, messages []message, tools []map[string]any, onContent func(string)) (message, usage, error) {
+//
+// onToolArgDelta, when non-nil, is called for each tool-call argument chunk:
+// idx is the tool-call index within the response, name is the tool function
+// name (empty until first name-bearing chunk), delta is the raw JSON fragment.
+func chatStream(ctx context.Context, cfg *config, messages []message, tools []map[string]any, onContent func(string), onToolArgDelta func(idx int, name, delta string)) (message, usage, error) {
 	reqBody := chatRequest{
 		Model:             cfg.model,
 		Messages:          messages,
@@ -172,6 +176,9 @@ func chatStream(ctx context.Context, cfg *config, messages []message, tools []ma
 			}
 			if tc.Function.Arguments != "" {
 				acc.Args.WriteString(tc.Function.Arguments)
+				if onToolArgDelta != nil {
+					onToolArgDelta(tc.Index, acc.Name, tc.Function.Arguments)
+				}
 			}
 		}
 	}
