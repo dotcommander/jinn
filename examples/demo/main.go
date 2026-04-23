@@ -31,6 +31,7 @@ type config struct {
 	previewDiffs     bool    // render streaming diff preview for edit_file/write_file
 	rewritePrompts   bool
 	rewriterPrompt   string
+	preprocessModel  string // override model for compaction + rewriter; empty = reuse `model`
 	temperature      float64
 	topP             float64
 	maxTokens        int

@@ -49,7 +49,8 @@ func compactHistory(ctx context.Context, cfg *config, messages []message, prompt
 
 	// tools=nil ensures the model emits plain text, not tool calls.
 	// onContent=nil — we don't stream the summary to the user.
-	reply, _, err := chatStream(ctx, cfg, summaryReq, nil, nil, nil)
+	// preprocessCfg routes to cfg.preprocessModel when set; else uses cfg as-is.
+	reply, _, err := chatStream(ctx, preprocessCfg(cfg), summaryReq, nil, nil, nil)
 	if err != nil {
 		return messages, fmt.Errorf("compact: llm: %w", err)
 	}

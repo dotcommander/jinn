@@ -82,3 +82,39 @@ func TestShouldCompact_CounterFallbackStillWorks(t *testing.T) {
 		t.Errorf("counter trigger should be true (counter=%d, compactEvery=%d)", counter, cfg.compactEvery)
 	}
 }
+
+func TestPreprocessCfg_EmptyReturnsSamePointer(t *testing.T) {
+	t.Parallel()
+	cfg := &config{model: "openai/gpt-5.4-mini", preprocessModel: ""}
+	got := preprocessCfg(cfg)
+	if got != cfg {
+		t.Errorf("preprocessCfg with empty preprocessModel must return the same *config pointer; got new pointer")
+	}
+	if got.model != "openai/gpt-5.4-mini" {
+		t.Errorf("main model mutated: got %q", got.model)
+	}
+}
+
+func TestPreprocessCfg_NonEmptyReturnsCloneWithOverride(t *testing.T) {
+	t.Parallel()
+	cfg := &config{
+		model:           "openai/gpt-5.4-mini",
+		preprocessModel: "openai/gpt-5.4-nano",
+		baseURL:         "https://example.test/v1/chat",
+		apiKey:          "sk-test",
+		temperature:     0.7,
+	}
+	got := preprocessCfg(cfg)
+	if got == cfg {
+		t.Fatal("preprocessCfg with override must return a new *config, got same pointer")
+	}
+	if got.model != "openai/gpt-5.4-nano" {
+		t.Errorf("got.model = %q, want override %q", got.model, "openai/gpt-5.4-nano")
+	}
+	if cfg.model != "openai/gpt-5.4-mini" {
+		t.Errorf("source cfg.model mutated: got %q, want preserved %q", cfg.model, "openai/gpt-5.4-mini")
+	}
+	if got.baseURL != cfg.baseURL || got.apiKey != cfg.apiKey || got.temperature != cfg.temperature {
+		t.Errorf("other fields not preserved on clone: baseURL=%q apiKey=%q temp=%v", got.baseURL, got.apiKey, got.temperature)
+	}
+}

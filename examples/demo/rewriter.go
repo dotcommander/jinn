@@ -31,7 +31,8 @@ func rewriteUserInput(ctx context.Context, cfg *config, prompt, raw string) (str
 		{Role: "user", Content: raw},
 	}
 	// tools=nil — no tool calls. onContent=nil — do not stream to user.
-	reply, _, err := chatStream(ctx, cfg, req, nil, nil, nil)
+	// preprocessCfg routes to cfg.preprocessModel when set; else uses cfg as-is.
+	reply, _, err := chatStream(ctx, preprocessCfg(cfg), req, nil, nil, nil)
 	if err != nil {
 		return "", fmt.Errorf("rewriter: %w", err)
 	}

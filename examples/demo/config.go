@@ -24,6 +24,7 @@ func parseArgs(argv []string) (*config, string, error) {
 		compactFile      = fs.String("compact-prompt-file", envDefault("DEMO_COMPACT_PROMPT_FILE", ""), "path to custom compaction prompt (defaults to embedded)")
 		rewritePrompts   = fs.Bool("rewrite-prompts", envBoolDefault("DEMO_REWRITE_PROMPTS", false), "rewrite REPL user input via CRISP framework before sending (opt-in)")
 		rewriterFile     = fs.String("rewriter-prompt-file", envDefault("DEMO_REWRITER_PROMPT_FILE", ""), "path to custom rewriter prompt (defaults to embedded)")
+		preprocessModel  = fs.String("preprocess-model", envDefault("DEMO_PREPROCESS_MODEL", ""), "lightweight model for compaction + rewriter; empty reuses --model")
 		maxOutput        = fs.Int("max-tool-output", envIntDefault("DEMO_MAX_TOOL_OUTPUT", 32768), "maximum tool output size in bytes before truncation")
 		temp             = fs.Float64("temperature", 1.0, "LLM sampling temperature")
 		topP             = fs.Float64("top-p", 1.0, "LLM top-p sampling")
@@ -114,6 +115,7 @@ func parseArgs(argv []string) (*config, string, error) {
 		previewDiffs:     *previewDiffs,
 		rewritePrompts:   *rewritePrompts,
 		rewriterPrompt:   rewriterPromptText,
+		preprocessModel:  *preprocessModel,
 		maxToolOutput:    *maxOutput,
 		temperature:      *temp,
 		topP:             *topP,
@@ -210,6 +212,7 @@ Environment:
   DEMO_CONTEXT_WINDOW        Max token budget before token-triggered compaction (default 8192)
   DEMO_COMPACT_THRESHOLD     Fraction of context window that triggers compaction (default 0.70)
   DEMO_PREVIEW_DIFFS         Show streaming diff preview for edit_file/write_file (1/true/yes)
+  DEMO_PREPROCESS_MODEL      Lightweight model for compaction + rewriter (empty reuses DEMO_MODEL)
 
 Flags:`)
 	fs.SetOutput(os.Stderr)
