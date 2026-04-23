@@ -39,6 +39,9 @@ type chatRequest struct {
 	Messages          []message        `json:"messages"`
 	Tools             []map[string]any `json:"tools,omitempty"`
 	ParallelToolCalls bool             `json:"parallel_tool_calls"`
+	Temperature       float64          `json:"temperature,omitempty"`
+	TopP              float64          `json:"top_p,omitempty"`
+	MaxTokens         int              `json:"max_tokens,omitempty"`
 	Stream            bool             `json:"stream,omitempty"`
 	StreamOptions     *streamOptions   `json:"stream_options,omitempty"`
 }
@@ -75,6 +78,9 @@ func chatStream(ctx context.Context, cfg *config, messages []message, tools []ma
 		Messages:          messages,
 		Tools:             tools,
 		ParallelToolCalls: false,
+		Temperature:       cfg.temperature,
+		TopP:              cfg.topP,
+		MaxTokens:         cfg.maxTokens,
 		Stream:            true,
 		StreamOptions:     &streamOptions{IncludeUsage: true},
 	}

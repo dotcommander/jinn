@@ -2,42 +2,50 @@ package main
 
 import (
 	"context"
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
+	"time"
 )
 
-const systemPromptTemplate = `You are a coding assistant with tool access via the jinn sandboxed executor.
-Working directory: %s
-OS: %s/%s
+//go:embed AGENTS.md
+var systemPromptTemplate string
 
-Tools:
-- read_file, stat_file, list_dir, search_files: explore before modifying.
-- edit_file / multi_edit: targeted text replacements. old_text MUST be unique in the file — include surrounding context if a snippet repeats.
-- write_file: atomic full-file writes (creates parent dirs).
-- run_shell: bash with a timeout (default 30s, max 300s). Prefer dry_run=true for destructive operations before committing.
-- web_fetch: retrieve an HTTP(S) URL as markdown. Use for docs/articles, not local files.
+// applyPromptTokens substitutes {{workdir}} and {{os}} in a prompt template.
+func applyPromptTokens(tmpl, workDir string) string {
+	s := strings.ReplaceAll(tmpl, "{{workdir}}", workDir)
+	s = strings.ReplaceAll(s, "{{os}}", runtime.GOOS+"/"+runtime.GOARCH)
+	return s
+}
 
-Workflow:
-1. Read before modifying. Use search_files or list_dir to orient.
-2. Explain your plan in one or two sentences, then act.
-3. If a tool returns an error, diagnose the cause (wrong path, non-unique match, syntax) before retrying.
-4. When the task is complete, give a short summary and stop — do not call more tools.`
-
+// systemPrompt loads AGENTS.md from cfg.workDir when present; warns on
+// unexpected I/O errors; silent on NotExist (falls back to embedded default).
 func systemPrompt(cfg *config) string {
-	return fmt.Sprintf(systemPromptTemplate, cfg.workDir, runtime.GOOS, runtime.GOARCH)
+	agentsPath := filepath.Join(cfg.workDir, "AGENTS.md")
+	data, err := os.ReadFile(agentsPath)
+	if err == nil {
+		return applyPromptTokens(string(data), cfg.workDir)
+	}
+	if !os.IsNotExist(err) {
+		fmt.Fprintf(os.Stderr, "warning: could not read %s: %v — using embedded default\n", agentsPath, err)
+	}
+	return applyPromptTokens(systemPromptTemplate, cfg.workDir)
 }
 
 // turnHooks decouples runTurns from presentation. All fields are optional.
 // Content streams through OnContent as it arrives; tool calls are surfaced
 // via OnToolCall before dispatch.
 type turnHooks struct {
-	OnContent   func(delta string)
-	OnStreamEnd func(hadContent bool)
-	OnToolCall  func(name, args string)
+	OnContent    func(delta string)
+	OnStreamEnd  func(hadContent bool)
+	OnToolCall   func(name, args string)
+	OnToolResult func(name string, elapsed time.Duration, err error)
+	BeforeTurn   func()
 }
 
 // runTurns drives the assistant through one or more turns until it stops
@@ -47,6 +55,10 @@ func runTurns(ctx context.Context, cfg *config, tools []map[string]any, messages
 	for turn := 1; turn <= cfg.maxTurns; turn++ {
 		if err := ctx.Err(); err != nil {
 			return messages, err
+		}
+
+		if hooks.BeforeTurn != nil {
+			hooks.BeforeTurn()
 		}
 
 		var hadContent bool
@@ -70,20 +82,41 @@ func runTurns(ctx context.Context, cfg *config, tools []map[string]any, messages
 			return messages, nil
 		}
 
-		for _, tc := range final.ToolCalls {
-			if hooks.OnToolCall != nil {
-				hooks.OnToolCall(tc.Function.Name, tc.Function.Arguments)
-			}
-			result, err := dispatchTool(ctx, cfg, tc.Function.Name, tc.Function.Arguments)
-			if err != nil {
-				result = fmt.Sprintf("dispatch error: %v", err)
-			}
-			messages = append(messages, message{
-				Role:       "tool",
-				Content:    result,
-				ToolCallID: tc.ID,
-			})
+		results := make([]message, len(final.ToolCalls))
+		var wg sync.WaitGroup
+		for i, tc := range final.ToolCalls {
+			wg.Add(1)
+			go func(i int, tc toolCall) {
+				defer wg.Done()
+				if hooks.OnToolCall != nil {
+					hooks.OnToolCall(tc.Function.Name, tc.Function.Arguments)
+				}
+				start := time.Now()
+				result, err := dispatchTool(ctx, cfg, tc.Function.Name, tc.Function.Arguments)
+				elapsed := time.Since(start)
+				if hooks.OnToolResult != nil {
+					hooks.OnToolResult(tc.Function.Name, elapsed, err)
+				}
+				if err != nil {
+					result = fmt.Sprintf("dispatch error: %v", err)
+				}
+				if len(result) > cfg.maxToolOutput {
+					result = fmt.Sprintf("%s\n\n[TRUNCATED: original size %d bytes, showing first %d bytes]",
+						result[:cfg.maxToolOutput], len(result), cfg.maxToolOutput)
+				}
+				results[i] = message{
+					Role:       "tool",
+					Content:    result,
+					ToolCallID: tc.ID,
+				}
+			}(i, tc)
 		}
+		wg.Wait()
+
+		for _, res := range results {
+			messages = append(messages, res)
+		}
+		messages = pruneMessages(messages, cfg.maxHistory)
 		_ = saveSession(cfg, messages)
 	}
 	return messages, fmt.Errorf("max turns reached (%d) without completion", cfg.maxTurns)
@@ -97,9 +130,13 @@ func runOneShot(ctx context.Context, cfg *config, messages []message) error {
 		return err
 	}
 
+	p := newPalette(useColor())
+	md := newMDStream(os.Stdout, p)
+
 	hooks := turnHooks{
-		OnContent: func(delta string) { fmt.Print(delta) },
+		OnContent: func(delta string) { md.Write(delta) },
 		OnStreamEnd: func(hadContent bool) {
+			md.Flush()
 			if hadContent {
 				fmt.Println()
 			}
@@ -108,7 +145,11 @@ func runOneShot(ctx context.Context, cfg *config, messages []message) error {
 			if cfg.quiet {
 				return
 			}
-			fmt.Fprintf(os.Stderr, "  [%s] %s\n", name, previewArgs(args))
+			fmt.Fprintf(os.Stderr, "%s  · %s%s%s %s%s%s\n",
+				p.dim,
+				p.tool, name, p.reset,
+				p.dim, filterToolArgs(name, args), p.reset,
+			)
 		},
 	}
 
@@ -116,63 +157,79 @@ func runOneShot(ctx context.Context, cfg *config, messages []message) error {
 	return err
 }
 
+// primaryField is the single most-informative field for each tool.
+// When only this field (after noise removal) remains, show its value directly.
+var primaryField = map[string]string{
+	"run_shell":      "command",
+	"read_file":      "path",
+	"write_file":     "path",
+	"edit_file":      "path",
+	"multi_edit":     "path",
+	"search_files":   "pattern",
+	"stat_file":      "path",
+	"list_dir":       "path",
+	"checksum_tree":  "path",
+	"detect_project": "path",
+}
+
+// filterToolArgs produces a compact display string from a tool's JSON args:
+//   - strips "dry_run": false (noise when false, meaningful only when true)
+//   - if a single primary field remains, returns just {value}
+//   - otherwise falls through to truncated JSON
+func filterToolArgs(name, argsJSON string) string {
+	var m map[string]any
+	if err := json.Unmarshal([]byte(argsJSON), &m); err != nil {
+		return previewArgs(argsJSON)
+	}
+	// Strip dry_run when false — it's the default, not useful to display.
+	if v, ok := m["dry_run"]; ok {
+		if b, ok := v.(bool); ok && !b {
+			delete(m, "dry_run")
+		}
+	}
+	// If only the primary field remains, show {value} instead of full JSON.
+	if pf, ok := primaryField[name]; ok && len(m) == 1 {
+		if val, ok := m[pf]; ok {
+			return fmt.Sprintf("{%v}", val)
+		}
+	}
+	out, err := json.Marshal(m)
+	if err != nil {
+		return previewArgs(argsJSON)
+	}
+	return previewArgs(string(out))
+}
+
 func previewArgs(argsJSON string) string {
-	const max = 120
 	s := strings.TrimSpace(argsJSON)
 	s = strings.ReplaceAll(s, "\n", " ")
-	if len(s) <= max {
-		return s
-	}
-	return s[:max] + "…"
+	return truncate(s, 120)
 }
 
-func saveSession(cfg *config, messages []message) error {
-	if cfg.sessionID == "" {
-		return nil
+// pruneMessages keeps the system prompt (if present) and the last max messages.
+// It ensures that if a tool message is kept, the preceding assistant message
+// that initiated the tool call is also kept.
+func pruneMessages(msgs []message, max int) []message {
+	if len(msgs) <= max || max <= 0 {
+		return msgs
 	}
-	if err := os.MkdirAll(cfg.sessionDir, 0o755); err != nil {
-		return fmt.Errorf("mkdir session dir: %w", err)
-	}
-	path := filepath.Join(cfg.sessionDir, cfg.sessionID+".json")
-	data, err := json.MarshalIndent(messages, "", "  ")
-	if err != nil {
-		return err
-	}
-	return atomicWrite(path, data)
-}
 
-func loadSession(cfg *config) ([]message, error) {
-	path := filepath.Join(cfg.sessionDir, cfg.sessionID+".json")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
+	var kept []message
+	if len(msgs) > 0 && msgs[0].Role == "system" {
+		kept = append(kept, msgs[0])
+		msgs = msgs[1:]
 	}
-	var msgs []message
-	if err := json.Unmarshal(data, &msgs); err != nil {
-		return nil, fmt.Errorf("decode session %s: %w", path, err)
-	}
-	return msgs, nil
-}
 
-func atomicWrite(path string, data []byte) error {
-	dir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(dir, ".session-*.tmp")
-	if err != nil {
-		return err
+	start := len(msgs) - max
+	if start < 0 {
+		start = 0
 	}
-	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath)
 
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		return err
+	// If the first kept message is a 'tool' result, we must also keep the
+	// 'assistant' message that preceded it.
+	for start > 0 && msgs[start].Role == "tool" {
+		start--
 	}
-	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmpPath, path)
+
+	return append(kept, msgs[start:]...)
 }

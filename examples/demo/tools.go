@@ -66,6 +66,22 @@ func dispatchTool(ctx context.Context, cfg *config, name, argsJSON string) (stri
 	if argsJSON == "" {
 		argsJSON = "{}"
 	}
+
+	if cfg.dryRun {
+		switch name {
+		case "write_file", "edit_file", "multi_edit":
+			return fmt.Sprintf("[DRY RUN] Would execute %s with arguments: %s", name, argsJSON), nil
+		case "run_shell":
+			var args map[string]any
+			if err := json.Unmarshal([]byte(argsJSON), &args); err == nil {
+				args["dry_run"] = true
+				if b, err := json.Marshal(args); err == nil {
+					argsJSON = string(b)
+				}
+			}
+		}
+	}
+
 	if name == "web_fetch" {
 		return runDefuddle(ctx, cfg, argsJSON)
 	}

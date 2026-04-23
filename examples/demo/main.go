@@ -13,6 +13,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -28,6 +29,12 @@ type config struct {
 	baseURL     string
 	model       string
 	maxTurns    int
+	maxHistory  int
+	maxToolOutput int
+	temperature float64
+	topP        float64
+	maxTokens   int
+	dryRun      bool
 	workDir     string
 	jinnBin     string
 	defuddleBin string
@@ -35,6 +42,7 @@ type config struct {
 	sessionDir  string
 	resume      bool
 	quiet       bool
+	local       bool
 }
 
 func main() {
@@ -63,6 +71,9 @@ func run() error {
 			return fmt.Errorf("resume: %w", err)
 		}
 	} else {
+		if cfg.sessionID == "" {
+			cfg.sessionID = defaultSessionID()
+		}
 		messages = []message{{Role: "system", Content: systemPrompt(cfg)}}
 	}
 
@@ -92,9 +103,16 @@ func parseArgs(argv []string) (*config, string, error) {
 		model      = fs.String("model", envDefault("DEMO_MODEL", "openai/gpt-5.4-mini"), "LLM model identifier")
 		baseURL    = fs.String("base-url", envDefault("DEMO_BASE_URL", "https://openrouter.ai/api/v1/chat/completions"), "OpenAI-compatible chat/completions endpoint")
 		maxTurns   = fs.Int("max-turns", envIntDefault("DEMO_MAX_TURNS", 25), "maximum agent turns before aborting")
+		maxHistory = fs.Int("max-history", envIntDefault("DEMO_MAX_HISTORY", 40), "maximum messages to keep in history (preserves system prompt)")
+		maxOutput  = fs.Int("max-tool-output", envIntDefault("DEMO_MAX_TOOL_OUTPUT", 32768), "maximum tool output size in bytes before truncation")
+		temp       = fs.Float64("temperature", 1.0, "LLM sampling temperature")
+		topP       = fs.Float64("top-p", 1.0, "LLM top-p sampling")
+		maxTokens  = fs.Int("max-tokens", 4096, "maximum tokens in completion")
+		dryRun     = fs.Bool("dry-run", false, "intercept destructive tools and report intent instead of executing")
 		sessionID  = fs.String("session", "", "session id for save/resume (auto-generated if empty)")
 		resume     = fs.Bool("resume", false, "resume the session named by -session")
 		quiet      = fs.Bool("quiet", false, "suppress turn banners and tool previews")
+		local      = fs.Bool("local", false, "automatically detect local LLM server (probes ports 8080, 8000, 1234, 11434)")
 		jinnBin    = fs.String("jinn-bin", envDefault("JINN_BIN", "jinn"), "path to jinn binary")
 		defBin     = fs.String("defuddle-bin", envDefault("DEFUDDLE_BIN", "defuddle"), "path to defuddle binary")
 		sessionDir = fs.String("session-dir", defaultSessionDir(), "session storage directory")
@@ -138,6 +156,12 @@ func parseArgs(argv []string) (*config, string, error) {
 		baseURL:     *baseURL,
 		model:       *model,
 		maxTurns:    *maxTurns,
+		maxHistory:  *maxHistory,
+		maxToolOutput: *maxOutput,
+		temperature: *temp,
+		topP:        *topP,
+		maxTokens:   *maxTokens,
+		dryRun:      *dryRun,
 		workDir:     wd,
 		jinnBin:     *jinnBin,
 		defuddleBin: *defBin,
@@ -145,9 +169,21 @@ func parseArgs(argv []string) (*config, string, error) {
 		sessionDir:  *sessionDir,
 		resume:      *resume,
 		quiet:       *quiet,
+		local:       *local,
 	}
 	if cfg.sessionID == "" {
 		cfg.sessionID = defaultSessionID()
+	}
+
+	if cfg.local {
+		detectedURL, err := probeLocalServer()
+		if err != nil {
+			return nil, "", err
+		}
+		cfg.baseURL = detectedURL
+		if cfg.model == "openai/gpt-5.4-mini" {
+			cfg.model = "local"
+		}
 	}
 
 	prompt, err := readPrompt(fs.Args())
@@ -155,6 +191,27 @@ func parseArgs(argv []string) (*config, string, error) {
 		return nil, "", err
 	}
 	return cfg, prompt, nil
+}
+
+// probeLocalServer tries GET /v1/models on common local LLM ports and returns
+// the chat/completions base URL for the first port that responds HTTP 200.
+func probeLocalServer() (string, error) {
+	ports := []int{8080, 8000, 1234, 11434}
+	client := &http.Client{Timeout: 2 * time.Second}
+	for _, port := range ports {
+		url := fmt.Sprintf("http://localhost:%d/v1/models", port)
+		resp, err := client.Get(url)
+		if err != nil {
+			continue
+		}
+		resp.Body.Close()
+		if resp.StatusCode == http.StatusOK {
+			base := fmt.Sprintf("http://localhost:%d/v1/chat/completions", port)
+			fmt.Fprintf(os.Stderr, "detected local server on port %d\n", port)
+			return base, nil
+		}
+	}
+	return "", errors.New("no local LLM server found (tried ports 8080, 8000, 1234, 11434)")
 }
 
 func readPrompt(args []string) (string, error) {
@@ -183,6 +240,7 @@ Usage:
   demo [flags] "your prompt here"         one-shot
   echo "your prompt" | demo [flags]       one-shot from pipe
   demo --resume --session <id> [prompt]   resume a session
+  demo --local [flags] "your prompt"      use local LLM server (auto-detect port)
 
 Environment:
   DEMO_API_KEY / OPENROUTER_API_KEY / OPENAI_API_KEY   API key (required)
