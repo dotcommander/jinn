@@ -1,8 +1,26 @@
-# jinn
+# jinn 🧞
 
-Sandboxed tool executor for AI coding agents. Single binary, zero dependencies, stdlib only.
+**Secure, atomic tool execution for AI coding agents.**
 
-jinn exposes 9 file/shell tools via a one-shot JSON protocol compatible with OpenAI function calling. An agent sends a JSON request on stdin and gets a JSON response on stdout. No server, no daemon, no config.
+`jinn` is a sandboxed executor that provides AI agents with a safe, standardized interface to the filesystem and shell. It handles the "boring but dangerous" parts of tool execution—path sanitization, race condition prevention, and output management—so you can focus on building your agent.
+
+- **Zero dependencies.** Built with Go's standard library only.
+- **Single binary.** Trivial to distribute and run.
+- **Security by default.** No escape hatches, no "disable-sandbox" flags.
+
+---
+
+## Why jinn?
+
+Giving an LLM direct access to `os.system()` or `open()` is risky and error-prone. `jinn` solves the common pitfalls of AI tool use:
+
+- **Path Hallucinations:** Prevents agents from traversing into `.git`, `.ssh`, or outside the workspace.
+- **Race Conditions:** Uses **TOCTOU protection** (Time-of-Check to Time-of-Use) to ensure an agent doesn't overwrite changes made by a human while the agent was "thinking."
+- **Encoding Hell:** Automatically handles CRLF/LF normalization, UTF-8 BOMs, and "fuzzy" whitespace matching when an LLM makes minor formatting mistakes.
+- **Token Bloat:** Intelligently collapses repeated output lines and truncates huge files to keep your context window lean.
+- **Atomic Reliability:** Every write is atomic (temp file + rename). No partial or corrupted files if the process is interrupted.
+
+---
 
 ## Install
 
@@ -10,121 +28,86 @@ jinn exposes 9 file/shell tools via a one-shot JSON protocol compatible with Ope
 go install github.com/dotcommander/jinn@latest
 ```
 
-### Building from Source
+---
+
+## Quick Start
+
+`jinn` follows a simple **one-shot protocol**: one JSON request on `stdin` → one JSON response on `stdout`.
+
+### 1. Get the Schema
+Tell your LLM what tools are available. `jinn` emits a full OpenAI-compatible function-calling schema.
 
 ```bash
-git clone https://github.com/dotcommander/jinn.git
-cd jinn
-go build ./cmd/jinn/
-```
-
-## Usage
-
-```bash
-# Emit tool definitions (OpenAI function-calling format)
 jinn --schema
-
-# Execute a tool
-echo '{"tool":"read_file","args":{"path":"go.mod"}}' | jinn
-# → {"ok":true,"result":"1\tmodule github.com/dotcommander/jinn\n2\t\n3\tgo 1.26\n... (5 lines total, showing 3)"}
-
-echo '{"tool":"run_shell","args":{"command":"go version"}}' | jinn
-# → {"ok":true,"result":"[exit: 0]\ngo version go1.26.2 ..."}
 ```
 
-## Protocol
+### 2. Execute a Tool
+Pipe a JSON request to `jinn`.
 
-**Request** (stdin):
-```json
-{"tool": "<name>", "args": {}}
+```bash
+# Read a file
+echo '{"tool":"read_file","args":{"path":"main.go"}}' | jinn
+
+# Run a shell command (scrubbed environment, 30s timeout)
+echo '{"tool":"run_shell","args":{"command":"go test ./..."}}' | jinn
 ```
 
-**Response** (stdout):
-```json
-{"ok": true, "result": "..."}
-{"ok": false, "error": "..."}
-```
+---
 
-One invocation, one request, one response. The calling agent handles all user interaction.
+## Toolset
 
-## Tools
+`jinn` exposes 11 specialized tools for coding agents:
 
 | Tool | Description |
-|------|-------------|
-| `run_shell` | Execute bash with timeout (default 30s, max 300s) and optional `dry_run` |
-| `read_file` | Read with line numbers, `start_line`/`end_line` windowing, 50 MB limit, binary detection |
-| `write_file` | Atomic write via temp+rename, auto-creates parent dirs |
-| `edit_file` | Replace text — exact match first, fuzzy fallback (smart quotes, whitespace). Preserves CRLF and BOM. Atomic |
-| `multi_edit` | Batch edits across files — validates all first, applies atomically |
-| `search_files` | Grep with regex, glob filter, context lines, case-insensitive option |
-| `stat_file` | File metadata (size, lines, mtime, type) without reading content |
-| `list_dir` | Recursive directory listing with depth control, hidden files excluded |
-| `list_tools` | Returns the JSON schema for all tools jinn exposes — same content as `jinn --schema`, but accessible in-protocol |
+| :--- | :--- |
+| `read_file` | Read windowed chunks of a file with line numbers (max 50MB). |
+| `write_file` | Atomic full-file write. Creates parent directories automatically. |
+| `edit_file` | Targeted text replacement. Handles fuzzy whitespace/quotes. |
+| `multi_edit` | Apply batch edits across multiple files atomically (2-phase commit). |
+| `search_files` | Fast grep/regex search with glob filtering and context lines. |
+| `run_shell` | Controlled bash execution with environment scrubbing and timeouts. |
+| `stat_file` | Get metadata (size, lines, mtime) without reading contents. |
+| `list_dir` | Recursive directory tree exploration (skips hidden files). |
+| `detect_project` | Auto-detect language, frameworks, and build/test/lint commands. |
+| `checksum_tree` | Compute SHA-256 hashes for a tree to verify workspace integrity. |
+| `list_tools` | Programmatic access to the tool schema from within the protocol. |
 
-Architecture diagram: [`docs/architecture.yaml`](docs/architecture.yaml) (rendered by [repoflow](https://github.com/dotcommander/repoflow)).
+---
 
-## Security
+## Security Model
 
-All file operations are confined to the working directory:
+Security is not an opt-in feature; it is the core of the engine.
 
-- **Path confinement** — every path is resolved and checked against CWD. `..` traversal and symlink escapes are rejected.
-- **Sensitive path blocking** — `.git/`, `.ssh/`, `.aws/`, `.gnupg/`, and `.env*` are always blocked.
-- **TOCTOU detection** — file mtime is recorded on read. Writes are rejected if the file changed since last read.
-- **Atomic writes** — all mutations use temp file + rename. No partial writes on crash or interrupt.
-- **No escape hatch** — sandboxing is always on. There is no flag to disable path confinement.
+1. **Path Confinement:** Every path is resolved via `EvalSymlinks` and checked against the working directory. Traversal attempts (e.g., `../../etc/passwd`) are hard-blocked.
+2. **Sensitive Blocklist:** Direct access to `.git`, `.ssh`, `.aws`, `.env`, and `.gnupg` is always denied.
+3. **TOCTOU Protection:** `jinn` records file `mtime` during `read_file`. If a file is modified externally before an agent calls `write_file` or `edit_file`, the update is rejected.
+4. **Environment Scrubbing:** `run_shell` runs with a minimal allowlist of environment variables (e.g., `PATH`, `LANG`, `TMPDIR`). Your `STRIPE_API_KEY` stays safe.
+5. **Output Caps:** Stdout/stderr is capped at 1MB. Excess output spills to a temp file, and the agent receives a truncated tail.
 
-## Text Normalization
+---
 
-Edit operations handle encoding differences between LLMs and files:
-
-- **Fuzzy matching** — if exact match fails, normalizes smart quotes (`""''` → `"'`), Unicode dashes/spaces to ASCII, and strips trailing whitespace, then retries. Exact match always preferred.
-- **CRLF preservation** — detects original line endings, normalizes to LF for matching, restores after edit.
-- **BOM handling** — strips UTF-8 BOM before matching (models never produce BOMs), restores after edit.
-
-## Output Pipeline
-
-jinn minimizes token consumption for the calling agent:
-
-1. **Repeated line collapse** — runs of 3+ identical lines become `[... N identical lines collapsed ...]`
-2. **Bounded writer** — output capped at 1 MB; when exceeded, full output spills to a temp file (path included in response)
-3. **Tail truncation** — shell output keeps the last N lines (where errors and results live) with a metadata header
-
-## Integration
-
-Any agent that speaks OpenAI function calling can use jinn as a subprocess:
+## Integration Example (Python)
 
 ```python
 import subprocess, json
 
-def call_jinn(tool, args):
+def call_jinn(tool: str, args: dict):
     req = json.dumps({"tool": tool, "args": args})
-    result = subprocess.run(["jinn"], input=req, capture_output=True, text=True, timeout=60)
-    return json.loads(result.stdout)
+    # Run as a subprocess — no daemon or server needed
+    proc = subprocess.run(["jinn"], input=req, capture_output=True, text=True)
+    return json.loads(proc.stdout)
 
-call_jinn("read_file", {"path": "main.go"})
-call_jinn("edit_file", {"path": "config.yaml", "old_text": "timeout: 30", "new_text": "timeout: 60"})
-call_jinn("run_shell", {"command": "go test ./..."})
+# Automate a refactor
+project = call_jinn("detect_project", {})
+if "Go" in project["languages"]:
+    call_jinn("run_shell", {"command": "go mod tidy"})
 ```
 
-Or in a shell-based agent loop:
-
-```bash
-SCHEMA=$(jinn --schema)
-# ... send $SCHEMA as tools to LLM API ...
-RESULT=$(echo "$TOOL_CALL_JSON" | jinn)
-# ... feed $RESULT back as tool message ...
-```
-
-## Design Decisions
-
-- **Zero dependencies** — `go.mod` has no `require` block. Stdlib only. No supply chain risk, trivial builds.
-- **Clean architecture** — `cmd/jinn/main.go` (~50 lines: flags, signal, JSON I/O) wires to `internal/jinn/`, a focused core package with engine, tools, security, normalization, and output pipeline across 11+ files.
-- **One-shot** — no persistent server, no state between invocations. The calling agent manages session state.
-- **Security by default** — not opt-in. Every path goes through confinement checks before any I/O.
+---
 
 ## Contributing
 
-PRs welcome. Please run `go test -race ./...` before pushing.
+`jinn` aims for zero dependencies and maximum reliability. Please ensure `go test -race ./...` passes before submitting PRs.
 
 ## License
 
