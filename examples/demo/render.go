@@ -10,6 +10,14 @@ import (
 	"time"
 
 	"github.com/charmbracelet/glamour"
+	"github.com/charmbracelet/lipgloss"
+)
+
+// diffPreview lipgloss styles — added=green, removed=red, header/path=muted gray.
+var (
+	diffAddStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
+	diffRemoveStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
+	diffHeaderStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 )
 
 // diffPreview extracts old_text/new_text from streaming tool-call JSON and
@@ -23,14 +31,15 @@ import (
 //
 // out is the destination for rendered output; defaults to os.Stderr when nil.
 type diffPreview struct {
-	enabled  bool
-	out      io.Writer // nil → os.Stderr
-	buf      strings.Builder
-	path     string
-	oldText  string
-	newText  string
-	shown    bool      // rendered at least once
-	lastRend time.Time // throttle: render at most every 500ms
+	enabled       bool
+	out           io.Writer // nil → os.Stderr
+	buf           strings.Builder
+	path          string
+	oldText       string
+	newText       string
+	shown         bool      // rendered at least once
+	lastRend      time.Time // throttle: render at most every 200ms
+	lastLineCount int       // lines written in previous render (for in-place erase)
 }
 
 // reJSONField matches a complete "key":"value" pair in partial JSON.
@@ -78,8 +87,25 @@ func (d *diffPreview) dest() io.Writer {
 	return os.Stderr
 }
 
+// isTTYWriter reports whether w is a TTY-backed file (os.Stderr, os.Stdout).
+// Non-file writers (bytes.Buffer, etc.) always return false, ensuring escape
+// sequences never leak into test output or piped output.
+func isTTYWriter(w io.Writer) bool {
+	f, ok := w.(*os.File)
+	if !ok {
+		return false
+	}
+	fi, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return (fi.Mode() & os.ModeCharDevice) != 0
+}
+
 // Render prints the current best-available diff to d.out (default: os.Stderr).
-// Throttled to once per 500ms; only renders when at least one field is known.
+// Throttled to once per 200ms; only renders when at least one field is known.
+// When the destination is a TTY, renders in-place by erasing the previous block
+// first (cursor-up + clear-line). Non-TTY destinations get plain append output.
 func (d *diffPreview) Render() {
 	if !d.enabled {
 		return
@@ -87,7 +113,7 @@ func (d *diffPreview) Render() {
 	if d.path == "" && d.oldText == "" && d.newText == "" {
 		return
 	}
-	if time.Since(d.lastRend) < 500*time.Millisecond && d.shown {
+	if time.Since(d.lastRend) < 200*time.Millisecond && d.shown {
 		return
 	}
 	d.lastRend = time.Now()
@@ -98,13 +124,33 @@ func (d *diffPreview) Render() {
 	if label == "" {
 		label = "?"
 	}
-	fmt.Fprintf(w, "┌─ preview: edit_file %s\n", label)
-	d.printDiffLines(w, d.oldText, d.newText)
-	fmt.Fprintln(w, "└─")
+
+	// Build the block into a string so we can count lines before writing.
+	var sb strings.Builder
+	header := diffHeaderStyle.Render("┌─ preview: edit_file " + label)
+	fmt.Fprintln(&sb, header)
+	d.printDiffLines(&sb, d.oldText, d.newText)
+	footer := diffHeaderStyle.Render("└─")
+	fmt.Fprintln(&sb, footer)
+	block := sb.String()
+
+	tty := isTTYWriter(w)
+	if tty && d.lastLineCount > 0 {
+		// Erase previously-rendered block: cursor-up N lines, clear each line.
+		for i := 0; i < d.lastLineCount; i++ {
+			fmt.Fprint(w, "\x1b[1A\x1b[2K")
+		}
+	}
+
+	fmt.Fprint(w, block)
+	if tty {
+		d.lastLineCount = strings.Count(block, "\n")
+	}
 }
 
-// printDiffLines writes a simple line-by-line - / + diff to w.
+// printDiffLines writes a styled line-by-line - / + diff to w.
 // Caps at 20 lines total across both sides.
+// Removed lines are rendered red, added lines green, truncation marker muted.
 func (d *diffPreview) printDiffLines(w io.Writer, oldText, newText string) {
 	const maxLines = 20
 	old := strings.Split(oldText, "\n")
@@ -112,30 +158,40 @@ func (d *diffPreview) printDiffLines(w io.Writer, oldText, newText string) {
 	printed := 0
 	for _, l := range old {
 		if printed >= maxLines {
-			fmt.Fprintf(w, "│ ... truncated, %d more lines\n", len(old)+len(neu)-printed)
+			fmt.Fprintln(w, diffHeaderStyle.Render(fmt.Sprintf("│ ... truncated, %d more lines", len(old)+len(neu)-printed)))
 			return
 		}
-		fmt.Fprintf(w, "│ - %s\n", l)
+		fmt.Fprintln(w, diffRemoveStyle.Render("│ - "+l))
 		printed++
 	}
 	for _, l := range neu {
 		if printed >= maxLines {
-			fmt.Fprintf(w, "│ ... truncated, %d more lines\n", len(neu)-printed+len(old))
+			fmt.Fprintln(w, diffHeaderStyle.Render(fmt.Sprintf("│ ... truncated, %d more lines", len(neu)-printed+len(old))))
 			return
 		}
-		fmt.Fprintf(w, "│ + %s\n", l)
+		fmt.Fprintln(w, diffAddStyle.Render("│ + "+l))
 		printed++
 	}
 }
 
 // Reset clears state for the next tool call.
+// On a TTY, erases the current live preview block so the terminal is clean.
 func (d *diffPreview) Reset() {
+	if d.lastLineCount > 0 {
+		w := d.dest()
+		if isTTYWriter(w) {
+			for i := 0; i < d.lastLineCount; i++ {
+				fmt.Fprint(w, "\x1b[1A\x1b[2K")
+			}
+		}
+	}
 	d.buf.Reset()
 	d.path = ""
 	d.oldText = ""
 	d.newText = ""
 	d.shown = false
 	d.lastRend = time.Time{}
+	d.lastLineCount = 0
 }
 
 // primaryField is the single most-informative field for each tool.

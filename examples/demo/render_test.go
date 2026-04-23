@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestDiffPreview_DisabledIsNoop(t *testing.T) {
@@ -99,5 +100,70 @@ func TestDiffPreview_TruncatesLongDiff(t *testing.T) {
 	out := buf.String()
 	if !strings.Contains(out, "truncated") {
 		t.Errorf("expected truncation marker in output, got:\n%s", out)
+	}
+}
+
+// TestDiffPreview_200msThrottle verifies the throttle constant is 200ms by
+// confirming that a second Render within the throttle window produces no
+// additional output, and a render after the window does.
+func TestDiffPreview_200msThrottle(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	dp := &diffPreview{enabled: true, out: &buf}
+	dp.Feed(`{"path":"t.go","old_text":"x","new_text":"y"}`)
+
+	// First render — should produce output.
+	dp.Render()
+	after1 := buf.Len()
+	if after1 == 0 {
+		t.Fatal("expected output on first Render, got none")
+	}
+
+	// Immediate second render — throttled, no new output.
+	dp.Render()
+	if buf.Len() != after1 {
+		t.Errorf("expected no output from throttled Render, got additional %d bytes", buf.Len()-after1)
+	}
+
+	// Force past the 200ms window by backdating lastRend.
+	dp.lastRend = dp.lastRend.Add(-201 * time.Millisecond)
+	dp.Render()
+	if buf.Len() == after1 {
+		t.Errorf("expected new output after throttle window elapsed, got none")
+	}
+}
+
+// TestDiffPreview_AppendsWhenNotTTY verifies that a bytes.Buffer destination
+// (non-TTY) gets plain append output with no ANSI escape sequences for
+// cursor movement. Each Render must add content, not erase previous content.
+func TestDiffPreview_AppendsWhenNotTTY(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	dp := &diffPreview{enabled: true, out: &buf}
+	dp.Feed(`{"path":"a.go","old_text":"old","new_text":"new"}`)
+
+	dp.Render()
+	after1 := buf.String()
+	if after1 == "" {
+		t.Fatal("expected output on first Render")
+	}
+
+	// Simulate a second render by resetting throttle; buffer must grow (append),
+	// not shrink (erase-and-rewrite is TTY-only).
+	dp.lastRend = dp.lastRend.Add(-201 * time.Millisecond)
+	dp.Render()
+	after2 := buf.String()
+
+	if len(after2) <= len(after1) {
+		t.Errorf("expected buffer to grow on second render (append mode), got len %d → %d", len(after1), len(after2))
+	}
+	// No cursor-up escape sequences must appear in non-TTY output.
+	if strings.Contains(after2, "\x1b[1A") {
+		t.Errorf("cursor-up escape sequence leaked into non-TTY output")
+	}
+	if strings.Contains(after2, "\x1b[2K") {
+		t.Errorf("clear-line escape sequence leaked into non-TTY output")
 	}
 }
