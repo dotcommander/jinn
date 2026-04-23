@@ -71,6 +71,15 @@ func (e *Engine) writeFile(args map[string]interface{}) (string, error) {
 		return unifiedDiff(string(existing), content, path, 3), nil
 	}
 
+	// Capture pre-state for undo history (nil = file did not exist).
+	preContent, err := os.ReadFile(resolved)
+	if os.IsNotExist(err) {
+		preContent = nil
+	} else if err != nil {
+		preContent = nil // unreadable — skip snapshot, don't block write
+	}
+	_ = e.recordSnapshot(resolved, path, "write_file", preContent)
+
 	if err := os.MkdirAll(filepath.Dir(resolved), 0755); err != nil {
 		return "", fmt.Errorf("mkdir: %s", err)
 	}

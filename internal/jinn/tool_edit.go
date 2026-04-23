@@ -214,6 +214,8 @@ func (e *Engine) editFile(args map[string]interface{}) (string, error) {
 		return formatEditPreview(string(data), updated, path, fuzzy), nil
 	}
 
+	_ = e.recordSnapshot(resolved, path, "edit_file", data)
+
 	if err := e.atomicWriteFile(resolved, updated); err != nil {
 		return "", err
 	}

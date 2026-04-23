@@ -206,6 +206,23 @@ const Schema = `[
   {
     "type": "function",
     "function": {
+      "name": "undo",
+      "description": "Manage file mutation history. Snapshots are captured automatically before write_file, edit_file, and multi_edit operations. Use list to browse, preview to diff, restore to revert.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "action": {"type": "string", "enum": ["list", "preview", "restore", "clear"], "description": "Operation: list=show history, preview=diff snapshot vs current, restore=revert file, clear=delete all history for this workdir."},
+          "id":     {"type": "string", "description": "Snapshot ID (prefix match). Required for preview and restore."},
+          "path":   {"type": "string", "description": "Reserved for future filtering. Not used currently."},
+          "limit":  {"type": "integer", "description": "Max entries to return for list (default: 50)."}
+        },
+        "required": ["action"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
       "name": "lsp_query",
       "description": "Query a language server (gopls, rust-analyzer, pylsp, typescript-language-server) for semantic info at a source location. Auto-detects the right server from file extension.",
       "parameters": {

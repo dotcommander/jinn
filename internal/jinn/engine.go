@@ -72,6 +72,9 @@ func (e *Engine) Dispatch(ctx context.Context, tool string, args map[string]inte
 	case "memory":
 		result, err := e.memoryTool(args)
 		return result, nil, err
+	case "undo":
+		result, err := e.undoTool(args)
+		return result, nil, err
 	case "lsp_query":
 		result, err := e.lspQuery(args)
 		return result, nil, err

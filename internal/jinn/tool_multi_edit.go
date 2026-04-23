@@ -19,7 +19,8 @@ func (e *Engine) multiEdit(args map[string]interface{}) (string, error) {
 		fuzzy        bool
 		matchInfo    matchInfo
 		showContext  int
-		newLineCount int // lines in new_text, for show_context marker
+		newLineCount int    // lines in new_text, for show_context marker
+		preContent   []byte // pre-mutation bytes for undo snapshot
 	}
 	var edits []pendingEdit
 
@@ -65,12 +66,14 @@ func (e *Engine) multiEdit(args map[string]interface{}) (string, error) {
 			matchInfo:    info,
 			showContext:  showContext,
 			newLineCount: strings.Count(newText, "\n") + 1,
+			preContent:   data,
 		})
 	}
 
 	// Phase 2: apply all edits atomically.
 	var results []string
 	for _, ed := range edits {
+		_ = e.recordSnapshot(ed.resolved, ed.path, "multi_edit", ed.preContent)
 		if err := e.atomicWriteFile(ed.resolved, ed.updated); err != nil {
 			return "", fmt.Errorf("%s: %s", ed.path, err)
 		}
