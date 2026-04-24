@@ -1,7 +1,7 @@
 package main
 
 import (
-	"encoding/json"
+	"bytes"
 	"fmt"
 	"io"
 	"os"
@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -194,106 +193,65 @@ func (d *diffPreview) Reset() {
 	d.lastLineCount = 0
 }
 
-// primaryField is the single most-informative field for each tool.
-// When only this field (after noise removal) remains, show its value directly.
-var primaryField = map[string]string{
-	"run_shell":      "command",
-	"read_file":      "path",
-	"write_file":     "path",
-	"edit_file":      "path",
-	"multi_edit":     "path",
-	"search_files":   "pattern",
-	"stat_file":      "path",
-	"list_dir":       "path",
-	"checksum_tree":  "path",
-	"detect_project": "path",
+// crlfWriter wraps w and translates bare '\n' to '\r\n'. It is a no-op for
+// bytes that are already preceded by '\r'. Used during model turns when the
+// TTY is in raw mode (ONLCR disabled) so streamed output still carriage-returns.
+// Safe to use outside raw mode too: cooked-mode kernels translate the '\r' as a
+// no-op carriage return at column 0. lastByte carries the trailing byte from the
+// previous Write to detect cross-call '\r'|'\n' pairs without double-inserting '\r'.
+type crlfWriter struct {
+	w        io.Writer
+	lastByte byte
 }
 
-// filterToolArgs produces a compact display string from a tool's JSON args:
-//   - strips "dry_run": false (noise when false, meaningful only when true)
-//   - if a single primary field remains, returns just {value}
-//   - otherwise falls through to truncated JSON
-func filterToolArgs(name, argsJSON string) string {
-	var m map[string]any
-	if err := json.Unmarshal([]byte(argsJSON), &m); err != nil {
-		return previewArgs(argsJSON)
-	}
-	// Strip dry_run when false — it's the default, not useful to display.
-	if v, ok := m["dry_run"]; ok {
-		if b, ok := v.(bool); ok && !b {
-			delete(m, "dry_run")
+func newCRLFWriter(w io.Writer) *crlfWriter { return &crlfWriter{w: w} }
+
+func (c *crlfWriter) Write(p []byte) (int, error) {
+	if bytes.IndexByte(p, '\n') < 0 {
+		if len(p) > 0 {
+			c.lastByte = p[len(p)-1]
 		}
+		_, err := c.w.Write(p)
+		return len(p), err
 	}
-	// If only the primary field remains, show {value} instead of full JSON.
-	if pf, ok := primaryField[name]; ok && len(m) == 1 {
-		if val, ok := m[pf]; ok {
-			return fmt.Sprintf("{%v}", val)
+	// Build translated slice. Skip insertion when '\n' is already preceded by '\r',
+	// consulting c.lastByte for the cross-Write boundary case (i == 0).
+	out := make([]byte, 0, len(p)+8)
+	for i := 0; i < len(p); i++ {
+		if p[i] == '\n' {
+			prev := c.lastByte
+			if i > 0 {
+				prev = p[i-1]
+			}
+			if prev != '\r' {
+				out = append(out, '\r')
+			}
 		}
+		out = append(out, p[i])
 	}
-	out, err := json.Marshal(m)
-	if err != nil {
-		return previewArgs(argsJSON)
+	if len(p) > 0 {
+		c.lastByte = p[len(p)-1]
 	}
-	return previewArgs(string(out))
+	// Report input length, not translated length — io.Writer contract: n ≤ len(p).
+	_, err := c.w.Write(out)
+	return len(p), err
 }
 
-func previewArgs(argsJSON string) string {
-	s := strings.TrimSpace(argsJSON)
-	s = strings.ReplaceAll(s, "\n", " ")
-	return truncate(s, 120)
-}
-
-// mdStream buffers streaming text deltas and renders them as a complete
-// markdown document once the stream ends. Glamour cannot render partial
-// markdown without flicker, so we trade per-token liveness (the spinner
-// still runs) for a polished final render.
+// mdStream writes streaming text deltas directly to w. No markdown rendering —
+// model output is printed as-is so it remains copy/paste clean and tokens
+// appear live as they arrive.
 type mdStream struct {
-	w   io.Writer
-	buf strings.Builder
-	r   *glamour.TermRenderer
+	w io.Writer
 }
 
 func newMDStream(w io.Writer, _ palette) *mdStream {
-	// WithAutoStyle honors COLORFGBG / $TERM and picks dark/light/notty.
-	// WithWordWrap(0) disables hard-wrap — we let the terminal handle reflow
-	// so users can copy-paste without artificial line breaks.
-	r, err := glamour.NewTermRenderer(
-		glamour.WithAutoStyle(),
-		glamour.WithWordWrap(0),
-	)
-	if err != nil {
-		// Degrade to passthrough; never break the REPL over a styling failure.
-		r = nil
-	}
-	return &mdStream{w: w, r: r}
+	return &mdStream{w: newCRLFWriter(w)}
 }
 
-// Write appends a streaming delta to the buffer. Rendering is deferred to Flush.
+// Write prints a streaming delta immediately.
 func (m *mdStream) Write(delta string) {
-	m.buf.WriteString(delta)
+	fmt.Fprint(m.w, delta)
 }
 
-// Flush renders the accumulated markdown and writes the result.
-// Called once at OnStreamEnd. Safe to call on an empty buffer (no-op).
-func (m *mdStream) Flush() {
-	if m.buf.Len() == 0 {
-		return
-	}
-	src := m.buf.String()
-	m.buf.Reset()
-
-	if m.r == nil {
-		// Renderer init failed — write the raw markdown.
-		fmt.Fprint(m.w, src)
-		return
-	}
-	out, err := m.r.Render(src)
-	if err != nil {
-		fmt.Fprint(m.w, src)
-		return
-	}
-	// Glamour appends a trailing newline; strip one to avoid double-spacing
-	// against repl.go's post-stream Fprintln(os.Stderr) in OnStreamEnd.
-	out = strings.TrimRight(out, "\n")
-	fmt.Fprint(m.w, out)
-}
+// Flush is a no-op; Write is already live. Kept for hook-API compatibility.
+func (m *mdStream) Flush() {}

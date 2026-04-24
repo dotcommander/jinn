@@ -134,6 +134,42 @@ func TestDiffPreview_200msThrottle(t *testing.T) {
 	}
 }
 
+func TestCRLFWriter(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name    string
+		input   string
+		wantOut string
+		wantN   int
+	}{
+		{"empty", "", "", 0},
+		{"no newline", "hello", "hello", 5},
+		{"bare LF", "hello\n", "hello\r\n", 6},
+		{"already CRLF", "hello\r\n", "hello\r\n", 7},
+		{"multi bare LF", "a\nb\nc", "a\r\nb\r\nc", 5},
+		{"mixed CRLF and LF", "\r\n\n", "\r\n\r\n", 3},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var buf bytes.Buffer
+			w := newCRLFWriter(&buf)
+			n, err := w.Write([]byte(tc.input))
+			if err != nil {
+				t.Fatalf("Write error: %v", err)
+			}
+			if n != tc.wantN {
+				t.Errorf("n = %d, want %d", n, tc.wantN)
+			}
+			if got := buf.String(); got != tc.wantOut {
+				t.Errorf("output = %q, want %q", got, tc.wantOut)
+			}
+		})
+	}
+}
+
 // TestDiffPreview_AppendsWhenNotTTY verifies that a bytes.Buffer destination
 // (non-TTY) gets plain append output with no ANSI escape sequences for
 // cursor movement. Each Render must add content, not erase previous content.
@@ -165,5 +201,29 @@ func TestDiffPreview_AppendsWhenNotTTY(t *testing.T) {
 	}
 	if strings.Contains(after2, "\x1b[2K") {
 		t.Errorf("clear-line escape sequence leaked into non-TTY output")
+	}
+}
+
+func TestCRLFWriter_SplitCRLFAcrossWrites(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	w := newCRLFWriter(&buf)
+	n1, err1 := w.Write([]byte("hello\r"))
+	n2, err2 := w.Write([]byte("\nworld"))
+	if err1 != nil {
+		t.Fatalf("first Write error: %v", err1)
+	}
+	if err2 != nil {
+		t.Fatalf("second Write error: %v", err2)
+	}
+	if n1 != 6 {
+		t.Errorf("n1 = %d, want 6", n1)
+	}
+	if n2 != 6 {
+		t.Errorf("n2 = %d, want 6", n2)
+	}
+	// \r\n pair split across writes must not produce \r\r\n
+	if got := buf.String(); got != "hello\r\nworld" {
+		t.Errorf("output = %q, want %q", got, "hello\r\nworld")
 	}
 }

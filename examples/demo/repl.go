@@ -109,9 +109,10 @@ func runREPL(ctx context.Context, cfg *config, messages []message) error {
 
 func replHooks(p palette) turnHooks {
 	var mu sync.Mutex
+	stderr := newCRLFWriter(os.Stderr)
 	md := newMDStream(os.Stdout, p)
-	spin := newSpinner(os.Stderr, p, &mu)
-	timer := newToolTimer(os.Stderr, p, &mu)
+	spin := newSpinner(stderr, p, &mu)
+	timer := newToolTimer(stderr, p, &mu)
 
 	return turnHooks{
 		Timer: timer,
@@ -137,7 +138,7 @@ func replHooks(p palette) turnHooks {
 			spin.halt()
 			mu.Lock()
 			defer mu.Unlock()
-			fmt.Fprintf(os.Stderr, "%s  · %s%s%s %s%s%s\n",
+			fmt.Fprintf(stderr, "%s  · %s%s%s %s%s%s\n",
 				p.dim,
 				p.tool, name, p.reset,
 				p.dim, filterToolArgs(name, args), p.reset,
@@ -148,7 +149,7 @@ func replHooks(p palette) turnHooks {
 			mu.Lock()
 			defer mu.Unlock()
 			if elapsed >= 500*time.Millisecond {
-				fmt.Fprintf(os.Stderr, "%s    %s %s (%.1fs)%s\n",
+				fmt.Fprintf(stderr, "%s    %s %s (%.1fs)%s\n",
 					p.dim,
 					p.success, name, elapsed.Seconds(), p.reset,
 				)
