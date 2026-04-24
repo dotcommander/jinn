@@ -41,15 +41,15 @@ func (e *Engine) multiEdit(args map[string]interface{}) (string, error) {
 
 		resolved, err := e.checkPath(path)
 		if err != nil {
-			return "", fmt.Errorf("edit[%d] %s: %s", i, path, err)
+			return "", fmt.Errorf("edit[%d] %s: %w", i, path, err)
 		}
 		if err := e.tracker.checkStale(resolved); err != nil {
-			return "", fmt.Errorf("edit[%d] %s: %s", i, path, err)
+			return "", fmt.Errorf("edit[%d] %s: %w", i, path, err)
 		}
 
 		data, err := os.ReadFile(resolved)
 		if err != nil {
-			return "", fmt.Errorf("edit[%d] %s: %s", i, path, err)
+			return "", fmt.Errorf("edit[%d] %s: %w", i, path, err)
 		}
 
 		updated, fuzzy, info, err := applyEdit(data, oldText, newText, fuzzyIndent)
@@ -75,7 +75,7 @@ func (e *Engine) multiEdit(args map[string]interface{}) (string, error) {
 	for _, ed := range edits {
 		_ = e.recordSnapshot(ed.resolved, ed.path, "multi_edit", ed.preContent)
 		if err := e.atomicWriteFile(ed.resolved, ed.updated); err != nil {
-			return "", fmt.Errorf("%s: %s", ed.path, err)
+			return "", fmt.Errorf("%s: %w", ed.path, err)
 		}
 		line := fmt.Sprintf("edited %s", ed.path)
 		if ed.fuzzy {

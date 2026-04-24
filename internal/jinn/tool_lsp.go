@@ -12,23 +12,31 @@ import (
 // keep test runs fast. It is only read once per lspQueryWithLauncher call.
 var lspTimeoutSec = 10
 
-// lspServerForExt maps a file extension to the argv for the LSP server binary.
+// lspExtEntry holds everything jinn needs to know about an LSP-supported extension.
+// Adding a new language requires one entry here — argv, langID, and install hint
+// are kept together so they cannot drift apart.
+type lspExtEntry struct {
+	argv    []string // LSP server argv (binary + flags)
+	langID  string   // LSP languageId sent in textDocument/didOpen
+	install string   // install hint surfaced when the binary is missing
+}
+
+// lspExtTable is the single source of truth for all supported extensions.
+// Read-only after init — Go has no const for maps.
+var lspExtTable = map[string]lspExtEntry{ //nolint:gochecknoglobals
+	".go":  {[]string{"gopls", "serve"}, "go", "go install golang.org/x/tools/gopls@latest"},
+	".rs":  {[]string{"rust-analyzer"}, "rust", "rustup component add rust-analyzer"},
+	".py":  {[]string{"pylsp"}, "python", "pip install python-lsp-server"},
+	".ts":  {[]string{"typescript-language-server", "--stdio"}, "typescript", "npm install -g typescript-language-server typescript"},
+	".tsx": {[]string{"typescript-language-server", "--stdio"}, "typescriptreact", "npm install -g typescript-language-server typescript"},
+	".js":  {[]string{"typescript-language-server", "--stdio"}, "javascript", "npm install -g typescript-language-server typescript"},
+	".jsx": {[]string{"typescript-language-server", "--stdio"}, "javascriptreact", "npm install -g typescript-language-server typescript"},
+}
+
+// lspServerForExt returns the LSP server argv for ext.
 // Returns ErrWithSuggestion when the extension is unknown or the binary is absent.
 func lspServerForExt(ext string) ([]string, error) {
-	type entry struct {
-		argv    []string
-		install string
-	}
-	table := map[string]entry{
-		".go":  {[]string{"gopls", "serve"}, "go install golang.org/x/tools/gopls@latest"},
-		".rs":  {[]string{"rust-analyzer"}, "rustup component add rust-analyzer"},
-		".py":  {[]string{"pylsp"}, "pip install python-lsp-server"},
-		".ts":  {[]string{"typescript-language-server", "--stdio"}, "npm install -g typescript-language-server typescript"},
-		".tsx": {[]string{"typescript-language-server", "--stdio"}, "npm install -g typescript-language-server typescript"},
-		".js":  {[]string{"typescript-language-server", "--stdio"}, "npm install -g typescript-language-server typescript"},
-		".jsx": {[]string{"typescript-language-server", "--stdio"}, "npm install -g typescript-language-server typescript"},
-	}
-	e, ok := table[ext]
+	e, ok := lspExtTable[ext]
 	if !ok {
 		return nil, &ErrWithSuggestion{
 			Err:        fmt.Errorf("no LSP server known for extension %s", ext),
@@ -52,17 +60,8 @@ func pathToURI(abs string) string {
 
 // langIDForExt returns the LSP language identifier for a file extension.
 func langIDForExt(ext string) string {
-	m := map[string]string{
-		".go":  "go",
-		".rs":  "rust",
-		".py":  "python",
-		".ts":  "typescript",
-		".tsx": "typescriptreact",
-		".js":  "javascript",
-		".jsx": "javascriptreact",
-	}
-	if id, ok := m[ext]; ok {
-		return id
+	if e, ok := lspExtTable[ext]; ok {
+		return e.langID
 	}
 	return "text"
 }

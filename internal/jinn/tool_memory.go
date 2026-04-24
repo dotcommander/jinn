@@ -65,47 +65,15 @@ func loadMemory() (memoryFile, error) {
 	return m, nil
 }
 
-// saveMemory atomically writes the memory file via temp+rename.
+// saveMemory atomically writes the memory file via temp+fsync+rename.
 func saveMemory(m memoryFile) error {
 	path, err := memoryPath()
 	if err != nil {
 		return err
 	}
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("memory: mkdir: %w", err)
+	if err := atomicWriteJSON(path, m, 0o600); err != nil {
+		return fmt.Errorf("memory: %w", err)
 	}
-	data, err := json.MarshalIndent(m, "", "  ")
-	if err != nil {
-		return fmt.Errorf("memory: marshal: %w", err)
-	}
-	tmp, err := os.CreateTemp(dir, "memory-*.json.tmp")
-	if err != nil {
-		return fmt.Errorf("memory: create temp: %w", err)
-	}
-	tmpPath := tmp.Name()
-	// Clean up temp on any failure path.
-	ok := false
-	defer func() {
-		if !ok {
-			os.Remove(tmpPath)
-		}
-	}()
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		return fmt.Errorf("memory: write temp: %w", err)
-	}
-	if err := tmp.Chmod(0o600); err != nil {
-		tmp.Close()
-		return fmt.Errorf("memory: chmod temp: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("memory: close temp: %w", err)
-	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		return fmt.Errorf("memory: rename: %w", err)
-	}
-	ok = true
 	return nil
 }
 

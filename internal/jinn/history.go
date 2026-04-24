@@ -85,42 +85,11 @@ func (e *Engine) loadHistory() (historyFile, error) {
 	return hf, nil
 }
 
-// saveHistory atomically writes the history index via temp+rename.
+// saveHistory atomically writes the history index via temp+fsync+rename.
 func (e *Engine) saveHistory(hf historyFile) error {
-	dir := e.historyDir()
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("history: mkdir: %w", err)
+	if err := atomicWriteJSON(e.indexPath(), hf, 0o600); err != nil {
+		return fmt.Errorf("history: %w", err)
 	}
-	data, err := json.MarshalIndent(hf, "", "  ")
-	if err != nil {
-		return fmt.Errorf("history: marshal: %w", err)
-	}
-	tmp, err := os.CreateTemp(dir, "index-*.json.tmp")
-	if err != nil {
-		return fmt.Errorf("history: create temp: %w", err)
-	}
-	tmpPath := tmp.Name()
-	ok := false
-	defer func() {
-		if !ok {
-			os.Remove(tmpPath)
-		}
-	}()
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		return fmt.Errorf("history: write temp: %w", err)
-	}
-	if err := tmp.Chmod(0o600); err != nil {
-		tmp.Close()
-		return fmt.Errorf("history: chmod temp: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("history: close temp: %w", err)
-	}
-	if err := os.Rename(tmpPath, e.indexPath()); err != nil {
-		return fmt.Errorf("history: rename: %w", err)
-	}
-	ok = true
 	return nil
 }
 
@@ -200,15 +169,13 @@ func (e *Engine) evictHistory(hf *historyFile) {
 		hf.Entries = hf.Entries[1:]
 	}
 
-	// Trim by total blob size.
-	for {
-		var total int64
-		for _, ent := range hf.Entries {
-			total += ent.BlobSize
-		}
-		if total <= historyMaxTotalBytes || len(hf.Entries) == 0 {
-			break
-		}
+	// Trim by total blob size (compute once, subtract as entries are removed).
+	var total int64
+	for _, ent := range hf.Entries {
+		total += ent.BlobSize
+	}
+	for total > historyMaxTotalBytes && len(hf.Entries) > 0 {
+		total -= hf.Entries[0].BlobSize
 		e.removeBlob(hf.Entries[0])
 		hf.Entries = hf.Entries[1:]
 	}

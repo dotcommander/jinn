@@ -24,7 +24,7 @@ func (e *Engine) searchFiles(args map[string]interface{}) (string, error) {
 		return "", err
 	}
 	if _, err := regexp.Compile(pattern); err != nil {
-		return "", fmt.Errorf("invalid regex: %s", err)
+		return "", fmt.Errorf("invalid regex: %w", err)
 	}
 
 	format := "text"
