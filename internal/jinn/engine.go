@@ -68,6 +68,9 @@ func (e *Engine) Dispatch(ctx context.Context, tool string, args map[string]inte
 	case "multi_edit":
 		result, err := e.multiEdit(args)
 		return result, nil, err
+	case "apply_patch":
+		result, err := e.applyPatch(args)
+		return result, nil, err
 	case "search_files":
 		result, err := e.searchFiles(args)
 		return textResult(result), nil, err

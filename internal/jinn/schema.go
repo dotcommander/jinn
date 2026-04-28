@@ -102,6 +102,21 @@ const Schema = `[
   {
     "type": "function",
     "function": {
+      "name": "apply_patch",
+      "description": "Apply a Codex-style patch (*** Begin Patch ... *** End Patch) to create, delete, or update files atomically. Supports add-file, delete-file, and update-file operations with hunk-based editing using @@ context markers and space/minus/plus prefixed lines. All operations are validated before any file is modified; if any operation fails, none are applied.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "patch": {"type": "string", "description": "Codex-style patch payload. Must start with '*** Begin Patch' and end with '*** End Patch'. Supports *** Add File:, *** Delete File:, and *** Update File: operations."},
+          "dry_run": {"type": "boolean", "description": "Preview changes without writing (default: false)"}
+        },
+        "required": ["patch"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
       "name": "search_files",
       "description": "Search file contents with grep. Returns file:line:match. Default limit is 500 matches; set max_matches to adjust. When truncated, response includes truncated=true and total_count.",
       "parameters": {
