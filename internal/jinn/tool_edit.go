@@ -6,6 +6,12 @@ import (
 	"strings"
 )
 
+// editDetails carries structured metadata about an edit operation.
+type editDetails struct {
+	Diff             string `json:"diff"`
+	FirstChangedLine int    `json:"firstChangedLine,omitempty"`
+}
+
 // matchInfo carries metadata about where old_text was found in the file.
 type matchInfo struct {
 	startLine int // 1-based line number where the match begins
@@ -170,7 +176,7 @@ func countLines(s string) int {
 	return n + 1
 }
 
-func (e *Engine) editFile(args map[string]interface{}) (string, error) {
+func (e *Engine) editFile(args map[string]interface{}) (*ToolResult, error) {
 	path, _ := args["path"].(string)
 	oldText, _ := args["old_text"].(string)
 	newText, _ := args["new_text"].(string)
@@ -182,18 +188,18 @@ func (e *Engine) editFile(args map[string]interface{}) (string, error) {
 
 	resolved, err := e.checkPath(path)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	if err := e.tracker.checkStale(resolved); err != nil {
-		return "", err
+		return nil, err
 	}
 
 	data, err := os.ReadFile(resolved)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return "", fmt.Errorf("file not found: %s", path)
+			return nil, fmt.Errorf("file not found: %s", path)
 		}
-		return "", err
+		return nil, err
 	}
 
 	updated, fuzzy, info, err := applyEdit(data, oldText, newText, fuzzyIndent)
@@ -203,21 +209,33 @@ func (e *Engine) editFile(args map[string]interface{}) (string, error) {
 			raw = normalizeToLF(raw)
 			lineNum, lineText := closestLine(oldText, raw)
 			if lineNum > 0 {
-				return "", fmt.Errorf("old_text not found in %s (%d lines). Nearest match at line %d: %q — did you mean this?", path, countLines(raw), lineNum, lineText)
+				return nil, fmt.Errorf("old_text not found in %s (%d lines). Nearest match at line %d: %q — did you mean this?", path, countLines(raw), lineNum, lineText)
 			}
-			return "", fmt.Errorf("old_text not found in %s (%d lines)", path, countLines(raw))
+			return nil, fmt.Errorf("old_text not found in %s (%d lines)", path, countLines(raw))
 		}
-		return "", err
+		return nil, err
 	}
 
+	// Compute diff for structured metadata.
+	dr := generateDiff(string(data), updated, path, 3)
+
 	if dryRun, ok := args["dry_run"].(bool); ok && dryRun {
-		return formatEditPreview(string(data), updated, path, fuzzy), nil
+		preview := formatEditPreview(string(data), updated, path, fuzzy)
+		return &ToolResult{
+			Text: preview,
+			Meta: map[string]any{
+				"edit": editDetails{
+					Diff:             dr.Diff,
+					FirstChangedLine: info.startLine,
+				},
+			},
+		}, nil
 	}
 
 	_ = e.recordSnapshot(resolved, path, "edit_file", data)
 
 	if err := e.atomicWriteFile(resolved, updated); err != nil {
-		return "", err
+		return nil, err
 	}
 
 	oldLines := strings.Count(oldText, "\n") + 1
@@ -232,5 +250,14 @@ func (e *Engine) editFile(args map[string]interface{}) (string, error) {
 			result += fmt.Sprintf("\n--- context ---\n%s", formatEditContext(data, info, newLines, showContext))
 		}
 	}
-	return result, nil
+
+	return &ToolResult{
+		Text: result,
+		Meta: map[string]any{
+			"edit": editDetails{
+				Diff:             dr.Diff,
+				FirstChangedLine: info.startLine,
+			},
+		},
+	}, nil
 }

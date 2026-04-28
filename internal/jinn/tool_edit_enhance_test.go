@@ -54,8 +54,8 @@ func TestEditFile_LineRangeInSuccess(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if !strings.HasPrefix(result, tc.wantPrefix) {
-				t.Errorf("result = %q, want prefix %q", result, tc.wantPrefix)
+			if !strings.HasPrefix(result.Text, tc.wantPrefix) {
+				t.Errorf("result = %q, want prefix %q", result.Text, tc.wantPrefix)
 			}
 		})
 	}
@@ -135,20 +135,20 @@ func TestEditFile_ShowContext(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(result, "--- context ---") {
-		t.Errorf("expected context block, got: %s", result)
+	if !strings.Contains(result.Text, "--- context ---") {
+		t.Errorf("expected ..., got: %s", result.Text)
 	}
-	if !strings.Contains(result, "REPLACED") {
-		t.Errorf("context should show replaced text, got: %s", result)
+	if !strings.Contains(result.Text, "REPLACED") {
+		t.Errorf("context should show replaced text, got: %s", result.Text)
 	}
-	if !strings.Contains(result, "3* | REPLACED") {
-		t.Errorf("edited line should be marked with *, got: %s", result)
+	if !strings.Contains(result.Text, "3* | REPLACED") {
+		t.Errorf("edited line should be marked with *, got: %s", result.Text)
 	}
-	if !strings.Contains(result, "2 | line2") {
-		t.Errorf("context line should appear, got: %s", result)
+	if !strings.Contains(result.Text, "2 | line2") {
+		t.Errorf("context line should appear, got: %s", result.Text)
 	}
-	if !strings.Contains(result, "4 | line4") {
-		t.Errorf("context line should appear, got: %s", result)
+	if !strings.Contains(result.Text, "4 | line4") {
+		t.Errorf("context line should appear, got: %s", result.Text)
 	}
 }
 
@@ -166,8 +166,8 @@ func TestEditFile_ShowContextZero(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if strings.Contains(result, "--- context ---") {
-		t.Errorf("show_context=0 should not include context, got: %s", result)
+	if strings.Contains(result.Text, "--- context ---") {
+		t.Errorf("show_context=0 should not include context, got: %s", result.Text)
 	}
 }
 
@@ -186,17 +186,17 @@ func TestEditFile_ShowContextMultiline(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(result, "2* | X") {
-		t.Errorf("line 2 should be marked as edited, got: %s", result)
+	if !strings.Contains(result.Text, "2* | X") {
+		t.Errorf("line 2 should be marked as edited, got: %s", result.Text)
 	}
-	if !strings.Contains(result, "3* | Y") {
-		t.Errorf("line 3 should be marked as edited, got: %s", result)
+	if !strings.Contains(result.Text, "3* | Y") {
+		t.Errorf("line 3 should be marked as edited, got: %s", result.Text)
 	}
-	if !strings.Contains(result, "1 | a") {
-		t.Errorf("context line 1 should appear, got: %s", result)
+	if !strings.Contains(result.Text, "1 | a") {
+		t.Errorf("context line 1 should appear, got: %s", result.Text)
 	}
-	if !strings.Contains(result, "4 | d") {
-		t.Errorf("context line 4 should appear, got: %s", result)
+	if !strings.Contains(result.Text, "4 | d") {
+		t.Errorf("context line 4 should appear, got: %s", result.Text)
 	}
 }
 
@@ -214,13 +214,13 @@ func TestEditFile_ShowContextAtFileBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(result, "1* | FIRST") {
-		t.Errorf("line 1 should be marked as edited, got: %s", result)
+	if !strings.Contains(result.Text, "1* | FIRST") {
+		t.Errorf("line 1 should be marked as edited, got: %s", result.Text)
 	}
-	if !strings.Contains(result, "2 | second") {
-		t.Errorf("context line 2 should appear, got: %s", result)
+	if !strings.Contains(result.Text, "2 | second") {
+		t.Errorf("context line 2 should appear, got: %s", result.Text)
 	}
-	if !strings.Contains(result, "3 | third") {
-		t.Errorf("context line 3 should appear, got: %s", result)
+	if !strings.Contains(result.Text, "3 | third") {
+		t.Errorf("context line 3 should appear, got: %s", result.Text)
 	}
 }

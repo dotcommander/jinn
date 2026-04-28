@@ -15,8 +15,8 @@ func TestEditFile_Basic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(result, "edited") {
-		t.Errorf("expected 'edited', got: %s", result)
+	if !strings.Contains(result.Text, "edited") {
+		t.Errorf("expected ..., got: %s", result.Text)
 	}
 	data, _ := os.ReadFile(filepath.Join(dir, "edit.txt"))
 	if string(data) != "foo qux baz\n" {
@@ -65,8 +65,8 @@ func TestEditFile_Multiline(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(result, "lines 1-2 (2 lines) replaced with 1 lines") {
-		t.Errorf("expected line count, got: %s", result)
+	if !strings.Contains(result.Text, "lines 1-2 (2 lines) replaced with 1 lines") {
+		t.Errorf("expected ..., got: %s", result.Text)
 	}
 	data, _ := os.ReadFile(filepath.Join(dir, "multi.txt"))
 	if string(data) != "replaced\nline3\n" {
@@ -86,8 +86,8 @@ func TestEditFile_FuzzyMatch_SmartQuotes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(result, "fuzzy match") {
-		t.Errorf("expected fuzzy match indicator, got: %s", result)
+	if !strings.Contains(result.Text, "fuzzy match") {
+		t.Errorf("expected ..., got: %s", result.Text)
 	}
 	data, _ := os.ReadFile(filepath.Join(dir, "quotes.txt"))
 	if !strings.Contains(string(data), "World") {
@@ -107,8 +107,8 @@ func TestEditFile_FuzzyMatch_TrailingWhitespace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(result, "fuzzy match") {
-		t.Errorf("expected fuzzy match for trailing whitespace, got: %s", result)
+	if !strings.Contains(result.Text, "fuzzy match") {
+		t.Errorf("expected ..., got: %s", result.Text)
 	}
 }
 
@@ -124,8 +124,8 @@ func TestEditFile_ExactMatchPreferred(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if strings.Contains(result, "fuzzy") {
-		t.Errorf("exact match should not report fuzzy, got: %s", result)
+	if strings.Contains(result.Text, "fuzzy") {
+		t.Errorf("exact match should not report fuzzy, got: %s", result.Text)
 	}
 }
 
@@ -141,8 +141,8 @@ func TestEditFile_CRLF_Preserved(t *testing.T) {
 	if err != nil {
 		t.Fatalf("edit failed: %v", err)
 	}
-	if strings.Contains(result, "error") {
-		t.Fatalf("edit returned error in result: %s", result)
+	if strings.Contains(result.Text, "error") {
+		t.Fatalf("edit returned error in result: %s", result.Text)
 	}
 	data, _ := os.ReadFile(filepath.Join(dir, "crlf.txt"))
 	content := string(data)
@@ -166,8 +166,8 @@ func TestEditFile_BOM_Preserved(t *testing.T) {
 	if err != nil {
 		t.Fatalf("edit failed: %v", err)
 	}
-	if strings.Contains(result, "error") {
-		t.Fatalf("edit returned error in result: %s", result)
+	if strings.Contains(result.Text, "error") {
+		t.Fatalf("edit returned error in result: %s", result.Text)
 	}
 	data, _ := os.ReadFile(filepath.Join(dir, "bom.txt"))
 	if !strings.HasPrefix(string(data), "\xEF\xBB\xBF") {
@@ -187,14 +187,14 @@ func TestEditFile_DryRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(result, "[dry-run]") {
-		t.Errorf("expected dry-run indicator, got: %s", result)
+	if !strings.Contains(result.Text, "[dry-run]") {
+		t.Errorf("expected ..., got: %s", result.Text)
 	}
-	if !strings.Contains(result, "- foo bar baz") {
-		t.Errorf("dry run should show removed line, got: %s", result)
+	if !strings.Contains(result.Text, "- foo bar baz") {
+		t.Errorf("dry run should show removed line, got: %s", result.Text)
 	}
-	if !strings.Contains(result, "+ foo qux baz") {
-		t.Errorf("dry run should show added line, got: %s", result)
+	if !strings.Contains(result.Text, "+ foo qux baz") {
+		t.Errorf("dry run should show added line, got: %s", result.Text)
 	}
 
 	// File must be unchanged on disk.
@@ -220,8 +220,8 @@ func TestEditFile_FuzzyIndent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(result, "edited") {
-		t.Errorf("expected 'edited', got: %s", result)
+	if !strings.Contains(result.Text, "edited") {
+		t.Errorf("expected ..., got: %s", result.Text)
 	}
 	data, _ := os.ReadFile(filepath.Join(dir, "indent.go"))
 	s := string(data)
@@ -248,8 +248,8 @@ func TestEditFile_FuzzyIndentPreservesContent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(result, "edited") {
-		t.Errorf("expected 'edited', got: %s", result)
+	if !strings.Contains(result.Text, "edited") {
+		t.Errorf("expected ..., got: %s", result.Text)
 	}
 	data, _ := os.ReadFile(filepath.Join(dir, "spaces.go"))
 	s := string(data)
@@ -370,5 +370,61 @@ func TestMultiEdit_AmbiguousLineNumbers(t *testing.T) {
 	}
 	if !strings.Contains(msg, "lines:") {
 		t.Errorf("expected 'lines:' in error, got: %s", msg)
+	}
+}
+
+func TestEditFile_DiffMeta(t *testing.T) {
+	t.Parallel()
+	e, dir := testEngine(t)
+	writeTestFile(t, dir, "diff.txt", "line1\nline2\nline3\n")
+	result, err := e.editFile(args("path", "diff.txt", "old_text", "line2", "new_text", "replaced"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Meta == nil {
+		t.Fatal("expected Meta with diff metadata")
+	}
+	edit, ok := result.Meta["edit"].(editDetails)
+	if !ok {
+		t.Fatalf("expected editDetails in Meta, got: %T", result.Meta["edit"])
+	}
+	if edit.Diff == "" {
+		t.Error("expected non-empty diff")
+	}
+	if !strings.Contains(edit.Diff, "- line2") {
+		t.Errorf("diff should show removed line, got: %s", edit.Diff)
+	}
+	if !strings.Contains(edit.Diff, "+ replaced") {
+		t.Errorf("diff should show added line, got: %s", edit.Diff)
+	}
+	if edit.FirstChangedLine != 2 {
+		t.Errorf("expected FirstChangedLine=2, got: %d", edit.FirstChangedLine)
+	}
+}
+
+func TestMultiEdit_DiffMeta(t *testing.T) {
+	t.Parallel()
+	e, dir := testEngine(t)
+	writeTestFile(t, dir, "a.txt", "aaa\n")
+	writeTestFile(t, dir, "b.txt", "bbb\n")
+	edits := []interface{}{
+		map[string]interface{}{"path": "a.txt", "old_text": "aaa", "new_text": "AAA"},
+		map[string]interface{}{"path": "b.txt", "old_text": "bbb", "new_text": "BBB"},
+	}
+	result, err := e.multiEdit(args("edits", edits))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	edit, ok := result.Meta["edit"].(editDetails)
+	if !ok {
+		t.Fatalf("expected editDetails in Meta, got: %T", result.Meta["edit"])
+	}
+	if edit.Diff == "" {
+		t.Error("expected non-empty diff for multi_edit")
+	}
+	if !strings.Contains(edit.Diff, "- aaa") || !strings.Contains(edit.Diff, "- bbb") {
+		t.Errorf("diff should show both removed lines, got: %s", edit.Diff)
 	}
 }

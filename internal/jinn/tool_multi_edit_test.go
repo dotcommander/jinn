@@ -20,8 +20,8 @@ func TestMultiEdit_Basic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(result, "applied 2 edits") {
-		t.Errorf("expected success, got: %s", result)
+	if !strings.Contains(result.Text, "applied 2 edits") {
+		t.Errorf("expected success, got: %s", result.Text)
 	}
 	d1, _ := os.ReadFile(filepath.Join(dir, "m1.txt"))
 	d2, _ := os.ReadFile(filepath.Join(dir, "m2.txt"))
@@ -72,8 +72,8 @@ func TestMultiEdit_FuzzyAndCRLF(t *testing.T) {
 	if err != nil {
 		t.Fatalf("multi_edit failed: %v", err)
 	}
-	if strings.Contains(result, "error") {
-		t.Fatalf("multi_edit returned error in result: %s", result)
+	if strings.Contains(result.Text, "error") {
+		t.Fatalf("multi_edit returned error in result: %s", result.Text)
 	}
 	data, _ := os.ReadFile(filepath.Join(dir, "multi.txt"))
 	content := string(data)
@@ -102,8 +102,8 @@ func TestMultiEdit_FuzzyIndent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("multi_edit with fuzzy_indent failed: %v", err)
 	}
-	if strings.Contains(result, "error") {
-		t.Fatalf("multi_edit returned error: %s", result)
+	if strings.Contains(result.Text, "error") {
+		t.Fatalf("multi_edit returned error: %s", result.Text)
 	}
 	data, _ := os.ReadFile(filepath.Join(dir, "mi_indent.go"))
 	s := string(data)

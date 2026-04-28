@@ -62,10 +62,10 @@ func (e *Engine) Dispatch(ctx context.Context, tool string, args map[string]inte
 		return textResult(result), nil, err
 	case "edit_file":
 		result, err := e.editFile(args)
-		return textResult(result), nil, err
+		return result, nil, err
 	case "multi_edit":
 		result, err := e.multiEdit(args)
-		return textResult(result), nil, err
+		return result, nil, err
 	case "search_files":
 		result, err := e.searchFiles(args)
 		return textResult(result), nil, err
