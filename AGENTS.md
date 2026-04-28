@@ -1,5 +1,17 @@
 # AGENTS.md — jinn tool usage guide for AI agents
 
+## run_shell — output truncation
+
+Shell output is truncated to **2000 lines** or **50KB** (whichever is hit first), keeping the tail. When truncated, full output is saved to a temp file and the response includes a notice:
+
+```
+[Showing 1847 of 3000 lines (45.2KB of 78.1KB). Full output: /tmp/jinn-shell-xxxxx.log]
+```
+
+For very large output (>1MB capture), the subprocess buffer caps at 1MB but the full output is always spilled to a temp file.
+
+---
+
 ## run_shell — risk classifier
 
 Before executing a command, jinn classifies it:
@@ -101,6 +113,44 @@ When results are truncated, the response includes:
 | `search_files` | `max_matches` | 500 | — |
 
 When you receive `truncated: true`, narrow the request using `pattern` (for `list_dir`) or a more specific regex (for `search_files`), or increase the cap explicitly.
+
+---
+
+## find_files — glob-based file search
+
+`find_files` locates files by name pattern. Uses `fd` when available (respects `.gitignore`, fast), falls back to POSIX `find`. Returns matching paths relative to workdir.
+
+### Parameters
+
+| Parameter | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `pattern` | **yes** | — | Glob pattern: `*.go`, `**/*.json`, `src/**/*_test.go` |
+| `path` | no | `.` | Directory to search in |
+| `limit` | no | 1000 | Max results before truncation |
+
+### Response
+
+```json
+{
+  "files": ["src/main.go", "src/util.go"],
+  "truncated": false,
+  "total_count": 2,
+  "limit_used": 1000,
+  "backend": "fd"
+}
+```
+
+When truncated, a hint is appended: `[TRUNCATED: 1000 of 5421 files. Use a more specific pattern or increase limit.]`
+
+### Excluded directories
+
+Both backends automatically exclude: `.git`, `node_modules`, `vendor`, `__pycache__`, `.cache`, `dist`, `build`.
+
+### Pattern behavior
+
+- Simple patterns (`*.go`) match basenames.
+- Patterns with `/` (`src/**/*.test.ts`) match against full paths.
+- Use `find_files` for "which files match this name?" and `search_files` for "which files contain this text?"
 
 ---
 

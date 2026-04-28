@@ -1,8 +1,10 @@
 package jinn
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -33,4 +35,18 @@ func writeTestFile(t *testing.T, dir, name, content string) {
 	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// parseFindResult extracts the JSON portion (before any [TRUNCATED] hint) and unmarshals it.
+func parseFindResult(t *testing.T, raw string) findFilesResult {
+	t.Helper()
+	jsonPart := raw
+	if idx := strings.Index(raw, "\n["); idx >= 0 {
+		jsonPart = raw[:idx]
+	}
+	var res findFilesResult
+	if err := json.Unmarshal([]byte(jsonPart), &res); err != nil {
+		t.Fatalf("invalid JSON: %v\nfull result: %s", err, raw)
+	}
+	return res
 }
