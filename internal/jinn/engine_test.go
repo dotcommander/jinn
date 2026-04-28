@@ -14,7 +14,7 @@ func TestSchema_Valid(t *testing.T) {
 	if err := json.Unmarshal([]byte(Schema), &tools); err != nil {
 		t.Fatalf("Schema is not valid JSON: %v", err)
 	}
-	if len(tools) != 14 {
+	if len(tools) != 15 {
 		t.Fatalf("expected 14 tools, got %d", len(tools))
 	}
 }

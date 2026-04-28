@@ -163,3 +163,54 @@ func TestExtractArgv0(t *testing.T) {
 		})
 	}
 }
+
+func TestRunShell_LargeOutput_Truncation(t *testing.T) {
+	t.Parallel()
+	e, _ := testEngine(t)
+	// Generate 3000 lines of output — should trigger line-limit truncation.
+	result, _, err := e.runShell(context.Background(), args("command", "for i in $(seq 1 3000); do echo \"line $i\"; done"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result, "[exit: 0]") {
+		t.Errorf("expected exit 0, got: %s", result[:200])
+	}
+	if !strings.Contains(result, "Showing") || !strings.Contains(result, "Full output:") {
+		t.Errorf("expected truncation notice with temp file path, got:\n%s", result[len(result)-300:])
+	}
+	if !strings.Contains(result, "of 3000 lines") {
+		t.Errorf("expected 'of 3000 lines' in truncation notice, got tail:\n%s", result[len(result)-300:])
+	}
+}
+
+func TestRunShell_LargeBytes_Truncation(t *testing.T) {
+	t.Parallel()
+	e, _ := testEngine(t)
+	// Generate output exceeding 50KB with unique lines (avoid collapseRepeatedLines).
+	// Each line ~600 bytes, 100 lines = ~60KB.
+	result, _, err := e.runShell(context.Background(), args("command", "for i in $(seq 1 100); do printf \"line$i %0.sx\" $(seq 1 550); echo; done"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result, "[exit: 0]") {
+		t.Errorf("expected exit 0")
+	}
+	if !strings.Contains(result, "Showing") {
+		t.Errorf("expected truncation notice for byte-limit, got tail:\n%s", result[len(result)-300:])
+	}
+}
+
+func TestRunShell_SmallOutput_NoTruncation(t *testing.T) {
+	t.Parallel()
+	e, _ := testEngine(t)
+	result, _, err := e.runShell(context.Background(), args("command", "echo hello world"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(result, "Showing") {
+		t.Errorf("small output should NOT be truncated, got: %s", result)
+	}
+	if strings.Contains(result, "Full output:") {
+		t.Errorf("small output should NOT have temp file reference")
+	}
+}

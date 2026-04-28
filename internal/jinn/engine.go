@@ -14,6 +14,7 @@ type Engine struct {
 	workDir string
 	tracker *fileTracker
 	rgPath  string     // path to rg binary, empty if unavailable
+	fdPath  string     // path to fd binary, empty if unavailable
 	memMu   sync.Mutex // guards memory file reads and writes
 }
 
@@ -25,7 +26,8 @@ func New(workDir string) *Engine {
 		workDir = resolved
 	}
 	rgPath, _ := exec.LookPath("rg")
-	return &Engine{workDir: workDir, tracker: newFileTracker(), rgPath: rgPath}
+	fdPath, _ := exec.LookPath("fd")
+	return &Engine{workDir: workDir, tracker: newFileTracker(), rgPath: rgPath, fdPath: fdPath}
 }
 
 // ToolResult is the structured output of a tool handler.
@@ -74,6 +76,9 @@ func (e *Engine) Dispatch(ctx context.Context, tool string, args map[string]inte
 		return textResult(result), nil, err
 	case "list_dir":
 		result, err := e.listDir(args)
+		return textResult(result), nil, err
+	case "find_files":
+		result, err := e.findFiles(args)
 		return textResult(result), nil, err
 	case "list_tools":
 		return textResult(Schema), nil, nil

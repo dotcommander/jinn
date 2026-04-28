@@ -6,7 +6,7 @@ const Schema = `[
     "type": "function",
     "function": {
       "name": "run_shell",
-      "description": "Run a bash command. Returns stdout/stderr (first 200 lines), prefixed with [exit: N] and a classification field indicating whether a non-zero exit is a semantic signal (expected_nonzero) or a real failure (error).",
+      "description": "Run a bash command. Returns stdout/stderr truncated to last 2000 lines or 50KB (whichever is hit first). If truncated, full output is saved to a temp file. Prefixed with [exit: N] and a classification field indicating whether a non-zero exit is a semantic signal (expected_nonzero) or a real failure (error).",
       "parameters": {
         "type": "object",
         "properties": {
@@ -146,6 +146,22 @@ const Schema = `[
           "depth": {"type": "integer", "description": "max depth (default: 3)"},
           "max_entries": {"type": "integer", "description": "Maximum number of entries to return (default: 500, cap: 10000). When exceeded, response includes truncated=true and total_count.", "default": 500}
         }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "find_files",
+      "description": "Find files by glob pattern. Uses fd when available (respects .gitignore), falls back to POSIX find. Returns matching file paths relative to workdir. Default limit is 1000 results.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "pattern": {"type": "string", "description": "Glob pattern to match files, e.g. '*.go', '**/*.json', or 'src/**/*_test.go'"},
+          "path": {"type": "string", "description": "Directory to search in (default: current directory)"},
+          "limit": {"type": "integer", "description": "Maximum number of results (default: 1000)", "default": 1000}
+        },
+        "required": ["pattern"]
       }
     }
   },

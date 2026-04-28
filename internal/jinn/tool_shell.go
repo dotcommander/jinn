@@ -62,7 +62,7 @@ func (e *Engine) runShell(ctx context.Context, args map[string]interface{}) (str
 		c = exec.CommandContext(ctx, "bash", "-c", cmd)
 	}
 
-	out := &boundedWriter{limit: 1 << 20} // 1 MB cap
+	out := &boundedWriter{limit: 1 << 20} // 1 MB capture buffer
 	c.Env = shellEnv()
 	c.Stdout = out
 	c.Stderr = out
@@ -76,17 +76,31 @@ func (e *Engine) runShell(ctx context.Context, args map[string]interface{}) (str
 		}
 	}
 	raw := collapseRepeatedLines(out.String())
-	if out.Truncated() {
+
+	// Apply tail truncation with line + byte limits (matching pi conventions).
+	content, trunc := truncateTailDetailed(raw, DefaultMaxLines, DefaultMaxBytes)
+
+	if out.Truncated() || trunc.Truncated {
 		if tmp, err := os.CreateTemp("", "jinn-shell-*.log"); err == nil {
-			tmp.WriteString(out.String())
-			raw += fmt.Sprintf("\n[output truncated at 1 MB — spilled to: %s]", tmp.Name())
+			tmp.WriteString(raw)
+			content += fmt.Sprintf(
+				"\n\n[Showing %d of %d lines (%s of %s). Full output: %s]",
+				trunc.OutputLines, trunc.TotalLines,
+				formatSize(trunc.OutputBytes), formatSize(trunc.TotalBytes),
+				tmp.Name(),
+			)
 			tmp.Close()
 		} else {
-			raw += "\n[output truncated at 1 MB]"
+			content += fmt.Sprintf(
+				"\n\n[Showing %d of %d lines (%s of %s)]",
+				trunc.OutputLines, trunc.TotalLines,
+				formatSize(trunc.OutputBytes), formatSize(trunc.TotalBytes),
+			)
 		}
 	}
+
 	if exitCode == 124 {
-		raw += fmt.Sprintf("\n[killed: exceeded %ds timeout]", timeout)
+		content += fmt.Sprintf("\n\nCommand timed out after %d seconds", timeout)
 	}
 
 	argv0 := extractArgv0(cmd)
@@ -95,7 +109,7 @@ func (e *Engine) runShell(ctx context.Context, args map[string]interface{}) (str
 	// Expected-nonzero exits return a success envelope (output + annotation)
 	// rather than an error, so the LLM sees the command's output alongside
 	// the classification and does not misinterpret a semantic non-zero as failure.
-	output := fmt.Sprintf("[exit: %d]\n%s", exitCode, truncateTail(raw, 200))
+	output := fmt.Sprintf("[exit: %d]\n%s", exitCode, content)
 	result := fmt.Sprintf("%s\n[classification: %s — %s]", output, class, reason)
 
 	meta := map[string]string{
