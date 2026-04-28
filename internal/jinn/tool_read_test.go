@@ -17,8 +17,8 @@ func TestReadFile_Basic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(result, "1\tline1") || !strings.Contains(result, "3\tline3") {
-		t.Errorf("expected line-numbered output, got: %s", result)
+	if !strings.Contains(result.Text, "1\tline1") || !strings.Contains(result.Text, "3\tline3") {
+		t.Errorf("expected line-numbered output, got: %s", result.Text)
 	}
 }
 
@@ -59,8 +59,8 @@ func TestReadFile_BinaryDetection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(result, "binary file") {
-		t.Errorf("expected 'binary file', got: %s", result)
+	if !strings.Contains(result.Text, "binary file") {
+		t.Errorf("expected 'binary file', got: %s", result.Text)
 	}
 }
 
@@ -76,8 +76,8 @@ func TestReadFile_AlignedLineNumbers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(result, "  1\t") {
-		t.Errorf("expected right-aligned line numbers, first 80 chars: %s", result[:min(80, len(result))])
+	if !strings.Contains(result.Text, "  1\t") {
+		t.Errorf("expected right-aligned line numbers, first 80 chars: %s", result.Text[:min(80, len(result.Text))])
 	}
 }
 
@@ -93,11 +93,11 @@ func TestReadFile_Window(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(result, "line3") {
-		t.Errorf("expected line3, got: %s", result)
+	if !strings.Contains(result.Text, "line3") {
+		t.Errorf("expected line3, got: %s", result.Text)
 	}
-	if strings.Contains(result, "line2") || strings.Contains(result, "line6") {
-		t.Errorf("window should exclude line2 and line6, got: %s", result)
+	if strings.Contains(result.Text, "line2") || strings.Contains(result.Text, "line6") {
+		t.Errorf("window should exclude line2 and line6, got: %s", result.Text)
 	}
 }
 
@@ -137,11 +137,11 @@ func TestReadFile_Tail(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if !strings.Contains(result, tc.want) {
-				t.Errorf("expected %q in output, got:\n%s", tc.want, result)
+			if !strings.Contains(result.Text, tc.want) {
+				t.Errorf("expected %q in output, got:\n%s", tc.want, result.Text)
 			}
-			if tc.noWant != "" && strings.Contains(result, tc.noWant) {
-				t.Errorf("expected %q NOT in output, got:\n%s", tc.noWant, result)
+			if tc.noWant != "" && strings.Contains(result.Text, tc.noWant) {
+				t.Errorf("expected %q NOT in output, got:\n%s", tc.noWant, result.Text)
 			}
 		})
 	}
@@ -159,10 +159,10 @@ func TestReadFile_TailTakesPrecedence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(result, "18\tline18") {
-		t.Errorf("tail should override start_line/end_line, got:\n%s", result)
+	if !strings.Contains(result.Text, "18\tline18") {
+		t.Errorf("tail should override start_line/end_line, got:\n%s", result.Text)
 	}
-	resultLines := strings.Split(result, "\n")
+	resultLines := strings.Split(result.Text, "\n")
 	for _, l := range resultLines {
 		if l == "1\tline1" || l == "5\tline5" {
 			t.Errorf("start_line/end_line should be ignored when tail is set, got:\n%s", result)
@@ -183,8 +183,8 @@ func TestReadFile_ContinuationHint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(result, "Use start_line=11 to continue") {
-		t.Errorf("expected continuation hint, got: %s", result)
+	if !strings.Contains(result.Text, "Use start_line=11 to continue") {
+		t.Errorf("expected continuation hint, got: %s", result.Text)
 	}
 }
 
@@ -232,11 +232,11 @@ func TestReadFile_Suggestion_Binary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(result, "binary file") {
-		t.Errorf("expected 'binary file' in result, got: %s", result)
+	if !strings.Contains(result.Text, "binary file") {
+		t.Errorf("expected 'binary file' in result, got: %s", result.Text)
 	}
-	if !strings.Contains(result, "checksum_tree") {
-		t.Errorf("expected 'checksum_tree' hint in binary result, got: %s", result)
+	if !strings.Contains(result.Text, "checksum_tree") {
+		t.Errorf("expected 'checksum_tree' hint in binary result, got: %s", result.Text)
 	}
 }
 
@@ -308,5 +308,84 @@ func TestReadFile_LargeFile_Suggestion(t *testing.T) {
 	}
 	if sErr.Unwrap() != sErr.Err {
 		t.Error("ErrWithSuggestion.Unwrap() should return Err")
+	}
+}
+
+func TestReadFile_TruncationMeta_Windowed(t *testing.T) {
+	t.Parallel()
+	e, dir := testEngine(t)
+	var content strings.Builder
+	for i := 1; i <= 300; i++ {
+		fmt.Fprintf(&content, "line%d\n", i)
+	}
+	writeTestFile(t, dir, "big.txt", content.String())
+
+	result, err := e.readFile(args("path", "big.txt"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// File has 300 lines, default window is 200 → should be truncated
+	if result.Meta == nil {
+		t.Fatal("expected Meta for truncated read")
+	}
+	trunc, ok := result.Meta["truncation"].(truncationInfo)
+	if !ok {
+		t.Fatalf("expected truncationInfo in Meta, got: %T", result.Meta["truncation"])
+	}
+	if !trunc.Truncated {
+		t.Error("expected Truncated=true")
+	}
+	if trunc.TotalLines != 300 {
+		t.Errorf("expected TotalLines=300, got: %d", trunc.TotalLines)
+	}
+	if trunc.OutputLines <= 0 || trunc.OutputLines >= 300 {
+		t.Errorf("expected OutputLines between 1-299, got: %d", trunc.OutputLines)
+	}
+}
+
+func TestReadFile_TruncationMeta_FitsInWindow(t *testing.T) {
+	t.Parallel()
+	e, dir := testEngine(t)
+	writeTestFile(t, dir, "small.txt", "line1\nline2\nline3\n")
+
+	result, err := e.readFile(args("path", "small.txt"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// 3-line file fits in 200-line window → no truncation metadata
+	if result.Meta != nil {
+		t.Errorf("expected nil Meta for non-truncated read, got: %v", result.Meta)
+	}
+}
+
+func TestReadFile_TruncationMeta_ExplicitWindow(t *testing.T) {
+	t.Parallel()
+	e, dir := testEngine(t)
+	var content strings.Builder
+	for i := 1; i <= 100; i++ {
+		fmt.Fprintf(&content, "line%d\n", i)
+	}
+	writeTestFile(t, dir, "hundred.txt", content.String())
+
+	// Request lines 1-10 → file has 100 lines, should be truncated
+	result, err := e.readFile(args("path", "hundred.txt", "start_line", float64(1), "end_line", float64(10)))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Meta == nil {
+		t.Fatal("expected Meta for partial window read")
+	}
+	trunc, ok := result.Meta["truncation"].(truncationInfo)
+	if !ok {
+		t.Fatalf("expected truncationInfo, got: %T", result.Meta["truncation"])
+	}
+	if trunc.TotalLines != 100 {
+		t.Errorf("expected TotalLines=100, got: %d", trunc.TotalLines)
+	}
+	if trunc.OutputLines != 10 {
+		t.Errorf("expected OutputLines=10, got: %d", trunc.OutputLines)
 	}
 }

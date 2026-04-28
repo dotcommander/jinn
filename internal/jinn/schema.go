@@ -245,12 +245,24 @@ type Request struct {
 	Args map[string]interface{} `json:"args"`
 }
 
+// ContentBlock represents a typed piece of content in a tool response.
+// Text results use Type="text" with the Text field.
+// Image results use Type="image" with Data (base64) and MimeType.
+type ContentBlock struct {
+	Type     string `json:"type"`               // "text" or "image"
+	Text     string `json:"text,omitempty"`      // for type="text"
+	Data     string `json:"data,omitempty"`      // base64-encoded, for type="image"
+	MimeType string `json:"mimeType,omitempty"`  // e.g. "image/png", for type="image"
+}
+
 // Response is the one-shot tool result envelope.
 type Response struct {
-	OK             bool   `json:"ok"`
-	Result         string `json:"result,omitempty"`
-	Error          string `json:"error,omitempty"`
-	Suggestion     string `json:"suggestion,omitempty"`
-	Classification string `json:"classification,omitempty"` // exit-code class: "success", "expected_nonzero", "error", "timeout", "signal"
-	Risk           string `json:"risk,omitempty"`           // pre-execution risk: "safe", "caution", "dangerous" — only set by run_shell
+	OK             bool           `json:"ok"`
+	Result         string         `json:"result,omitempty"`         // legacy text result (backwards compat)
+	Content        []ContentBlock `json:"content,omitempty"`        // structured content blocks (images, etc.)
+	Meta           map[string]any `json:"meta,omitempty"`           // structured metadata (truncation, etc.)
+	Error          string         `json:"error,omitempty"`
+	Suggestion     string         `json:"suggestion,omitempty"`
+	Classification string         `json:"classification,omitempty"` // exit-code class: "success", "expected_nonzero", "error", "timeout", "signal"
+	Risk           string         `json:"risk,omitempty"`           // pre-execution risk: "safe", "caution", "dangerous" — only set by run_shell
 }

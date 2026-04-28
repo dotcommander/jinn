@@ -30,8 +30,17 @@ func TestReadImage_PNG(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.HasPrefix(result, "data:image/png;base64,") {
-		t.Errorf("expected data URI prefix, got: %.60s", result)
+	if len(result.Content) != 1 || result.Content[0].Type != "image" {
+		t.Fatalf("expected image content block, got: %+v", result)
+	}
+	if result.Content[0].MimeType != "image/png" {
+		t.Errorf("expected image/png, got: %s", result.Content[0].MimeType)
+	}
+	if result.Content[0].Data == "" {
+		t.Error("expected non-empty base64 data")
+	}
+	if result.Text != "" {
+		t.Errorf("expected empty Text for image result, got: %s", result.Text)
 	}
 }
 
@@ -47,8 +56,8 @@ func TestReadImage_JPG(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	// .jpg must use image/jpeg MIME type, not image/jpg.
-	if !strings.HasPrefix(result, "data:image/jpeg;base64,") {
-		t.Errorf("expected image/jpeg MIME, got: %.60s", result)
+	if len(result.Content) != 1 || result.Content[0].MimeType != "image/jpeg" {
+		t.Errorf("expected image/jpeg MIME, got: %+v", result)
 	}
 }
 
@@ -85,7 +94,7 @@ func TestReadBinary_NotRegressed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.HasPrefix(result, "[binary file:") {
-		t.Errorf("expected [binary file: prefix, got: %s", result)
+	if !strings.HasPrefix(result.Text, "[binary file:") {
+		t.Errorf("expected [binary file: prefix, got: %s", result.Text)
 	}
 }

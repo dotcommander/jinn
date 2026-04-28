@@ -73,10 +73,16 @@ func main() {
 
 	result, meta, err := e.Dispatch(ctx, req.Tool, req.Args)
 	if err != nil {
+		risk := ""
+		classification := ""
+		if meta != nil {
+			risk = meta["risk"]
+			classification = meta["classification"]
+		}
 		resp := jinn.Response{
 			Error:          err.Error(),
-			Risk:           meta["risk"],
-			Classification: meta["classification"],
+			Risk:           risk,
+			Classification: classification,
 		}
 		// Populate suggestion field when the error carries one.
 		var sErr *jinn.ErrWithSuggestion
@@ -87,10 +93,16 @@ func main() {
 		os.Exit(1)
 	}
 
-	json.NewEncoder(os.Stdout).Encode(jinn.Response{
-		OK:             true,
-		Result:         result,
-		Classification: meta["classification"],
-		Risk:           meta["risk"],
-	})
+	// Build success response. Risk/Classification are only set by run_shell.
+	resp := jinn.Response{
+		OK:      true,
+		Result:  result.Text,
+		Content: result.Content,
+		Meta:    result.Meta,
+	}
+	if meta != nil {
+		resp.Risk = meta["risk"]
+		resp.Classification = meta["classification"]
+	}
+	json.NewEncoder(os.Stdout).Encode(resp)
 }

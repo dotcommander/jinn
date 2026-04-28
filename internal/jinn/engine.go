@@ -28,58 +28,72 @@ func New(workDir string) *Engine {
 	return &Engine{workDir: workDir, tracker: newFileTracker(), rgPath: rgPath}
 }
 
+// ToolResult is the structured output of a tool handler.
+// Text results populate Text (and Content is nil).
+// Image results populate Content with typed blocks (and Text is empty).
+// Meta carries optional structured metadata (e.g. truncation info for read_file).
+type ToolResult struct {
+	Text    string         // human/LLM-readable text result
+	Content []ContentBlock // structured content blocks (images, etc.)
+	Meta    map[string]any // structured metadata for callers (truncation, etc.)
+}
+
+// textResult wraps a plain string as a ToolResult.
+func textResult(s string) *ToolResult {
+	return &ToolResult{Text: s}
+}
+
 // Dispatch routes a tool call to the appropriate handler and returns structured
-// metadata alongside the result string. Meta keys:
+// metadata alongside the result. Meta keys:
 //   - "risk":           pre-execution risk level set by run_shell ("safe", "caution", "dangerous")
 //   - "classification": exit-code class set by run_shell ("success", "expected_nonzero", "error", "timeout", "signal")
 //
 // Tools that don't set meta return a nil map. Callers should treat nil as empty.
-// Option A: meta map in return signature keeps Dispatch pure and thread-safe.
-func (e *Engine) Dispatch(ctx context.Context, tool string, args map[string]interface{}) (string, map[string]string, error) {
+func (e *Engine) Dispatch(ctx context.Context, tool string, args map[string]interface{}) (*ToolResult, map[string]string, error) {
 	switch tool {
 	case "run_shell":
 		result, meta, err := e.runShell(ctx, args)
-		return result, meta, err
+		return textResult(result), meta, err
 	case "read_file":
 		result, err := e.readFile(args)
 		return result, nil, err
 	case "write_file":
 		result, err := e.writeFile(args)
-		return result, nil, err
+		return textResult(result), nil, err
 	case "edit_file":
 		result, err := e.editFile(args)
-		return result, nil, err
+		return textResult(result), nil, err
 	case "multi_edit":
 		result, err := e.multiEdit(args)
-		return result, nil, err
+		return textResult(result), nil, err
 	case "search_files":
 		result, err := e.searchFiles(args)
-		return result, nil, err
+		return textResult(result), nil, err
 	case "stat_file":
 		result, err := e.statFile(args)
-		return result, nil, err
+		return textResult(result), nil, err
 	case "list_dir":
 		result, err := e.listDir(args)
-		return result, nil, err
+		return textResult(result), nil, err
 	case "list_tools":
-		return Schema, nil, nil
+		return textResult(Schema), nil, nil
 	case "checksum_tree":
 		result, err := e.checksumTree(args)
-		return result, nil, err
+		return textResult(result), nil, err
 	case "detect_project":
 		result, err := e.detectProject(args)
-		return result, nil, err
+		return textResult(result), nil, err
 	case "memory":
 		result, err := e.memoryTool(args)
-		return result, nil, err
+		return textResult(result), nil, err
 	case "undo":
 		result, err := e.undoTool(args)
-		return result, nil, err
+		return textResult(result), nil, err
 	case "lsp_query":
 		result, err := e.lspQuery(args)
-		return result, nil, err
+		return textResult(result), nil, err
 	default:
-		return "", nil, fmt.Errorf("unknown tool: %s", tool)
+		return nil, nil, fmt.Errorf("unknown tool: %s", tool)
 	}
 }
 

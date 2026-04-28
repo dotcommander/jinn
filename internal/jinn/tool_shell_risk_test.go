@@ -84,7 +84,7 @@ func TestDispatch_MemoryRoute(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(result, "keys") {
-		t.Errorf("expected keys field in list result, got: %s", result)
+	if !strings.Contains(result.Text, "keys") {
+		t.Errorf("expected keys field in list result, got: %s", result.Text)
 	}
 }

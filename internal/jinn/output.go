@@ -7,14 +7,41 @@ import (
 )
 
 func truncateOutput(raw string, limit int) string {
+	return truncateOutputDetailed(raw, limit).Content
+}
+
+// truncationInfo describes how output was truncated.
+type truncationInfo struct {
+	Truncated   bool `json:"truncated"`
+	TotalLines  int  `json:"totalLines"`
+	OutputLines int  `json:"outputLines"`
+}
+
+// truncateOutputDetailed truncates output and returns both the content
+// and structured metadata about the truncation.
+func truncateOutputDetailed(raw string, limit int) struct {
+	Content    string
+	Truncated  bool
+	TotalLines int
+	ShownLines int
+} {
+	result := struct {
+		Content    string
+		Truncated  bool
+		TotalLines int
+		ShownLines int
+	}{}
+
 	if raw == "" {
-		return ""
+		return result
 	}
 	lines := strings.Split(raw, "\n")
 	if len(lines) > 0 && lines[len(lines)-1] == "" {
 		lines = lines[:len(lines)-1]
 	}
 	count := len(lines)
+	result.TotalLines = count
+
 	if count >= limit {
 		keep := limit / 4
 		shown := keep * 2
@@ -30,9 +57,14 @@ func truncateOutput(raw string, limit int) string {
 			b.WriteString(l)
 			b.WriteByte('\n')
 		}
-		return strings.TrimRight(b.String(), "\n")
+		result.Content = strings.TrimRight(b.String(), "\n")
+		result.Truncated = true
+		result.ShownLines = shown
+		return result
 	}
-	return raw
+	result.Content = raw
+	result.ShownLines = count
+	return result
 }
 
 // truncateTail keeps the last `limit` lines. Better for shell output
