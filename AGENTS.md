@@ -243,3 +243,51 @@ old_text matches 3 locations (lines: 12, 47, 89) — must be unique. Add surroun
 ```
 
 To fix: extend `old_text` to include a few surrounding lines that are unique to the target location. No separate `search_files` call is needed — the line numbers tell you where the matches are.
+
+---
+
+## apply_patch — Codex-style patch format
+
+Applies a multi-file patch in Codex format (`*** Begin Patch ... *** End Patch`). Supports three operations:
+
+| Operation | Syntax | Effect |
+|-----------|--------|--------|
+| Add file | `*** Add File: path` | Create new file. Lines prefixed with `+`. |
+| Delete file | `*** Delete File: path` | Delete existing file. |
+| Update file | `*** Update File: path` | In-place edits via hunks. |
+
+### Update hunks
+
+Each hunk starts with an optional `@@ context` marker (a line that must be found in the file for positioning), followed by lines prefixed with ` ` (context), `-` (remove), or `+` (add):
+
+```
+*** Begin Patch
+*** Update File: main.go
+@@ func main() {
+ func main() {
+-	fmt.Println("old")
++	fmt.Println("new")
+ }
+*** End Patch
+```
+
+### Fuzzy matching
+
+When exact line matching fails, `apply_patch` applies progressive fuzzy matching (rstrip → trim → Unicode-normalized) to locate hunks. This handles whitespace differences and smart quotes automatically.
+
+### Atomicity
+
+All operations are validated in a preflight pass before any file is mutated. If any operation fails validation (e.g., context not found, file doesn't exist), the entire patch is rejected. Undo snapshots are recorded for each mutated file.
+
+### Parameters
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `patch` | yes | Codex-style patch payload |
+| `dry_run` | no | Preview without writing (default: false) |
+
+### When to use
+
+- Multi-file changes that must be atomic (create + update + delete in one call)
+- Hunk-based edits where context lines are more natural than old_text/new_text pairs
+- Interoperability with tools that emit Codex-style patches
