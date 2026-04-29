@@ -13,14 +13,15 @@ func (e *Engine) multiEdit(args map[string]interface{}) (*ToolResult, error) {
 	}
 
 	type pendingEdit struct {
-		path         string
-		resolved     string
-		updated      string
-		fuzzy        bool
-		matchInfo    matchInfo
-		showContext  int
-		newLineCount int    // lines in new_text, for show_context marker
-		preContent   []byte // pre-mutation bytes for undo snapshot
+		path        string
+		resolved    string
+		oldText     string // for fast-path diff (line count of removed region)
+		newText     string // for fast-path diff (line count of added region)
+		updated     string
+		fuzzy       bool
+		matchInfo   matchInfo
+		showContext int
+		preContent  []byte // pre-mutation bytes for undo snapshot
 	}
 	var edits []pendingEdit
 
@@ -72,14 +73,15 @@ func (e *Engine) multiEdit(args map[string]interface{}) (*ToolResult, error) {
 		accumulatedContent[resolved] = string(updated)
 
 		edits = append(edits, pendingEdit{
-			path:         path,
-			resolved:     resolved,
-			updated:      string(updated),
-			fuzzy:        fuzzy,
-			matchInfo:    info,
-			showContext:  showContext,
-			newLineCount: strings.Count(newText, "\n") + 1,
-			preContent:   data,
+			path:        path,
+			resolved:    resolved,
+			oldText:     oldText,
+			newText:     newText,
+			updated:     string(updated),
+			fuzzy:       fuzzy,
+			matchInfo:   info,
+			showContext: showContext,
+			preContent:  data,
 		})
 	}
 
@@ -98,13 +100,15 @@ func (e *Engine) multiEdit(args map[string]interface{}) (*ToolResult, error) {
 		}
 		if ed.showContext > 0 {
 			if data, err := os.ReadFile(ed.resolved); err == nil {
-				line += fmt.Sprintf("\n--- context ---\n%s", formatEditContext(data, ed.matchInfo, ed.newLineCount, ed.showContext))
+				newLineCount := strings.Count(ed.newText, "\n") + 1
+				line += fmt.Sprintf("\n--- context ---\n%s", formatEditContext(data, ed.matchInfo, newLineCount, ed.showContext))
 			}
 		}
 		results = append(results, line)
 
-		// Compute diff for structured metadata.
-		dr := generateDiff(string(ed.preContent), ed.updated, ed.path, 3)
+		// Compute diff via fast-path using known matchInfo (avoids O(m×n) LCS
+		// over the full file, which freezes on large files).
+		dr := generateEditDiff(string(ed.preContent), ed.updated, ed.path, ed.matchInfo, ed.oldText, ed.newText, 3)
 		if dr.Diff != "" {
 			allDiffs = append(allDiffs, dr.Diff)
 		}

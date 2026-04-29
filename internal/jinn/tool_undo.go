@@ -203,12 +203,21 @@ func (e *Engine) findEntry(id string) (historyEntry, error) {
 	}
 }
 
-// readBlob reads and SHA-256-verifies the blob for an entry.
+// readBlob reads, decompresses, and SHA-256-verifies the blob for an entry.
+// Blobs are stored with adaptive compression (see blob_codec.go); decode is
+// transparent to callers.
 func (e *Engine) readBlob(ent historyEntry) ([]byte, error) {
-	data, err := os.ReadFile(ent.BlobPath)
+	encoded, err := os.ReadFile(ent.BlobPath)
 	if err != nil {
 		return nil, &ErrWithSuggestion{
 			Err:        fmt.Errorf("blob read failed for id=%s: %w", ent.ID, err),
+			Suggestion: `use action="clear" to reset history`,
+		}
+	}
+	data, err := decodeBlob(encoded)
+	if err != nil {
+		return nil, &ErrWithSuggestion{
+			Err:        fmt.Errorf("blob decode failed for id=%s: %w", ent.ID, err),
 			Suggestion: `use action="clear" to reset history`,
 		}
 	}

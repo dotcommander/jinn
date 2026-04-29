@@ -17,11 +17,11 @@ type diffOp struct {
 	value string
 }
 
-// computeEditScript builds an LCS-based edit script between two strings.
-// Returns the script (in forward order), the old lines, and the new lines.
-func computeEditScript(old, new_ string) (script []diffOp, oldLines []string, newLines []string) {
-	oldLines = strings.Split(old, "\n")
-	newLines = strings.Split(new_, "\n")
+// computeEditScript builds an LCS-based edit script between two strings,
+// in forward order.
+func computeEditScript(old, new_ string) []diffOp {
+	oldLines := strings.Split(old, "\n")
+	newLines := strings.Split(new_, "\n")
 
 	// Remove trailing empty element from final newline.
 	if len(oldLines) > 0 && oldLines[len(oldLines)-1] == "" && strings.HasSuffix(old, "\n") {
@@ -50,6 +50,7 @@ func computeEditScript(old, new_ string) (script []diffOp, oldLines []string, ne
 	}
 
 	// Walk back to produce edit script.
+	var script []diffOp
 	i, j := m, n
 	for i > 0 || j > 0 {
 		if i > 0 && j > 0 && oldLines[i-1] == newLines[j-1] {
@@ -68,7 +69,7 @@ func computeEditScript(old, new_ string) (script []diffOp, oldLines []string, ne
 	for l, r := 0, len(script)-1; l < r; l, r = l+1, r-1 {
 		script[l], script[r] = script[r], script[l]
 	}
-	return script, oldLines, newLines
+	return script
 }
 
 type hunkRange struct {
@@ -160,47 +161,45 @@ func formatHunks(script []diffOp, hunks []hunkRange, contextLines int, b *string
 	return firstChangedLine
 }
 
-// generateDiff computes a unified diff and returns structured output.
-// Unlike unifiedDiff, it does not include a "[dry-run]" prefix.
-func generateDiff(old, new_, label string, contextLines int) DiffResult {
+// renderDiffBody runs the LCS pipeline and writes the unified-diff hunks
+// (no "--- / +++" or "[dry-run]" header) to b. Callers prepend their own header.
+// Returns true and the 1-based new-file line of the first change when there is
+// at least one hunk; false (and 0) when old == new or no hunks survive context.
+func renderDiffBody(old, new_ string, contextLines int, b *strings.Builder) (bool, int) {
 	if old == new_ {
-		return DiffResult{}
+		return false, 0
 	}
-
-	script, _, _ := computeEditScript(old, new_)
+	script := computeEditScript(old, new_)
 	hunks := computeHunks(script, contextLines)
 	if len(hunks) == 0 {
-		return DiffResult{}
+		return false, 0
 	}
+	return true, formatHunks(script, hunks, contextLines, b)
+}
 
+// generateDiff computes a unified diff and returns structured output.
+func generateDiff(old, new_, label string, contextLines int) DiffResult {
 	var b strings.Builder
 	fmt.Fprintf(&b, "--- %s\n+++ %s\n", label, label)
-	firstChangedLine := formatHunks(script, hunks, contextLines, &b)
-
+	ok, firstChangedLine := renderDiffBody(old, new_, contextLines, &b)
+	if !ok {
+		return DiffResult{}
+	}
 	return DiffResult{
 		Diff:             strings.TrimRight(b.String(), "\n"),
 		FirstChangedLine: firstChangedLine,
 	}
 }
 
-// unifiedDiff generates a unified diff between two strings.
-// contextLines controls how many unchanged lines surround each change.
+// unifiedDiff generates a unified diff with a "[dry-run]" prefix for tool previews.
 // Returns "[dry-run] no changes" if old and new are identical.
 func unifiedDiff(old, new_, label string, contextLines int) string {
-	if old == new_ {
-		return "[dry-run] no changes"
-	}
-
-	script, _, _ := computeEditScript(old, new_)
-	hunks := computeHunks(script, contextLines)
-	if len(hunks) == 0 {
-		return "[dry-run] no changes"
-	}
-
 	var b strings.Builder
 	fmt.Fprintf(&b, "[dry-run] diff for %s:\n", label)
-	formatHunks(script, hunks, contextLines, &b)
-
+	ok, _ := renderDiffBody(old, new_, contextLines, &b)
+	if !ok {
+		return "[dry-run] no changes"
+	}
 	return b.String()
 }
 

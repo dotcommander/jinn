@@ -216,8 +216,8 @@ func (e *Engine) editFile(args map[string]interface{}) (*ToolResult, error) {
 		return nil, err
 	}
 
-	// Compute diff for structured metadata.
-	dr := generateDiff(string(data), updated, path, 3)
+	// Compute diff for structured metadata using fast-path (known region).
+	dr := generateEditDiff(string(data), updated, path, info, oldText, newText, 3)
 
 	if dryRun, ok := args["dry_run"].(bool); ok && dryRun {
 		preview := formatEditPreview(string(data), updated, path, fuzzy)

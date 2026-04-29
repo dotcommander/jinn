@@ -96,6 +96,10 @@ func (e *Engine) saveHistory(hf historyFile) error {
 // recordSnapshot saves a pre-mutation snapshot of absPath.
 // Never blocks a mutation — all recoverable failures return nil.
 // preContent == nil means the file did not exist before the operation.
+//
+// Blobs are compressed with adaptive gzip (adapted from agented's blob codec).
+// This reduces disk usage for text-heavy edit histories without overhead on
+// small edits or already-compressed content.
 func (e *Engine) recordSnapshot(absPath, displayPath, op string, preContent []byte) error {
 	if len(preContent) > historyMaxBlobBytes {
 		// File too large to snapshot — skip silently, don't block the write.
@@ -118,7 +122,7 @@ func (e *Engine) recordSnapshot(absPath, displayPath, op string, preContent []by
 
 	created := preContent == nil
 
-	// Write blob.
+	// Write blob (compressed).
 	blobHash := ""
 	blobPath := ""
 	var blobSize int64
@@ -129,10 +133,14 @@ func (e *Engine) recordSnapshot(absPath, displayPath, op string, preContent []by
 		if err := os.MkdirAll(e.blobsDir(), 0o700); err != nil {
 			return nil // non-blocking
 		}
-		if err := atomicWriteBytes(blobPath, preContent, 0o600); err != nil {
+		encoded, cerr := encodeBlob(preContent)
+		if cerr != nil {
 			return nil // non-blocking
 		}
-		blobSize = int64(len(preContent))
+		if err := atomicWriteBytes(blobPath, encoded, 0o600); err != nil {
+			return nil // non-blocking
+		}
+		blobSize = int64(len(preContent)) // track original size for eviction
 	}
 
 	entry := historyEntry{

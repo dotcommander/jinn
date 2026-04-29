@@ -221,7 +221,7 @@ func TestUndoRestore_BlobIntegrityFails(t *testing.T) {
 	if len(hf.Entries) == 0 {
 		t.Fatal("expected entry in history")
 	}
-	if err := os.WriteFile(hf.Entries[0].BlobPath, []byte("corrupted"), 0600); err != nil {
+	if err := os.WriteFile(hf.Entries[0].BlobPath, append([]byte{blobTagRaw}, []byte("corrupted")...), 0600); err != nil {
 		t.Fatalf("corrupt blob: %v", err)
 	}
 
