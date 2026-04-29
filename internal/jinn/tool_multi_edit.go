@@ -24,6 +24,10 @@ func (e *Engine) multiEdit(args map[string]interface{}) (*ToolResult, error) {
 	}
 	var edits []pendingEdit
 
+	// accumulatedContent tracks the evolving content per file so multiple
+	// edits to the same file build on each other instead of overwriting.
+	accumulatedContent := make(map[string]string)
+
 	// Phase 1: validate all edits before applying any.
 	for i, raw := range editsRaw {
 		entry, ok := raw.(map[string]interface{})
@@ -47,9 +51,16 @@ func (e *Engine) multiEdit(args map[string]interface{}) (*ToolResult, error) {
 			return nil, fmt.Errorf("edit[%d] %s: %w", i, path, err)
 		}
 
-		data, err := os.ReadFile(resolved)
-		if err != nil {
-			return nil, fmt.Errorf("edit[%d] %s: %w", i, path, err)
+		// Use accumulated content if a previous edit touched this file,
+		// otherwise read from disk.
+		var data []byte
+		if accumulated, ok := accumulatedContent[resolved]; ok {
+			data = []byte(accumulated)
+		} else {
+			data, err = os.ReadFile(resolved)
+			if err != nil {
+				return nil, fmt.Errorf("edit[%d] %s: %w", i, path, err)
+			}
 		}
 
 		updated, fuzzy, info, err := applyEdit(data, oldText, newText, fuzzyIndent)
@@ -58,10 +69,12 @@ func (e *Engine) multiEdit(args map[string]interface{}) (*ToolResult, error) {
 			return nil, fmt.Errorf("edit[%d] %s: %w", i, path, err)
 		}
 
+		accumulatedContent[resolved] = string(updated)
+
 		edits = append(edits, pendingEdit{
 			path:         path,
 			resolved:     resolved,
-			updated:      updated,
+			updated:      string(updated),
 			fuzzy:        fuzzy,
 			matchInfo:    info,
 			showContext:  showContext,
