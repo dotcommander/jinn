@@ -30,7 +30,9 @@ const Schema = `[
           "path": {"type": "string", "description": "file path to read"},
           "start_line": {"type": "integer", "description": "first line (1-indexed, default: 1)"},
           "end_line": {"type": "integer", "description": "last line (default: start_line+1999)"},
-          "tail": {"type": "integer", "description": "Read the last N lines of the file. Takes precedence over start_line/end_line. 0 = disabled.", "default": 0}
+          "tail": {"type": "integer", "description": "Read the last N lines of the file. Takes precedence over start_line/end_line. 0 = disabled.", "default": 0},
+          "line_numbers": {"type": "boolean", "description": "Include cat-n style line-number prefixes in output (default: true). Set false to receive raw file content with no numbering.", "default": true},
+          "truncate": {"type": "string", "enum": ["head", "tail", "middle", "none"], "description": "Strategy when output exceeds line limit. head=keep first N (default, paginates with start_line). tail=keep last N (logs). middle=keep both ends, elide middle. none=defer to byte cap only.", "default": "head"}
         },
         "required": ["path"]
       }
@@ -281,17 +283,17 @@ type Request struct {
 // Image results use Type="image" with Data (base64) and MimeType.
 type ContentBlock struct {
 	Type     string `json:"type"`               // "text" or "image"
-	Text     string `json:"text,omitempty"`      // for type="text"
-	Data     string `json:"data,omitempty"`      // base64-encoded, for type="image"
-	MimeType string `json:"mimeType,omitempty"`  // e.g. "image/png", for type="image"
+	Text     string `json:"text,omitempty"`     // for type="text"
+	Data     string `json:"data,omitempty"`     // base64-encoded, for type="image"
+	MimeType string `json:"mimeType,omitempty"` // e.g. "image/png", for type="image"
 }
 
 // Response is the one-shot tool result envelope.
 type Response struct {
 	OK             bool           `json:"ok"`
-	Result         string         `json:"result,omitempty"`         // legacy text result (backwards compat)
-	Content        []ContentBlock `json:"content,omitempty"`        // structured content blocks (images, etc.)
-	Meta           map[string]any `json:"meta,omitempty"`           // structured metadata (truncation, etc.)
+	Result         string         `json:"result,omitempty"`  // legacy text result (backwards compat)
+	Content        []ContentBlock `json:"content,omitempty"` // structured content blocks (images, etc.)
+	Meta           map[string]any `json:"meta,omitempty"`    // structured metadata (truncation, etc.)
 	Error          string         `json:"error,omitempty"`
 	Suggestion     string         `json:"suggestion,omitempty"`
 	Classification string         `json:"classification,omitempty"` // exit-code class: "success", "expected_nonzero", "error", "timeout", "signal"

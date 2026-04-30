@@ -6,7 +6,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"strconv"
+	"syscall"
+	"time"
 )
 
 // shellAllowList is the set of environment variables passed to shell subprocesses.
@@ -50,30 +51,43 @@ func (e *Engine) runShell(ctx context.Context, args map[string]interface{}) (str
 		timeout = 300
 	}
 
-	timeoutBin, _ := exec.LookPath("timeout")
-	if timeoutBin == "" {
-		timeoutBin, _ = exec.LookPath("gtimeout")
-	}
-
-	var c *exec.Cmd
-	if timeoutBin != "" {
-		c = exec.CommandContext(ctx, timeoutBin, strconv.Itoa(timeout), "bash", "-c", cmd)
-	} else {
-		c = exec.CommandContext(ctx, "bash", "-c", cmd)
-	}
+	// Always use a process group so SIGKILL reaches background processes too.
+	// exec.CommandContext only kills the direct child; our timer kills -pgid.
+	c := exec.CommandContext(ctx, "bash", "-c", cmd)
+	c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 	out := &boundedWriter{limit: 1 << 20} // 1 MB capture buffer
 	c.Env = shellEnv()
 	c.Stdout = out
 	c.Stderr = out
+
 	exitCode := 0
-	if err := c.Run(); err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			exitCode = exitErr.ExitCode()
-		} else {
-			exitCode = 1
+	timedOut := false
+
+	if err := c.Start(); err != nil {
+		exitCode = 1
+	} else {
+		pgid := c.Process.Pid // bash is the group leader (Setpgid=true)
+		timer := time.AfterFunc(time.Duration(timeout)*time.Second, func() {
+			// Negative pgid targets the whole process group.
+			syscall.Kill(-pgid, syscall.SIGKILL) //nolint:errcheck
+		})
+		if err := c.Wait(); err != nil {
+			var exitErr *exec.ExitError
+			if errors.As(err, &exitErr) {
+				exitCode = exitErr.ExitCode()
+			} else {
+				exitCode = 1
+			}
 		}
+		// Stop returns false when the timer already fired.
+		if !timer.Stop() {
+			timedOut = true
+		}
+	}
+
+	if timedOut {
+		exitCode = 124 // preserves "timed out after N seconds" message below
 	}
 	raw := collapseRepeatedLines(out.String())
 

@@ -96,6 +96,87 @@ func truncateOutputDetailed(raw string, limit int) struct {
 	return result
 }
 
+// truncateOutputHead keeps the first limit lines and appends a pagination hint.
+// The hint format matches pi's convention: agents use start_line=N+1 to continue.
+func truncateOutputHead(raw string, limit int) struct {
+	Content    string
+	Truncated  bool
+	TotalLines int
+	ShownLines int
+} {
+	result := struct {
+		Content    string
+		Truncated  bool
+		TotalLines int
+		ShownLines int
+	}{}
+	if raw == "" {
+		return result
+	}
+	lines := strings.Split(raw, "\n")
+	if len(lines) > 0 && lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+	count := len(lines)
+	result.TotalLines = count
+	if count < limit {
+		result.Content = raw
+		result.ShownLines = count
+		return result
+	}
+	kept := lines[:limit]
+	var b strings.Builder
+	for _, l := range kept {
+		b.WriteString(l)
+		b.WriteByte('\n')
+	}
+	fmt.Fprintf(&b, "[truncated: showing first %d of %d lines — use start_line=%d to continue]", limit, count, limit+1)
+	result.Content = b.String()
+	result.Truncated = true
+	result.ShownLines = limit
+	return result
+}
+
+// truncateOutputTail keeps the last limit lines and prepends a marker.
+func truncateOutputTail(raw string, limit int) struct {
+	Content    string
+	Truncated  bool
+	TotalLines int
+	ShownLines int
+} {
+	result := struct {
+		Content    string
+		Truncated  bool
+		TotalLines int
+		ShownLines int
+	}{}
+	if raw == "" {
+		return result
+	}
+	lines := strings.Split(raw, "\n")
+	if len(lines) > 0 && lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+	count := len(lines)
+	result.TotalLines = count
+	if count < limit {
+		result.Content = raw
+		result.ShownLines = count
+		return result
+	}
+	kept := lines[count-limit:]
+	var b strings.Builder
+	fmt.Fprintf(&b, "[truncated: showing last %d of %d lines]\n", limit, count)
+	for _, l := range kept {
+		b.WriteString(l)
+		b.WriteByte('\n')
+	}
+	result.Content = strings.TrimRight(b.String(), "\n")
+	result.Truncated = true
+	result.ShownLines = limit
+	return result
+}
+
 // splitLines splits s into lines without a trailing empty element.
 func splitLines(s string) []string {
 	if s == "" {

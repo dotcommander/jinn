@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRunShell_Echo(t *testing.T) {
@@ -197,6 +198,46 @@ func TestRunShell_LargeBytes_Truncation(t *testing.T) {
 	}
 	if !strings.Contains(result, "Showing") {
 		t.Errorf("expected truncation notice for byte-limit, got tail:\n%s", result[len(result)-300:])
+	}
+}
+
+func TestRunShell_TimeoutEnforcedWithoutTimeoutBinary(t *testing.T) {
+	t.Parallel()
+	e, _ := testEngine(t)
+	// sleep 10 with timeout=1; our pgid-based timer must fire well before 10s.
+	result, _, err := e.runShell(context.Background(), args("command", "sleep 10", "timeout", float64(1)))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result, "timed out") {
+		t.Errorf("expected 'timed out' in result, got: %s", result)
+	}
+	if !strings.Contains(result, "[exit: 124]") {
+		t.Errorf("expected exit 124, got: %s", result)
+	}
+}
+
+func TestRunShell_KillsBackgroundProcesses(t *testing.T) {
+	t.Parallel()
+	// Launch a background sleep that would outlive a normal child-only kill,
+	// then wait so the shell itself blocks until either the sleep finishes or
+	// the process group is killed. With timeout=2 the pgid SIGKILL must reap
+	// the background sleep before it reaches 30s.
+	e, _ := testEngine(t)
+	start := time.Now()
+	result, _, err := e.runShell(context.Background(), args(
+		"command", "sleep 30 & echo started; wait",
+		"timeout", float64(2),
+	))
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if elapsed > 10*time.Second {
+		t.Errorf("process group kill should have fired within ~2s, elapsed: %v", elapsed)
+	}
+	if !strings.Contains(result, "timed out") {
+		t.Errorf("expected 'timed out' in result, got: %s", result)
 	}
 }
 

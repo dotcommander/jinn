@@ -456,6 +456,63 @@ func TestReadFile_ByteTruncation(t *testing.T) {
 	}
 }
 
+func TestReadFile_RawOutput_NoLineNumbers(t *testing.T) {
+	t.Parallel()
+	e, dir := testEngine(t)
+	writeTestFile(t, dir, "raw.txt", "alpha\nbeta\ngamma\ndelta\nepsilon\n")
+	result, err := e.readFile(args("path", "raw.txt", "line_numbers", false))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(result.Text, "\t") {
+		t.Errorf("expected no tab separator in raw output, got: %s", result.Text)
+	}
+	for _, want := range []string{"alpha", "beta", "gamma", "delta", "epsilon"} {
+		if !strings.Contains(result.Text, want) {
+			t.Errorf("expected %q in raw output, got: %s", want, result.Text)
+		}
+	}
+}
+
+func TestReadFile_RawOutput_RespectsWindow(t *testing.T) {
+	t.Parallel()
+	e, dir := testEngine(t)
+	var b strings.Builder
+	for i := 1; i <= 10; i++ {
+		fmt.Fprintf(&b, "line%d\n", i)
+	}
+	writeTestFile(t, dir, "windowed.txt", b.String())
+	result, err := e.readFile(args("path", "windowed.txt", "line_numbers", false, "start_line", float64(3), "end_line", float64(5)))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(result.Text, "\t") {
+		t.Errorf("expected no tab separator in raw windowed output, got: %s", result.Text)
+	}
+	if !strings.Contains(result.Text, "line3") || !strings.Contains(result.Text, "line5") {
+		t.Errorf("expected lines 3-5 in output, got: %s", result.Text)
+	}
+	if strings.Contains(result.Text, "line2") || strings.Contains(result.Text, "line6") {
+		t.Errorf("window should exclude line2 and line6, got: %s", result.Text)
+	}
+}
+
+func TestReadFile_DefaultIncludesLineNumbers(t *testing.T) {
+	t.Parallel()
+	e, dir := testEngine(t)
+	writeTestFile(t, dir, "default.txt", "foo\nbar\nbaz\n")
+	result, err := e.readFile(args("path", "default.txt"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result.Text, "1\t") {
+		t.Errorf("expected cat-n line numbers by default, got: %s", result.Text)
+	}
+	if !strings.Contains(result.Text, "2\t") || !strings.Contains(result.Text, "3\t") {
+		t.Errorf("expected all line numbers, got: %s", result.Text)
+	}
+}
+
 func TestReadFile_FitsInDefaultWindow_NoTruncation(t *testing.T) {
 	t.Parallel()
 	e, dir := testEngine(t)

@@ -11,10 +11,10 @@ import (
 )
 
 const (
-	maxFileSize      = 50 << 20        // 50 MB absolute file limit
-	readDefaultLines = 2000            // default window when no start_line/end_line given
-	readMaxBytes     = 50 * 1024       // 50 KB output cap per chunk
-	readTruncLines   = 2000            // head+tail collapse threshold
+	maxFileSize      = 50 << 20  // 50 MB absolute file limit
+	readDefaultLines = 2000      // default window when no start_line/end_line given
+	readMaxBytes     = 50 * 1024 // 50 KB output cap per chunk
+	readTruncLines   = 2000      // head+tail collapse threshold
 )
 
 func (e *Engine) readFile(args map[string]interface{}) (*ToolResult, error) {
@@ -112,16 +112,19 @@ func (e *Engine) readFile(args map[string]interface{}) (*ToolResult, error) {
 		tail = int(t)
 	}
 
-	startLine := 1
-	endLine := startLine + readDefaultLines - 1
-	if tail == 0 {
-		if s, ok := args["start_line"].(float64); ok && int(s) >= 1 {
-			startLine = int(s)
-		}
-		if el, ok := args["end_line"].(float64); ok && int(el) >= startLine {
-			endLine = int(el)
-		} else {
-			endLine = startLine + readDefaultLines - 1
+	// Parse truncate strategy early — "tail" mode shifts the default window to
+	// the end of the file so the truncation function sees the final lines.
+	truncateMode, _ := args["truncate"].(string)
+	if truncateMode == "" {
+		truncateMode = "head"
+	}
+	switch truncateMode {
+	case "head", "tail", "middle", "none":
+		// valid
+	default:
+		return nil, &ErrWithSuggestion{
+			Err:        fmt.Errorf("invalid truncate value %q", truncateMode),
+			Suggestion: `valid values are "head" (default), "tail", "middle", "none"`,
 		}
 	}
 
@@ -131,12 +134,33 @@ func (e *Engine) readFile(args map[string]interface{}) (*ToolResult, error) {
 		total--
 	}
 
+	// Explicit tail= arg (number of lines from end) takes precedence.
+	startLine := 1
+	endLine := startLine + readDefaultLines - 1
 	if tail > 0 {
 		startLine = total - tail + 1
 		if startLine < 1 {
 			startLine = 1
 		}
 		endLine = total
+	} else {
+		// When truncate="tail" and no explicit window, pin window to end so
+		// truncateOutputTail receives the last readDefaultLines lines.
+		callerSetWindow := false
+		if s, ok := args["start_line"].(float64); ok && int(s) >= 1 {
+			startLine = int(s)
+			callerSetWindow = true
+		}
+		if el, ok := args["end_line"].(float64); ok && int(el) >= startLine {
+			endLine = int(el)
+			callerSetWindow = true
+		} else {
+			endLine = startLine + readDefaultLines - 1
+		}
+		if truncateMode == "tail" && !callerSetWindow && total > readDefaultLines {
+			startLine = total - readDefaultLines + 1
+			endLine = total
+		}
 	}
 
 	if startLine > total {
@@ -149,14 +173,52 @@ func (e *Engine) readFile(args map[string]interface{}) (*ToolResult, error) {
 		endLine = total
 	}
 
+	lineNumbers := true
+	if v, ok := args["line_numbers"].(bool); ok {
+		lineNumbers = v
+	}
+
 	width := len(strconv.Itoa(endLine))
 	var b strings.Builder
 	for i := startLine - 1; i < endLine && i < len(lines); i++ {
-		fmt.Fprintf(&b, "%*d\t%s\n", width, i+1, lines[i])
+		if lineNumbers {
+			fmt.Fprintf(&b, "%*d\t%s\n", width, i+1, lines[i])
+		} else {
+			fmt.Fprintf(&b, "%s\n", lines[i])
+		}
 	}
 
-	// Apply head+tail truncation if windowed chunk exceeds limit.
-	tr := truncateOutputDetailed(strings.TrimRight(b.String(), "\n"), readTruncLines)
+	// Single oversized line guard: if the first source line exceeds the byte cap,
+	// the byte-cap loop below would keep nothing. Return a hint instead.
+	if startLine <= total && len(lines[startLine-1]) > readMaxBytes {
+		srcLineLen := len(lines[startLine-1])
+		return textResult(fmt.Sprintf(
+			"[Line %d is %d KB, exceeds 50 KB limit. Use run_shell: sed -n '%dp' %s | head -c 50000]",
+			startLine, srcLineLen/1024, startLine, path,
+		)), nil
+	}
+
+	// Apply truncation strategy if windowed chunk exceeds the line limit.
+	rawContent := strings.TrimRight(b.String(), "\n")
+	var tr struct {
+		Content    string
+		Truncated  bool
+		TotalLines int
+		ShownLines int
+	}
+	switch truncateMode {
+	case "head":
+		tr = truncateOutputHead(rawContent, readTruncLines)
+	case "tail":
+		tr = truncateOutputTail(rawContent, readTruncLines)
+	case "middle":
+		tr = truncateOutputDetailed(rawContent, readTruncLines)
+	case "none":
+		tr.Content = rawContent
+		lines2 := strings.Split(rawContent, "\n")
+		tr.TotalLines = len(lines2)
+		tr.ShownLines = len(lines2)
+	}
 
 	// Apply byte-size truncation: if the numbered output exceeds 50KB,
 	// keep the head portion that fits and write the full remainder to a
