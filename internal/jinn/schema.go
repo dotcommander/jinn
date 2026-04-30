@@ -29,7 +29,7 @@ const Schema = `[
         "properties": {
           "path": {"type": "string", "description": "file path to read"},
           "start_line": {"type": "integer", "description": "first line (1-indexed, default: 1)"},
-          "end_line": {"type": "integer", "description": "last line (default: start_line+199)"},
+          "end_line": {"type": "integer", "description": "last line (default: start_line+1999)"},
           "tail": {"type": "integer", "description": "Read the last N lines of the file. Takes precedence over start_line/end_line. 0 = disabled.", "default": 0}
         },
         "required": ["path"]
