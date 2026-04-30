@@ -151,3 +151,25 @@ func TestListDir_NoCap_SmallDir(t *testing.T) {
 		t.Errorf("small dir should not be truncated, got: %s", result)
 	}
 }
+
+// Change 5: directory entries are suffixed with "/".
+func TestListDir_AppendsSlashToDirectories(t *testing.T) {
+	t.Parallel()
+	e, dir := testEngine(t)
+	writeTestFile(t, dir, "file.txt", "")
+	if err := os.MkdirAll(filepath.Join(dir, "subdir"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	result, err := e.listDir(args("depth", float64(1)))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// The subdir entry must appear with a trailing slash.
+	if !strings.Contains(result, "subdir/") {
+		t.Errorf("expected 'subdir/' in entries, got: %s", result)
+	}
+	// Plain files must NOT get a trailing slash.
+	if strings.Contains(result, "file.txt/") {
+		t.Errorf("file entries should not have trailing slash, got: %s", result)
+	}
+}

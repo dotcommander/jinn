@@ -186,6 +186,13 @@ func (e *Engine) editFile(args map[string]interface{}) (*ToolResult, error) {
 		showContext = int(v)
 	}
 
+	if oldText == "" {
+		return nil, &ErrWithSuggestion{
+			Err:        fmt.Errorf("old_text cannot be empty"),
+			Suggestion: "provide a non-empty string to match — to insert at file start, include the existing first line in old_text and prepend in new_text",
+		}
+	}
+
 	resolved, err := e.checkPath(path)
 	if err != nil {
 		return nil, err
@@ -214,6 +221,13 @@ func (e *Engine) editFile(args map[string]interface{}) (*ToolResult, error) {
 			return nil, fmt.Errorf("old_text not found in %s (%d lines)", path, countLines(raw))
 		}
 		return nil, err
+	}
+
+	if updated == string(data) {
+		return nil, &ErrWithSuggestion{
+			Err:        fmt.Errorf("edit produced no changes"),
+			Suggestion: "old_text and new_text are equivalent (possibly after fuzzy normalization) — verify the intended change",
+		}
 	}
 
 	// Compute diff for structured metadata using fast-path (known region).

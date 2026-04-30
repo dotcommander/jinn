@@ -71,7 +71,7 @@ func truncateOutputDetailed(raw string, limit int) struct {
 	count := len(lines)
 	result.TotalLines = count
 
-	if count >= limit {
+	if count > limit {
 		keep := limit / 4
 		shown := keep * 2
 		omitted := count - shown
@@ -159,7 +159,7 @@ func truncateOutputTail(raw string, limit int) struct {
 	}
 	count := len(lines)
 	result.TotalLines = count
-	if count < limit {
+	if count <= limit {
 		result.Content = raw
 		result.ShownLines = count
 		return result

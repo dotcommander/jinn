@@ -20,11 +20,15 @@ func (e *Engine) searchFiles(args map[string]interface{}) (string, error) {
 		searchPath = p
 	}
 
+	literal, _ := args["literal"].(bool)
+
 	if _, err := e.checkPath(searchPath); err != nil {
 		return "", err
 	}
-	if _, err := regexp.Compile(pattern); err != nil {
-		return "", fmt.Errorf("invalid regex: %w", err)
+	if !literal {
+		if _, err := regexp.Compile(pattern); err != nil {
+			return "", fmt.Errorf("invalid regex: %w", err)
+		}
 	}
 
 	format := "text"
@@ -47,6 +51,9 @@ func (e *Engine) searchFiles(args map[string]interface{}) (string, error) {
 		if include, ok := args["include"].(string); ok && include != "" {
 			cmdArgs = append(cmdArgs, "--glob="+include)
 		}
+		if literal {
+			cmdArgs = append(cmdArgs, "--fixed-strings")
+		}
 	} else {
 		cmd = "grep"
 		cmdArgs = []string{"-r", "-n"}
@@ -55,6 +62,9 @@ func (e *Engine) searchFiles(args map[string]interface{}) (string, error) {
 		}
 		if include, ok := args["include"].(string); ok && include != "" {
 			cmdArgs = append(cmdArgs, "--include="+include)
+		}
+		if literal {
+			cmdArgs = append(cmdArgs, "-F")
 		}
 	}
 

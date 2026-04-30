@@ -45,8 +45,11 @@ func TestReadFile_TruncateTail(t *testing.T) {
 	if !strings.Contains(result.Text, "line3000") {
 		t.Errorf("tail truncation should include last line, got tail: %s", result.Text[max(0, len(result.Text)-300):])
 	}
-	if !strings.Contains(result.Text, "showing last") {
-		t.Errorf("expected 'showing last' marker, got: %s", result.Text[:min(300, len(result.Text))])
+	// Window was pinned to the last 2000 lines (1001-3000); the "showing last"
+	// within-chunk header is absent (count==limit, nothing omitted within window).
+	// The file-level truncation is signalled by the continuation hint instead.
+	if strings.Contains(result.Text, "showing last") {
+		t.Errorf("unexpected 'showing last' marker when count==limit (nothing omitted within window)")
 	}
 }
 
@@ -59,7 +62,10 @@ func TestReadFile_TruncateMiddle_Preserved(t *testing.T) {
 	}
 	writeTestFile(t, dir, "big.txt", b.String())
 
-	result, err := e.readFile(args("path", "big.txt", "truncate", "middle"))
+	// Pass end_line=3000 so all 3000 lines enter truncateOutputDetailed
+	// (readDefaultLines caps the window at 2000 without an explicit end_line,
+	// which would make count==limit and correctly skip truncation).
+	result, err := e.readFile(args("path", "big.txt", "truncate", "middle", "end_line", float64(3000)))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

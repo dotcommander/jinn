@@ -19,15 +19,25 @@ func sensitivePathErr(p string) error {
 	}
 }
 
-func (e *Engine) resolvePath(p string) string {
+func (e *Engine) resolvePath(p string) (string, error) {
+	if p == "~" || strings.HasPrefix(p, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("expand ~: %w", err)
+		}
+		p = home + p[1:]
+	}
 	if !strings.HasPrefix(p, "/") {
 		p = filepath.Join(e.workDir, p)
 	}
-	return filepath.Clean(p)
+	return filepath.Clean(p), nil
 }
 
 func (e *Engine) checkPath(p string) (string, error) {
-	resolved := e.resolvePath(p)
+	resolved, err := e.resolvePath(p)
+	if err != nil {
+		return "", err
+	}
 
 	// Resolve symlinks to detect escape attempts.
 	// If the file doesn't exist, try the parent directory.

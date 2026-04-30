@@ -124,13 +124,13 @@ const Schema = `[
       "parameters": {
         "type": "object",
         "properties": {
-          "pattern": {"type": "string", "description": "grep regex pattern"},
+          "pattern": {"type": "string", "description": "grep regex pattern (or literal string when literal=true)"},
           "path": {"type": "string", "description": "directory to search (default: .)"},
           "include": {"type": "string", "description": "file glob filter, e.g. *.go"},
           "context_lines": {"type": "integer", "description": "lines of context around matches (default: 0)"},
           "case_insensitive": {"type": "boolean", "description": "case-insensitive search (default: false)"},
-          "max_matches": {"type": "integer", "description": "Maximum number of matches to return (default: 500). Distinct from per-line truncation. When exceeded, response includes truncated=true and total_count.", "default": 500},
-          "max_results": {"type": "integer", "description": "Deprecated alias for max_matches. Use max_matches instead.", "default": 0},
+          "literal": {"type": "boolean", "description": "treat pattern as a fixed string rather than a regex (default: false)", "default": false},
+          "max_matches": {"type": "integer", "description": "Maximum number of matches to return (default: 500). When exceeded, response includes truncated=true and total_count.", "default": 500},
           "format": {"type": "string", "description": "output format: 'text' (default), 'json' (structured results with truncation metadata), or 'filenames' (filenames with match counts)", "enum": ["text", "json", "filenames"]}
         },
         "required": ["pattern"]
@@ -278,9 +278,7 @@ type Request struct {
 	Args map[string]interface{} `json:"args"`
 }
 
-// ContentBlock represents a typed piece of content in a tool response.
-// Text results use Type="text" with the Text field.
-// Image results use Type="image" with Data (base64) and MimeType.
+// ContentBlock represents a typed piece of content in a tool response (text or image).
 type ContentBlock struct {
 	Type     string `json:"type"`               // "text" or "image"
 	Text     string `json:"text,omitempty"`     // for type="text"

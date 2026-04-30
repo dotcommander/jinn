@@ -33,6 +33,26 @@ func TestTruncateOutput_Long(t *testing.T) {
 	}
 }
 
+func TestTruncateOutputDetailed_FitsExactly(t *testing.T) {
+	t.Parallel()
+	// count == limit: all lines fit, no truncation or middle marker.
+	lines := make([]string, 10)
+	for i := range lines {
+		lines[i] = fmt.Sprintf("line%d", i)
+	}
+	input := strings.Join(lines, "\n") + "\n"
+	r := truncateOutputDetailed(input, 10)
+	if r.Truncated {
+		t.Errorf("Truncated = true, want false when count == limit")
+	}
+	if strings.Contains(r.Content, "omitted") {
+		t.Errorf("Content contains omission marker when count == limit: %q", r.Content)
+	}
+	if r.ShownLines != 10 {
+		t.Errorf("ShownLines = %d, want 10", r.ShownLines)
+	}
+}
+
 func TestTruncateOutput_Empty(t *testing.T) {
 	t.Parallel()
 	if got := truncateOutput("", 10); got != "" {

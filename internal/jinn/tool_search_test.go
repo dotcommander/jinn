@@ -253,3 +253,37 @@ func TestSearchFiles_TruncatedHint(t *testing.T) {
 		t.Errorf("expected 'max_matches' in hint, got: %s", result)
 	}
 }
+
+// Change 4: literal flag treats pattern as fixed string, not regex.
+func TestSearchFiles_LiteralFlag(t *testing.T) {
+	t.Parallel()
+	e, dir := testEngine(t)
+	// Pattern contains regex metacharacters that would fail regex compilation
+	// but are valid as a literal string.
+	writeTestFile(t, dir, "meta.txt", "price is $5.00 (tax included)\n")
+	writeTestFile(t, dir, "other.txt", "no match here\n")
+
+	// Without literal=true, "$5.00" would be a valid but non-matching regex.
+	// With literal=true, it matches the literal text.
+	result, err := e.searchFiles(args("pattern", "$5.00", "literal", true))
+	if err != nil {
+		t.Fatalf("unexpected error with literal=true: %v", err)
+	}
+	if !strings.Contains(result, "meta.txt") {
+		t.Errorf("expected meta.txt in literal results, got: %s", result)
+	}
+
+	// A pattern with unbalanced brackets — invalid regex, valid literal.
+	writeTestFile(t, dir, "bracket.txt", "func foo(x [int) {}\n")
+	_, err = e.searchFiles(args("pattern", "[int)", "literal", false))
+	if err == nil {
+		t.Error("expected regex error for '[int)' without literal=true")
+	}
+	result2, err := e.searchFiles(args("pattern", "[int)", "literal", true))
+	if err != nil {
+		t.Fatalf("unexpected error with literal=true for '[int)': %v", err)
+	}
+	if !strings.Contains(result2, "bracket.txt") {
+		t.Errorf("expected bracket.txt in literal results, got: %s", result2)
+	}
+}

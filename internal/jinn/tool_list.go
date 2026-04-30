@@ -71,7 +71,26 @@ func (e *Engine) listDir(args map[string]interface{}) (string, error) {
 		return string(b), nil
 	}
 
+	// Build a set of directory paths so entries can be suffixed with "/".
+	dirOut := &boundedWriter{limit: 1 << 20}
+	dirCmd := exec.Command("find", listPath, "-maxdepth", strconv.Itoa(depth), "-not", "-path", "*/.*", "-type", "d")
+	dirCmd.Dir = e.workDir
+	dirCmd.Stdout = dirOut
+	dirCmd.Stderr = dirOut
+	dirCmd.Run()
+	dirs := make(map[string]struct{})
+	for _, d := range strings.Split(strings.TrimSpace(dirOut.String()), "\n") {
+		if d != "" {
+			dirs[d] = struct{}{}
+		}
+	}
+
 	all := strings.Split(raw, "\n")
+	for i, entry := range all {
+		if _, isDir := dirs[entry]; isDir {
+			all[i] = entry + "/"
+		}
+	}
 	total := len(all)
 	truncated := total > maxEntries
 
