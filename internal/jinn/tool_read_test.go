@@ -183,7 +183,8 @@ func TestReadFile_ContinuationHint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(result.Text, "Use start_line=11 to continue") {
+	if !strings.Contains(result.Text, "Remainder saved to") &&
+		!strings.Contains(result.Text, "Use start_line=11 to continue") {
 		t.Errorf("expected continuation hint, got: %s", result.Text)
 	}
 }
@@ -325,22 +326,9 @@ func TestReadFile_TruncationMeta_Windowed(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// File has 300 lines, default window is 200 → should be truncated
-	if result.Meta == nil {
-		t.Fatal("expected Meta for truncated read")
-	}
-	trunc, ok := result.Meta["truncation"].(truncationInfo)
-	if !ok {
-		t.Fatalf("expected truncationInfo in Meta, got: %T", result.Meta["truncation"])
-	}
-	if !trunc.Truncated {
-		t.Error("expected Truncated=true")
-	}
-	if trunc.TotalLines != 300 {
-		t.Errorf("expected TotalLines=300, got: %d", trunc.TotalLines)
-	}
-	if trunc.OutputLines <= 0 || trunc.OutputLines >= 300 {
-		t.Errorf("expected OutputLines between 1-299, got: %d", trunc.OutputLines)
+	// File has 300 lines, default window is 2000 → fits entirely → no truncation
+	if result.Meta != nil {
+		t.Errorf("expected nil Meta for file that fits in default window, got: %v", result.Meta)
 	}
 }
 
@@ -354,7 +342,7 @@ func TestReadFile_TruncationMeta_FitsInWindow(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// 3-line file fits in 200-line window → no truncation metadata
+	// 3-line file fits in 2000-line window → no truncation metadata
 	if result.Meta != nil {
 		t.Errorf("expected nil Meta for non-truncated read, got: %v", result.Meta)
 	}
@@ -387,5 +375,103 @@ func TestReadFile_TruncationMeta_ExplicitWindow(t *testing.T) {
 	}
 	if trunc.OutputLines != 10 {
 		t.Errorf("expected OutputLines=10, got: %d", trunc.OutputLines)
+	}
+	if !strings.Contains(result.Text, "Remainder saved to") {
+		t.Error("expected remainder temp file hint in output")
+	}
+}
+
+// --- New truncation tests for 2000-line window and 50KB byte limit ---
+
+func TestReadFile_LargeWindow_Truncated(t *testing.T) {
+	t.Parallel()
+	e, dir := testEngine(t)
+	var content strings.Builder
+	for i := 1; i <= 2500; i++ {
+		fmt.Fprintf(&content, "line%d\n", i)
+	}
+	writeTestFile(t, dir, "large.txt", content.String())
+
+	result, err := e.readFile(args("path", "large.txt"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// 2500 lines > 2000 default window → truncated
+	if result.Meta == nil {
+		t.Fatal("expected Meta for truncated read")
+	}
+	trunc, ok := result.Meta["truncation"].(truncationInfo)
+	if !ok {
+		t.Fatalf("expected truncationInfo, got: %T", result.Meta["truncation"])
+	}
+	if !trunc.Truncated {
+		t.Error("expected Truncated=true")
+	}
+	if trunc.TotalLines != 2500 {
+		t.Errorf("expected TotalLines=2500, got: %d", trunc.TotalLines)
+	}
+	if trunc.OutputLines > 2000 {
+		t.Errorf("expected OutputLines <= 2000, got: %d", trunc.OutputLines)
+	}
+	if !strings.Contains(result.Text, "Remainder saved to") {
+		t.Error("expected remainder temp file hint")
+	}
+}
+
+func TestReadFile_ByteTruncation(t *testing.T) {
+	t.Parallel()
+	e, dir := testEngine(t)
+	// Create a file where 2000 lines of ~100 chars each exceeds 50KB
+	var content strings.Builder
+	for i := 1; i <= 2000; i++ {
+		fmt.Fprintf(&content, "line%d %s\n", i, strings.Repeat("x", 80))
+	}
+	writeTestFile(t, dir, "wide.txt", content.String())
+
+	result, err := e.readFile(args("path", "wide.txt"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Meta == nil {
+		t.Fatal("expected Meta for byte-truncated read")
+	}
+	trunc, ok := result.Meta["truncation"].(truncationInfo)
+	if !ok {
+		t.Fatalf("expected truncationInfo, got: %T", result.Meta["truncation"])
+	}
+	if !trunc.Truncated {
+		t.Error("expected Truncated=true")
+	}
+	if trunc.TotalLines != 2000 {
+		t.Errorf("expected TotalLines=2000, got: %d", trunc.TotalLines)
+	}
+	// Should have stopped well short of 2000 due to byte limit
+	if trunc.OutputLines >= 2000 {
+		t.Errorf("expected OutputLines < 2000 due to byte truncation, got: %d", trunc.OutputLines)
+	}
+	if !strings.Contains(result.Text, "truncated at") {
+		t.Error("expected 'truncated at' in byte truncation hint")
+	}
+}
+
+func TestReadFile_FitsInDefaultWindow_NoTruncation(t *testing.T) {
+	t.Parallel()
+	e, dir := testEngine(t)
+	var content strings.Builder
+	for i := 1; i <= 1999; i++ {
+		fmt.Fprintf(&content, "line%d\n", i)
+	}
+	writeTestFile(t, dir, "exact.txt", content.String())
+
+	result, err := e.readFile(args("path", "exact.txt"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// 1999 lines fits in 2000-line default window → no truncation
+	if result.Meta != nil {
+		t.Errorf("expected nil Meta for non-truncated read, got: %v", result.Meta)
 	}
 }

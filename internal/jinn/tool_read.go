@@ -10,7 +10,12 @@ import (
 	"strings"
 )
 
-const maxFileSize = 50 << 20 // 50 MB
+const (
+	maxFileSize      = 50 << 20        // 50 MB absolute file limit
+	readDefaultLines = 2000            // default window when no start_line/end_line given
+	readMaxBytes     = 50 * 1024       // 50 KB output cap per chunk
+	readTruncLines   = 2000            // head+tail collapse threshold
+)
 
 func (e *Engine) readFile(args map[string]interface{}) (*ToolResult, error) {
 	path, _ := args["path"].(string)
@@ -108,7 +113,7 @@ func (e *Engine) readFile(args map[string]interface{}) (*ToolResult, error) {
 	}
 
 	startLine := 1
-	endLine := startLine + 199
+	endLine := startLine + readDefaultLines - 1
 	if tail == 0 {
 		if s, ok := args["start_line"].(float64); ok && int(s) >= 1 {
 			startLine = int(s)
@@ -116,7 +121,7 @@ func (e *Engine) readFile(args map[string]interface{}) (*ToolResult, error) {
 		if el, ok := args["end_line"].(float64); ok && int(el) >= startLine {
 			endLine = int(el)
 		} else {
-			endLine = startLine + 199
+			endLine = startLine + readDefaultLines - 1
 		}
 	}
 
@@ -151,15 +156,74 @@ func (e *Engine) readFile(args map[string]interface{}) (*ToolResult, error) {
 	}
 
 	// Apply head+tail truncation if windowed chunk exceeds limit.
-	tr := truncateOutputDetailed(strings.TrimRight(b.String(), "\n"), 200)
+	tr := truncateOutputDetailed(strings.TrimRight(b.String(), "\n"), readTruncLines)
+
+	// Apply byte-size truncation: if the numbered output exceeds 50KB,
+	// keep the head portion that fits and write the full remainder to a
+	// temp file so the agent can pick up where it left off.
+	outputBytes := len(tr.Content)
+	byteTruncated := outputBytes > readMaxBytes
+
+	if byteTruncated {
+		outLines := strings.Split(tr.Content, "\n")
+		if len(outLines) > 0 && outLines[len(outLines)-1] == "" {
+			outLines = outLines[:len(outLines)-1]
+		}
+		var kept []string
+		keptBytes := 0
+		for _, l := range outLines {
+			extra := len(l) + 1 // line + newline
+			if keptBytes+extra > readMaxBytes {
+				break
+			}
+			kept = append(kept, l)
+			keptBytes += extra
+		}
+
+		// Collect source lines beyond the kept output lines for the remainder.
+		// Each output line starts with "<num>\t", so the number of kept output
+		// lines maps directly to source lines consumed.
+		remainingStart := startLine + len(kept)
+		var srcRemainder []string
+		for i := remainingStart - 1; i < total && i < len(lines); i++ {
+			srcRemainder = append(srcRemainder, lines[i])
+		}
+		tmpPath, _ := writeTruncationRemainder(resolved, remainingStart, srcRemainder)
+
+		hint := fmt.Sprintf("\n[output truncated at %d KB; showing %d-%d of %d lines. ",
+			keptBytes/1024, startLine, startLine+len(kept)-1, total)
+		if tmpPath != "" {
+			hint += fmt.Sprintf("Remainder saved to %s]", tmpPath)
+		} else {
+			hint += fmt.Sprintf("Use start_line=%d to continue]", startLine+len(kept))
+		}
+
+		return &ToolResult{
+			Text: strings.Join(kept, "\n") + "\n" + hint,
+			Meta: map[string]any{
+				"truncation": truncationInfo{
+					Truncated:   true,
+					TotalLines:  total,
+					OutputLines: len(kept),
+				},
+			},
+		}, nil
+	}
 
 	// Determine if the file itself is longer than the window requested.
 	windowTruncated := total > endLine
 
 	result := tr.Content
 	if windowTruncated {
-		result += fmt.Sprintf("\n[file has %d lines; showing %d-%d. Use start_line=%d to continue]",
-			total, startLine, endLine, endLine+1)
+		// Write remainder to temp file for seamless continuation.
+		tmpPath, _ := writeTruncationRemainder(resolved, endLine+1, lines[endLine:total])
+		hint := fmt.Sprintf("\n[file has %d lines; showing %d-%d. ", total, startLine, endLine)
+		if tmpPath != "" {
+			hint += fmt.Sprintf("Remainder saved to %s]", tmpPath)
+		} else {
+			hint += fmt.Sprintf("Use start_line=%d to continue]", endLine+1)
+		}
+		result += hint
 	}
 
 	// Build truncation metadata for callers (pi TUI, LLM context).
@@ -212,4 +276,37 @@ func isImageExt(ext string) bool {
 		return true
 	}
 	return false
+}
+
+// writeTruncationRemainder writes the lines from startLine onward to a temp file
+// and returns the temp file path. Lines are written with line numbers. The temp
+// file is placed in the XDG cache dir to avoid polluting the project tree.
+// Errors are swallowed — the temp file is best-effort; the agent always has the
+// start_line continuation fallback.
+func writeTruncationRemainder(srcPath string, startLine int, remainderLines []string) (string, error) {
+	if len(remainderLines) == 0 {
+		return "", nil
+	}
+	base := filepath.Base(srcPath)
+	userCache, _ := os.UserCacheDir()
+	if userCache == "" {
+		userCache = os.TempDir()
+	}
+	cacheDir := filepath.Join(userCache, "jinn", "truncated")
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		return "", err
+	}
+	tmpFile, err := os.CreateTemp(cacheDir, base+".*.txt")
+	if err != nil {
+		return "", err
+	}
+	defer tmpFile.Close()
+
+	endLine := startLine + len(remainderLines) - 1
+	width := len(strconv.Itoa(endLine))
+	for i, line := range remainderLines {
+		fmt.Fprintf(tmpFile, "%*d\t%s\n", width, startLine+i, line)
+	}
+
+	return tmpFile.Name(), nil
 }
