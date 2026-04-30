@@ -132,7 +132,7 @@ jinn caps output to prevent unbounded memory growth:
 | Per-line truncation | Truncated at rune boundary + `...` | All tools |
 | Repeated line collapse | 3+ identical consecutive lines collapsed | All tools |
 | Shell tail truncation | Last N lines kept | `run_shell` |
-| Read/search truncation | Head 25% + tail 25% with omitted count | `read_file`, `search_files` |
+| Read truncation | Configurable strategy (`head`/`tail`/`middle`/`none`); default keeps first N lines. Truncation hint appended: `[Showing lines X-Y of Z. Use start_line=N to continue. Remainder saved to <path>.]` | `read_file` |
 | File size limit | 50 MB | `read_file` |
 
 When shell output exceeds 1 MB, it spills to a temp file (`jinn-shell-*.log`). jinn keeps the tail of the output so you always see the exit code and final lines.
@@ -146,7 +146,7 @@ The repeated line collapse replaces 3 or more identical consecutive output lines
 | File type | Behavior |
 |-----------|---------|
 | `.pdf` | Returns `ok: false` with `suggestion: "convert the PDF to text first (pdftotext, pdftk, or a cloud OCR service) and read the text file"` |
-| Images (`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.svg`, `.bmp`) | Returns `data:<mime>;base64,<payload>` so callers can pass it directly to a vision model. MIME normalization: `.jpg` → `image/jpeg`, `.svg` → `image/svg+xml`. |
+| Images | Detected by content (via `http.DetectContentType` on the first 512 bytes) rather than extension alone. A PNG renamed without an extension is still identified and handled correctly. Returns a base64-encoded content block with the detected MIME type. SVG files (which read as `text/xml` by the content detector) fall back to extension-based detection and return `image/svg+xml`. |
 | Binary (null byte in first 512 bytes) | Returns `[binary file: N bytes — use checksum_tree for integrity or skip content reads]` (success, not error) |
 
 ## Memory Persistence

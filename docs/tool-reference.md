@@ -1,6 +1,6 @@
 # Tool Reference
 
-jinn exposes 13 tools through a JSON-over-stdin/stdout protocol. You call them by piping a request object:
+jinn exposes 16 tools through a JSON-over-stdin/stdout protocol. You call them by piping a request object:
 
 ```bash
 echo '{"tool":"read_file","args":{"path":"main.go"}}' | jinn
@@ -43,17 +43,18 @@ echo '{"tool":"read_file","args":{"path":"main.go"}}' | jinn
 |------|------|----------|---------|-------------|
 | `path` | string | Yes | -- | File path relative to working directory |
 | `start_line` | int | No | `1` | First line to return |
-| `end_line` | int | No | `start_line + 199` | Last line to return |
+| `end_line` | int | No | `start_line + 1999` | Last line to return |
 | `tail` | int | No | `0` (disabled) | Return last N lines. Overrides `start_line`/`end_line` |
+| `line_numbers` | bool | No | `true` | Prefix each output line with a right-justified line number. Set `false` for raw content without numbering. |
+| `truncate` | string | No | `"head"` | Strategy when windowed output exceeds the line limit: `head` (keep first N lines, paginate with `start_line`), `tail` (keep last N lines, useful for logs), `middle` (keep both ends, elide center), `none` (no line-level truncation, byte cap still applies). |
 
 **Notes:**
 
 - Files larger than 50 MB are rejected.
-- **PDF files** (`.pdf`) return `ok: false` with `suggestion: "convert the PDF to text first (pdftotext, pdftk, or a cloud OCR service) and read the text file"`. Content is never returned.
-- **Image files** (`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.svg`, `.bmp`) return a `data:<mime>;base64,<payload>` URI in `result`. MIME normalization: `.jpg` → `image/jpeg`, `.svg` → `image/svg+xml`. Pass the result directly to a vision model.
+- **PDF files** return `ok: false` with `suggestion: "convert the PDF to text first (pdftotext, pdftk, or a cloud OCR service) and read the text file"`. Content is never returned.
+- **Image files** are detected by content rather than extension — a `.png` renamed without an extension is still identified as an image. Detected images return a base64-encoded content block with the correct MIME type (`image/png`, `image/jpeg`, etc.). SVG files return `image/svg+xml`. Pass the result directly to a vision model.
 - Binary files (null byte in first 512 bytes) return `[binary file: N bytes — use checksum_tree for integrity or skip content reads]` as a success result (not an error).
-- Output is line-numbered with right-justified width.
-- When the file has more lines than the requested window, jinn appends a hint: `[file has N lines; showing X-Y. Use start_line=Z to continue]`.
+- When output is truncated, jinn appends: `[Showing lines X-Y of Z. Use start_line=N to continue. Remainder saved to <path>.]`. The remainder file lets you pick up exactly where the window ended.
 - jinn records the file's modification time for TOCTOU protection. See [Security: TOCTOU](security.md#toctou-protection).
 
 Read lines 10 through 20:
@@ -119,8 +120,10 @@ echo '{"tool":"edit_file","args":{"path":"main.go","old_text":"fmt.Println","new
 
 **Notes:**
 
-- `old_text` must match exactly once. Zero matches or multiple matches both produce an error.
+- `old_text` cannot be empty. An empty string produces an error with a suggestion to include the first line of the file when you need to prepend content.
+- `old_text` must match exactly once. Zero matches or multiple matches both produce an error. On multi-match, the error includes line numbers for up to 10 locations.
 - If exact match fails, jinn tries fuzzy matching (normalizes whitespace, smart quotes, Unicode dashes). Fuzzy match is used only when it produces exactly one candidate.
+- If `old_text` and `new_text` are equivalent (including after fuzzy normalization), jinn returns an error rather than silently writing an unchanged file.
 - jinn preserves BOM markers and CRLF line endings through the edit.
 - When both exact and fuzzy fail, the error message includes the nearest line by character overlap to help you locate the right text.
 - `dry_run` returns a unified diff with 3 lines of context.
@@ -164,8 +167,11 @@ Each edit object:
 **Notes:**
 
 - **Two-phase commit.** jinn validates every edit (path security, TOCTOU, match uniqueness) before applying any. If any edit fails validation, zero edits are applied.
+- `old_text` cannot be empty in any edit entry. An empty value returns an error immediately, before any edits are applied.
+- **Overlap detection.** Edits targeting overlapping byte ranges in the same file are rejected in the validation phase. The error names which two edit indices conflict. Split them into separate `multi_edit` calls or combine them into a single edit.
+- If any edit's `old_text` and `new_text` are equivalent (including after fuzzy normalization), jinn returns an error and applies nothing.
 - Each edit uses the same matching and normalization rules as [`edit_file`](#edit_file).
-- Multiple edits to the same file are applied sequentially in array order.
+- Multiple edits to the same file are applied sequentially in array order. Later edits in the array see the file as modified by earlier ones (chained edits).
 
 ---
 
@@ -183,20 +189,21 @@ echo '{"tool":"search_files","args":{"pattern":"func main"}}' | jinn
 
 | Name | Type | Required | Default | Description |
 |------|------|----------|---------|-------------|
-| `pattern` | string | Yes | -- | Regex pattern to search for |
+| `pattern` | string | Yes | -- | Regex pattern (or fixed string when `literal: true`) |
 | `path` | string | No | `"."` | Directory to search in |
 | `format` | string | No | `"text"` | Output format: `text`, `json`, or `filenames` |
 | `include` | string | No | -- | Glob filter on filenames (e.g., `"*.go"`) |
-| `max_results` | int | No | -- | Cap on number of results |
-| `context_lines` | int | No | -- | Surrounding lines to include per match |
+| `literal` | bool | No | `false` | Treat `pattern` as a fixed string rather than a regex. Passes `-F` to grep / `--fixed-strings` to rg. |
+| `max_matches` | int | No | `500` | Maximum number of matches to return. When exceeded, response includes `truncated: true` and `total_count`. |
+| `context_lines` | int | No | `0` | Surrounding lines to include per match |
 | `case_insensitive` | bool | No | `false` | Case-insensitive matching |
 
 **Notes:**
 
 - jinn uses `rg` (ripgrep) if available, otherwise falls back to `grep -r -n`.
 - These directories are always excluded: `.git`, `node_modules`, `vendor`, `__pycache__`, `.cache`, `dist`, `build`.
-- Invalid regex patterns produce an error before any search runs.
-- Output limits: 200 characters per line, 100 lines for `text` format, 100 results for `json` format.
+- Without `literal: true`, the pattern is validated as a regex before any search runs; invalid patterns return an error immediately.
+- Output limits: 200 characters per line truncation per match. Default cap: 500 matches.
 
 Structured results for programmatic use:
 
@@ -250,11 +257,14 @@ echo '{"tool":"list_dir","args":{"path":".","depth":2}}' | jinn
 |------|------|----------|---------|-------------|
 | `path` | string | No | `"."` | Directory to list |
 | `depth` | int | No | `3` | Maximum recursion depth (clamped to 1--10) |
+| `max_entries` | int | No | `500` | Maximum number of entries to return (cap: 10000). When exceeded, response includes `truncated: true` and `total_count`. |
 
 **Notes:**
 
 - Hidden files and directories (names starting with `.`) are excluded.
 - Output is sorted alphabetically.
+- Directory entries are suffixed with `/` to distinguish them from files.
+- Returns a JSON object: `{"entries": [...], "truncated": false, "total_count": N}`.
 
 ---
 
@@ -279,7 +289,7 @@ echo '{"tool":"run_shell","args":{"command":"go test ./..."}}' | jinn
 
 **Notes:**
 
-- The command runs via `bash -c`, wrapped with `timeout` (or `gtimeout` on macOS) to enforce the deadline.
+- The command runs via `bash -c`. jinn creates a new process group (`Setpgid: true`) and uses a `SIGKILL` timer targeting the entire group (`kill(-pgid, SIGKILL)`) to enforce the deadline. This ensures all background processes spawned by the command are also killed — no external `timeout` binary is required.
 - Exit code 124 means the command was killed by the timeout.
 - Output format: `[exit: N]\n<output>\n[classification: <class> — <reason>]`.
 - Every response includes `risk` and `classification` fields in the envelope.
