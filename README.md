@@ -56,22 +56,25 @@ echo '{"tool":"run_shell","args":{"command":"go test ./..."}}' | jinn
 
 ## Toolset
 
-`jinn` exposes 13 specialized tools for coding agents:
+`jinn` exposes 16 specialized tools for coding agents:
 
 | Tool | Description |
 | :--- | :--- |
-| `read_file` | Read windowed chunks of a file with line numbers (max 50MB). PDFs return a structured error; images return a base64 data URI. |
+| `read_file` | Read windowed chunks of a file with line numbers (max 50MB). Supports `tail`, `line_numbers`, and a `truncate` strategy (`head`/`tail`/`middle`/`none`). Images detected by content; PDFs return a structured error. |
 | `write_file` | Atomic full-file write. Creates parent directories automatically. |
-| `edit_file` | Targeted text replacement. Handles fuzzy whitespace/quotes, CRLF/BOM preservation, `dry_run` diff preview. |
-| `multi_edit` | Apply batch edits across multiple files atomically (2-phase commit). |
-| `search_files` | Fast grep/regex search with glob filtering and context lines. |
-| `run_shell` | Controlled bash execution with risk classification. Dangerous commands blocked unless `force: true`. |
+| `edit_file` | Targeted text replacement. Handles fuzzy whitespace/quotes, CRLF/BOM preservation, `dry_run` diff preview. Rejects empty `old_text` and no-op edits. |
+| `multi_edit` | Apply batch edits across multiple files atomically (2-phase commit). Validates all edits first, detects overlapping regions, rejects empty or no-op entries. |
+| `apply_patch` | Apply a Codex-style patch (`*** Begin Patch … *** End Patch`) to create, delete, or update files atomically. |
+| `search_files` | Fast grep/regex search with glob filtering, context lines, and a `literal` flag for fixed-string matching. |
+| `run_shell` | Controlled bash execution with risk classification. Process-group kill ensures background children are also terminated on timeout. Dangerous commands blocked unless `force: true`. |
 | `stat_file` | Get metadata (size, lines, mtime) without reading contents. |
-| `list_dir` | Recursive directory tree exploration (skips hidden files). |
+| `list_dir` | Recursive directory tree exploration (skips hidden files). Directories suffixed with `/` in output. |
+| `find_files` | Find files by glob pattern. Uses `fd` when available (respects `.gitignore`), falls back to POSIX `find`. |
 | `detect_project` | Auto-detect language, frameworks, and build/test/lint commands. |
 | `checksum_tree` | Compute SHA-256 hashes for a tree to verify workspace integrity. |
 | `list_tools` | Programmatic access to the tool schema from within the protocol. |
 | `memory` | Persistent key/value store across sessions. Actions: `save`, `recall`, `list`, `forget`. |
+| `undo` | Browse, preview, and restore file snapshots captured automatically before every mutation. |
 | `lsp_query` | Query a language server for `definition`, `references`, `hover`, or `symbols`. |
 
 ---

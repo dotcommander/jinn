@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-jinn is a sandboxed tool executor for AI coding agents. Single binary, zero external dependencies — stdlib only. It exposes 11 tools via a one-shot JSON-over-stdin/stdout protocol compatible with OpenAI function calling.
+jinn is a sandboxed tool executor for AI coding agents. Single binary, zero external dependencies — stdlib only. It exposes 16 tools via a one-shot JSON-over-stdin/stdout protocol compatible with OpenAI function calling.
 
 ## Build / Test / Install
 
@@ -23,17 +23,22 @@ No linter config, no Makefile — intentionally minimal.
 
 | Tool | Description |
 |------|-------------|
-| `run_shell` | Bash with timeout (default 30s, max 300s), `dry_run` flag |
-| `read_file` | Line-numbered output, windowing, 50 MB gate, binary detection |
+| `run_shell` | Bash with timeout (default 30s, max 300s), `dry_run` flag; process-group kill (`Setpgid`+`SIGKILL`) covers all child processes |
+| `read_file` | Line-numbered output (`line_numbers`), windowing, `tail` arg, `truncate` strategy (`head`/`tail`/`middle`/`none`), 50 MB gate, content-based MIME detection for images, uniform truncation hint with remainder temp file |
 | `write_file` | Atomic temp+rename, parent dir creation, TOCTOU check, `dry_run` preview |
-| `edit_file` | old_text/new_text replacement, uniqueness enforcement, fuzzy fallback, `fuzzy_indent` re-indentation, `dry_run` preview, CRLF/BOM preservation |
-| `multi_edit` | Array of edits across files — validates all first, applies atomically, same fuzzy/CRLF/BOM as edit_file |
-| `search_files` | Grep with `--exclude-dir`, regex validation, per-line truncation, `format:"json"` for structured results |
+| `edit_file` | old_text/new_text replacement, uniqueness enforcement, empty `old_text` guard, no-op guard, fuzzy fallback, `fuzzy_indent` re-indentation, `dry_run` preview, CRLF/BOM preservation |
+| `multi_edit` | Array of edits across files — validates all first (empty `old_text` guard, no-op guard, overlap detection), applies atomically, same fuzzy/CRLF/BOM as edit_file |
+| `apply_patch` | Codex-style patch format (`*** Begin Patch … *** End Patch`); supports add/delete/update-file operations |
+| `search_files` | Grep with `--exclude-dir`, regex validation, `literal` flag for fixed-string matching, per-line truncation, `format:"json"` for structured results |
 | `stat_file` | File metadata (size/lines/mtime/type) without reading content |
-| `list_dir` | Recursive find with depth control, hidden files excluded |
+| `list_dir` | Recursive find with depth control, hidden files excluded, directories suffixed with `/` |
+| `find_files` | Glob-pattern file search; uses `fd` when available (respects `.gitignore`), falls back to POSIX `find` |
 | `list_tools` | Returns the JSON schema for all tools jinn exposes — same content as `jinn --schema`, but accessible in-protocol |
 | `checksum_tree` | SHA-256 hashes for a file tree, with optional glob filter |
 | `detect_project` | Detect language, framework, build/test/lint commands from config files |
+| `memory` | Persistent key/value store at `~/.config/jinn/memory.json`; actions: `save`, `recall`, `list`, `forget` |
+| `undo` | Snapshot history for all file mutations; actions: `list`, `preview`, `restore`, `clear` |
+| `lsp_query` | Language server queries (gopls, rust-analyzer, pylsp, typescript-language-server): `definition`, `references`, `hover`, `symbols` |
 
 ## Architecture
 
@@ -42,20 +47,25 @@ cmd/jinn/main.go                # ~50 lines: flags, signal, JSON I/O, wires to E
 internal/jinn/
   engine.go                      # Engine struct, New(workDir), Dispatch(), ResolveVersion()
   schema.go                      # Schema const (OpenAI function-calling JSON) + Request/Response types
-  security.go                    # (e) resolvePath, checkPath, sensitiveSegments
+  security.go                    # (e) resolvePath (~/ expansion + sandbox check), checkPath, sensitiveSegments
   tracker.go                     # fileTracker struct — records mtime on read, blocks stale writes
   normalize.go                   # stripBom, detectLineEnding, normalizeToLF, fuzzy match, shellescape
   output.go                      # truncateOutput, truncateTail, boundedWriter, collapseRepeatedLines, truncateLine
-  tool_shell.go                  # (e) runShell
-  tool_read.go                   # (e) readFile + maxFileSize
+  tool_shell.go                  # (e) runShell — Setpgid process-group kill, scrubbed env
+  tool_read.go                   # (e) readFile + maxFileSize; line_numbers, tail, truncate strategy, content-based MIME detection, writeTruncationRemainder
   tool_write.go                  # (e) writeFile
-  tool_edit.go                   # (e) editFile (exact + fuzzy, CRLF/BOM preservation)
-  tool_multi_edit.go             # (e) multiEdit (validate-all-then-apply, same normalization)
-  tool_search.go                 # (e) searchFiles + grepExcludeDirs
+  tool_edit.go                   # (e) editFile — exact + fuzzy, empty/no-op guards, CRLF/BOM preservation
+  tool_multi_edit.go             # (e) multiEdit — validate-all-then-apply, overlap detection, empty/no-op guards
+  tool_patch.go                  # (e) applyPatch — Codex-style patch format
+  tool_search.go                 # (e) searchFiles + grepExcludeDirs; literal flag
   tool_stat.go                   # (e) statFile
-  tool_list.go                   # (e) listDir
+  tool_list.go                   # (e) listDir — directory "/" suffix
+  tool_find.go                   # (e) findFiles — fd/find glob search
   tool_checksum.go               # (e) checksumTree
   tool_detect.go                 # (e) detectProject
+  tool_memory.go                 # (e) memory — persistent key/value store
+  tool_undo.go                   # (e) undo — snapshot list/preview/restore/clear
+  tool_lsp.go                    # (e) lspQuery — gopls/rust-analyzer/pylsp/ts-ls
   diff.go                        # unifiedDiff, formatEditPreview
 ```
 
@@ -63,10 +73,10 @@ Key design:
 
 - **Engine struct** absorbs all state (`workDir string`, `tracker *fileTracker`). No mutable package globals. Constructor: `New(workDir)`.
 - **Dispatch** routes tool name → unexported method. Single entry point for callers.
-- **Path security** (`resolvePath`/`checkPath`): Engine methods. Confine all file ops to workDir. Block sensitive paths (`.git/`, `.ssh/`, `.aws/`, `.gnupg/`, `.env*`), detect symlink escapes, reject `..` traversal.
+- **Path security** (`resolvePath`/`checkPath`): Engine methods. `resolvePath` expands `~` and `~/` before joining to workDir. `checkPath` resolves symlinks, checks sensitive segments (`.git/`, `.ssh/`, `.aws/`, `.gnupg/`, `.env*`), and enforces the workDir boundary.
 - **TOCTOU tracker**: Per-engine instance. Records mtime on read, blocks stale writes. No global state.
 - **Text normalization**: Edit tools strip BOM, normalize CRLF→LF for matching, restore after edit. Fuzzy fallback normalizes smart quotes, dashes, spaces when exact match fails.
-- **Output pipeline**: `collapseRepeatedLines` → `boundedWriter` (1 MB cap, spills to temp file) → `truncateTail` (shell) / `truncateOutput` (read/search).
+- **Output pipeline**: `collapseRepeatedLines` → `boundedWriter` (1 MB cap, spills to temp file) → `truncateTail` (shell) / `truncateOutput`/`truncateOutputHead`/`truncateOutputTail`/`truncateOutputDetailed` (read, driven by `truncate` param).
 - **All tests parallel**: `testEngine(t)` returns isolated `(*Engine, string)` per test. No `os.Chdir`, no global reset.
 
 ## Design Constraints
