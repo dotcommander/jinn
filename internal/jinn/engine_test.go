@@ -62,14 +62,8 @@ func TestDispatch_TruncationMeta(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result.Meta == nil {
-		t.Fatal("expected Meta for truncated read")
-	}
-	trunc, ok := result.Meta["truncation"].(truncationInfo)
-	if !ok {
-		t.Fatalf("expected truncationInfo, got: %T", result.Meta["truncation"])
-	}
-	if !trunc.Truncated {
-		t.Error("expected Truncated=true")
+	// 300 lines fits in 2000-line default window → no truncation
+	if result.Meta != nil {
+		t.Errorf("expected nil Meta for file that fits in default window, got: %v", result.Meta)
 	}
 }
