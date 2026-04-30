@@ -451,8 +451,8 @@ func TestReadFile_ByteTruncation(t *testing.T) {
 	if trunc.OutputLines >= 2000 {
 		t.Errorf("expected OutputLines < 2000 due to byte truncation, got: %d", trunc.OutputLines)
 	}
-	if !strings.Contains(result.Text, "truncated at") {
-		t.Error("expected 'truncated at' in byte truncation hint")
+	if !strings.Contains(result.Text, "Showing lines") {
+		t.Error("expected 'Showing lines' in byte truncation hint")
 	}
 }
 

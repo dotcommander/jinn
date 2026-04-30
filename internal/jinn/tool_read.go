@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -75,19 +76,35 @@ func (e *Engine) readFile(args map[string]interface{}) (*ToolResult, error) {
 
 	e.tracker.record(resolved, info.ModTime())
 
-	// PDF: reject before image/binary checks — pdftotext is a better tool.
 	ext := strings.ToLower(filepath.Ext(resolved))
-	if ext == ".pdf" {
+
+	// Content-based detection: DetectContentType handles <512 bytes automatically.
+	detected := http.DetectContentType(data)
+	// Strip "; charset=..." suffix for a clean MIME.
+	if i := strings.Index(detected, ";"); i != -1 {
+		detected = strings.TrimSpace(detected[:i])
+	}
+
+	// PDF: reject before image/binary checks — pdftotext is a better tool.
+	// Either the content detector or the extension is sufficient evidence.
+	if detected == "application/pdf" || ext == ".pdf" {
 		return nil, &ErrWithSuggestion{
 			Err:        fmt.Errorf("pdf extraction not supported in zero-dep mode"),
 			Suggestion: "convert the PDF to text first (pdftotext, pdftk, or a cloud OCR service) and read the text file",
 		}
 	}
 
-	// Image: return structured content block with base64 data and MIME type.
-	if isImageExt(ext) {
+	// Image: DetectContentType identifies most raster formats; SVG is XML so it
+	// returns text/xml — fall back to extension for that case.
+	isImage := strings.HasPrefix(detected, "image/") || ext == ".svg"
+	if isImage {
+		var mime string
+		if strings.HasPrefix(detected, "image/") {
+			mime = detected
+		} else {
+			mime = "image/svg+xml"
+		}
 		encoded := base64.StdEncoding.EncodeToString(data)
-		mime := mimeTypeForExt(ext)
 		return &ToolResult{
 			Content: []ContentBlock{{
 				Type:     "image",
@@ -252,13 +269,13 @@ func (e *Engine) readFile(args map[string]interface{}) (*ToolResult, error) {
 		}
 		tmpPath, _ := writeTruncationRemainder(resolved, remainingStart, srcRemainder)
 
-		hint := fmt.Sprintf("\n[output truncated at %d KB; showing %d-%d of %d lines. ",
-			keptBytes/1024, startLine, startLine+len(kept)-1, total)
+		nextLine := startLine + len(kept)
+		hint := fmt.Sprintf("\n[Showing lines %d-%d of %d. Use start_line=%d to continue.",
+			startLine, startLine+len(kept)-1, total, nextLine)
 		if tmpPath != "" {
-			hint += fmt.Sprintf("Remainder saved to %s]", tmpPath)
-		} else {
-			hint += fmt.Sprintf("Use start_line=%d to continue]", startLine+len(kept))
+			hint += fmt.Sprintf(" Remainder saved to %s.", tmpPath)
 		}
+		hint += "]"
 
 		return &ToolResult{
 			Text: strings.Join(kept, "\n") + "\n" + hint,
@@ -279,12 +296,12 @@ func (e *Engine) readFile(args map[string]interface{}) (*ToolResult, error) {
 	if windowTruncated {
 		// Write remainder to temp file for seamless continuation.
 		tmpPath, _ := writeTruncationRemainder(resolved, endLine+1, lines[endLine:total])
-		hint := fmt.Sprintf("\n[file has %d lines; showing %d-%d. ", total, startLine, endLine)
+		hint := fmt.Sprintf("\n[Showing lines %d-%d of %d. Use start_line=%d to continue.",
+			startLine, endLine, total, endLine+1)
 		if tmpPath != "" {
-			hint += fmt.Sprintf("Remainder saved to %s]", tmpPath)
-		} else {
-			hint += fmt.Sprintf("Use start_line=%d to continue]", endLine+1)
+			hint += fmt.Sprintf(" Remainder saved to %s.", tmpPath)
 		}
+		hint += "]"
 		result += hint
 	}
 
@@ -309,35 +326,6 @@ func (e *Engine) readFile(args map[string]interface{}) (*ToolResult, error) {
 	}
 
 	return textResult(result), nil
-}
-
-// mimeTypeForExt returns the MIME type for a given lowercase dot-prefixed extension.
-func mimeTypeForExt(ext string) string {
-	switch ext {
-	case ".jpg", ".jpeg":
-		return "image/jpeg"
-	case ".svg":
-		return "image/svg+xml"
-	case ".gif":
-		return "image/gif"
-	case ".webp":
-		return "image/webp"
-	case ".bmp":
-		return "image/bmp"
-	case ".png":
-		return "image/png"
-	default:
-		return "image/" + strings.TrimPrefix(ext, ".")
-	}
-}
-
-// isImageExt reports whether ext (lowercase, dot-prefixed) is a supported image type.
-func isImageExt(ext string) bool {
-	switch ext {
-	case ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp":
-		return true
-	}
-	return false
 }
 
 // writeTruncationRemainder writes the lines from startLine onward to a temp file
