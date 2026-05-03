@@ -7,16 +7,46 @@ import (
 	"io"
 )
 
+// mockConfig controls the behavior of runMockServer for variant tests.
+// Zero value → normal happy-path responses.
+type mockConfig struct {
+	slow bool // block forever (timeout test)
+
+	// per-method overrides: when true, the server returns null for that method
+	nullDefinition bool
+	nullReferences bool
+	nullHover      bool
+	nullSymbols    bool
+	nullRename     bool
+
+	// manyReferences: if > 0, return this many reference locations
+	manyReferences int
+
+	// plainHover: return {"contents":"plain text"} instead of markup content
+	plainHover bool
+
+	// flatSymbols: return SymbolInformation[] instead of DocumentSymbol[]
+	flatSymbols bool
+
+	// badRename: return malformed JSON for rename
+	badRename bool
+}
+
 // newMockLauncher returns an lspLauncher that runs an in-process mock LSP server
 // over io.Pipe pairs. Pass slow=true to make the server block forever (timeout test).
 func newMockLauncher(slow bool) lspLauncher {
+	return newMockLauncherCfg(mockConfig{slow: slow})
+}
+
+// newMockLauncherCfg returns a launcher configured by cfg.
+func newMockLauncherCfg(cfg mockConfig) lspLauncher {
 	return func(_ []string) (io.WriteCloser, io.ReadCloser, func() error, error) {
 		// clientW → serverR: client writes requests, server reads them.
 		// serverW → clientR: server writes replies, client reads them.
 		serverR, clientW := io.Pipe()
 		clientR, serverW := io.Pipe()
 
-		go runMockServer(serverR, serverW, slow)
+		go runMockServer(serverR, serverW, cfg)
 
 		kill := func() error {
 			clientW.Close()
@@ -29,10 +59,10 @@ func newMockLauncher(slow bool) lspLauncher {
 
 // runMockServer handles JSON-RPC 2.0 frames over r/w. It responds to the
 // exact methods exercised by the test suite; unrecognised methods are ignored.
-func runMockServer(r io.Reader, w io.WriteCloser, slow bool) {
+func runMockServer(r io.Reader, w io.WriteCloser, cfg mockConfig) {
 	defer w.Close()
 
-	if slow {
+	if cfg.slow {
 		// Block until the pipe is closed by the client's kill func.
 		buf := make([]byte, 1)
 		r.Read(buf) //nolint:errcheck
@@ -60,6 +90,10 @@ func runMockServer(r io.Reader, w io.WriteCloser, slow bool) {
 			// notifications — no reply required
 
 		case "textDocument/definition":
+			if cfg.nullDefinition {
+				writeMockFrame(w, mockReply(msg.ID, nil))
+				continue
+			}
 			loc := map[string]any{
 				"uri": "file:///fake/src.go",
 				"range": map[string]any{
@@ -70,7 +104,15 @@ func runMockServer(r io.Reader, w io.WriteCloser, slow bool) {
 			writeMockFrame(w, mockReply(msg.ID, []any{loc}))
 
 		case "textDocument/references":
-			locs := make([]any, 3)
+			if cfg.nullReferences {
+				writeMockFrame(w, mockReply(msg.ID, nil))
+				continue
+			}
+			count := 3
+			if cfg.manyReferences > 0 {
+				count = cfg.manyReferences
+			}
+			locs := make([]any, count)
 			for i := range locs {
 				locs[i] = map[string]any{
 					"uri": fmt.Sprintf("file:///fake/ref%d.go", i),
@@ -83,11 +125,43 @@ func runMockServer(r io.Reader, w io.WriteCloser, slow bool) {
 			writeMockFrame(w, mockReply(msg.ID, locs))
 
 		case "textDocument/hover":
+			if cfg.nullHover {
+				writeMockFrame(w, mockReply(msg.ID, nil))
+				continue
+			}
+			if cfg.plainHover {
+				writeMockFrame(w, mockReply(msg.ID, map[string]any{
+					"contents": "plain text",
+				}))
+				continue
+			}
 			writeMockFrame(w, mockReply(msg.ID, map[string]any{
 				"contents": map[string]any{"kind": "markdown", "value": "func Foo() error"},
 			}))
 
 		case "textDocument/documentSymbol":
+			if cfg.nullSymbols {
+				writeMockFrame(w, mockReply(msg.ID, nil))
+				continue
+			}
+			if cfg.flatSymbols {
+				// SymbolInformation[] — flat format with location.uri
+				syms := []any{
+					map[string]any{
+						"name": "foo",
+						"kind": 12, // Function
+						"location": map[string]any{
+							"uri": "file:///a.go",
+							"range": map[string]any{
+								"start": map[string]any{"line": 0, "character": 0},
+								"end":   map[string]any{"line": 0, "character": 3},
+							},
+						},
+					},
+				}
+				writeMockFrame(w, mockReply(msg.ID, syms))
+				continue
+			}
 			syms := []any{
 				map[string]any{
 					"name": "Foo",
@@ -117,6 +191,17 @@ func runMockServer(r io.Reader, w io.WriteCloser, slow bool) {
 			writeMockFrame(w, mockReply(msg.ID, syms))
 
 		case "textDocument/rename":
+			if cfg.nullRename {
+				writeMockFrame(w, mockReply(msg.ID, nil))
+				continue
+			}
+			if cfg.badRename {
+				// Write a well-formed frame containing malformed JSON for the result field.
+				// We craft a raw reply where "result" is not a valid lspWorkspaceEdit.
+				body := []byte(`{"jsonrpc":"2.0","id":` + fmt.Sprintf("%d", *msg.ID) + `,"result":{"broken":}`)
+				fmt.Fprintf(w, "Content-Length: %d\r\n\r\n%s", len(body), body) //nolint:errcheck
+				continue
+			}
 			// Return a workspace edit renaming the symbol in one file.
 			edit := map[string]any{
 				"changes": map[string]any{

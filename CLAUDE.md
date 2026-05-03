@@ -4,13 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-jinn is a sandboxed tool executor for AI coding agents. Single binary, zero external dependencies — stdlib only. It exposes 16 tools via a one-shot JSON-over-stdin/stdout protocol compatible with OpenAI function calling.
+jinn is a sandboxed tool executor for AI coding agents. Single binary, zero external dependencies — stdlib only. It exposes 17 tools via a one-shot JSON-over-stdin/stdout protocol compatible with OpenAI function calling.
 
 ## Build / Test / Install
 
 ```bash
 go build ./cmd/jinn/          # produces ./jinn
-go test -race ./...            # 132 tests
+go test -race ./...            # 570 tests
 go install github.com/dotcommander/jinn@latest
 jinn --schema                  # emit tool definitions as JSON
 jinn --version                 # version from ldflags or VCS info
@@ -38,7 +38,8 @@ No linter config, no Makefile — intentionally minimal.
 | `detect_project` | Detect language, framework, build/test/lint commands from config files |
 | `memory` | Persistent key/value store at `~/.config/jinn/memory.json`; actions: `save`, `recall`, `list`, `forget` |
 | `undo` | Snapshot history for all file mutations; actions: `list`, `preview`, `restore`, `clear` |
-| `lsp_query` | Language server queries (gopls, rust-analyzer, pylsp, typescript-language-server): `definition`, `references`, `hover`, `symbols` |
+| `diff_files` | Unified diff between two files |
+| `lsp_query` | Language server queries (gopls, rust-analyzer, pylsp, typescript-language-server, clangd, jdtls, lua-language-server, zls): `definition`, `references`, `hover`, `symbols`, `rename`; `symbol` name auto-detect for column resolution |
 
 ## Architecture
 
@@ -65,7 +66,10 @@ internal/jinn/
   tool_detect.go                 # (e) detectProject
   tool_memory.go                 # (e) memory — persistent key/value store
   tool_undo.go                   # (e) undo — snapshot list/preview/restore/clear
-  tool_lsp.go                    # (e) lspQuery — gopls/rust-analyzer/pylsp/ts-ls
+  tool_diff.go                    # (e) diffFiles — unified diff between two files
+  tool_lsp.go                    # (e) lspQuery — 8 language servers, symbol auto-detect, rename preview
+  errors.go                      # error code constants (ErrCodeNotFound, ErrCodeFileTooLarge, etc.)
+  errctx.go                      # ErrWithSuggestion type — structured errors with codes and hints
   diff.go                        # unifiedDiff, formatEditPreview
 ```
 
