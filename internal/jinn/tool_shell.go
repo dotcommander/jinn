@@ -92,6 +92,7 @@ func (e *Engine) runShell(ctx context.Context, args map[string]interface{}) (str
 		exitCode = 124 // preserves "timed out after N seconds" message below
 	}
 	raw := collapseRepeatedLines(outBuf.String() + errBuf.String())
+	raw = collapseBlankLines(raw, 3)
 
 	// Apply tail truncation with line + byte limits (matching pi conventions).
 	content, trunc := truncateTailDetailed(raw, DefaultMaxLines, DefaultMaxBytes)

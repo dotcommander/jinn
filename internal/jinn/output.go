@@ -377,7 +377,42 @@ func collapseRepeatedLines(s string) string {
 		}
 		i = j
 	}
-	return strings.TrimRight(b.String(), "\n")
+	result := strings.TrimRight(b.String(), "\n")
+	if len(result) >= len(s) {
+		return s
+	}
+	return result
+}
+
+// collapseBlankLines collapses runs of more than threshold consecutive blank
+// lines (empty or whitespace-only) into a single blank line. If the result
+// is not strictly smaller than the input, the original string is returned
+// unchanged.
+func collapseBlankLines(s string, threshold int) string {
+	lines := strings.Split(s, "\n")
+	if threshold < 1 {
+		threshold = 1
+	}
+	var b strings.Builder
+	blankRun := 0
+	for _, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			blankRun++
+			if blankRun <= threshold {
+				b.WriteString(line)
+				b.WriteByte('\n')
+			}
+			continue
+		}
+		blankRun = 0
+		b.WriteString(line)
+		b.WriteByte('\n')
+	}
+	result := strings.TrimRight(b.String(), "\n")
+	if len(result) >= len(s) {
+		return s
+	}
+	return result
 }
 
 // formatTruncatedHint returns the standard hint string appended when list_dir
