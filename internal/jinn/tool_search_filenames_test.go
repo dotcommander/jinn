@@ -97,6 +97,7 @@ func TestSearchFiles_MaxResults(t *testing.T) {
 	tests := []struct {
 		name       string
 		maxResults float64
+		maxMatches float64
 		format     string
 		wantCapped bool
 	}{
@@ -113,8 +114,8 @@ func TestSearchFiles_MaxResults(t *testing.T) {
 			wantCapped: false,
 		},
 		{
-			name:       "filenames format with max_results",
-			maxResults: 2,
+			name:       "filenames format with max_matches",
+			maxMatches: 2,
 			format:     "filenames",
 			wantCapped: true,
 		},
@@ -126,11 +127,21 @@ func TestSearchFiles_MaxResults(t *testing.T) {
 			e, dir := testEngine(t)
 			writeTestFile(t, dir, "multi.go", "aaa\naaa\naaa\naaa\naaa\n")
 
-			result, err := e.searchFiles(args("pattern", "aaa", "format", tc.format, "max_results", tc.maxResults))
+			callArgs := args("pattern", "aaa", "format", tc.format)
+			if tc.maxResults > 0 {
+				callArgs["max_results"] = tc.maxResults
+			}
+			if tc.maxMatches > 0 {
+				callArgs["max_matches"] = tc.maxMatches
+			}
+			result, err := e.searchFiles(callArgs)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
 			cappedNote := "results capped at max_results"
+			if tc.format == "filenames" {
+				cappedNote = "results capped at max_matches"
+			}
 			if tc.wantCapped && !strings.Contains(result, cappedNote) {
 				t.Errorf("expected cap note in output, got: %s", result)
 			}
@@ -183,7 +194,7 @@ func TestParseFilenamesOutput(t *testing.T) {
 			name:       "capped note when total meets max",
 			raw:        "a.go:5\nb.go:3\n",
 			maxResults: 5,
-			want:       "a.go: 5 matches\nb.go: 3 matches\n(results capped at max_results=5, more matches may exist)",
+			want:       "a.go: 5 matches\nb.go: 3 matches\n(results capped at max_matches=5, more matches may exist)",
 		},
 		{
 			name:       "no capped note when total under max",

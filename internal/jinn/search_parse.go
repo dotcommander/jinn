@@ -67,12 +67,12 @@ func parseSearchResults(raw string, cap int) (results []searchResult, total int)
 					after = after[1:]
 					if col, text, ok := splitLeadingInt(after); ok && len(text) > 0 && text[0] == ':' {
 						r.Column = col
-						r.Text = text[1:]
+						r.Text = truncateLine(text[1:], 200)
 					} else {
-						r.Text = after
+						r.Text = truncateLine(after, 200)
 					}
 				} else {
-					r.Text = after
+					r.Text = truncateLine(after, 200)
 				}
 				// Attach buffered context-before lines in top-to-bottom order.
 				if preContext != nil && preContextFile == file {
@@ -144,7 +144,7 @@ func splitLeadingInt(s string) (int, string, bool) {
 // parseFilenamesOutput converts grep -c output ("file:N" or "file:0") into
 // "file: N matches" lines. Files with zero matches (from -c when some files
 // have matches) are excluded. A max_results note is appended when applicable.
-func parseFilenamesOutput(raw string, maxResults int) string {
+func parseFilenamesOutput(raw string, maxMatches int) string {
 	var sb strings.Builder
 	total := 0
 	for _, line := range strings.Split(raw, "\n") {
@@ -168,9 +168,9 @@ func parseFilenamesOutput(raw string, maxResults int) string {
 			fmt.Fprintf(&sb, "%s: %d matches\n", file, count)
 		}
 	}
-	if maxResults > 0 && total >= maxResults {
+	if maxMatches > 0 && total >= maxMatches {
 		s := strings.TrimRight(sb.String(), "\n")
-		return s + fmt.Sprintf("\n(results capped at max_results=%d, more matches may exist)", maxResults)
+		return s + fmt.Sprintf("\n(results capped at max_matches=%d, more matches may exist)", maxMatches)
 	}
 	return strings.TrimRight(sb.String(), "\n")
 }

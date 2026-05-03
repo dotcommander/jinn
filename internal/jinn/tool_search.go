@@ -89,29 +89,46 @@ func (e *Engine) searchFiles(args map[string]interface{}) (string, error) {
 	}
 
 	if format == "filenames" {
-		if maxResults > 0 {
-			cmdArgs = append(cmdArgs, "-m", strconv.Itoa(maxResults))
+		if maxMatches > 0 {
+			cmdArgs = append(cmdArgs, "-m", strconv.Itoa(maxMatches))
 		}
 		cmdArgs = append(cmdArgs, "-c", "--", pattern, searchPath)
 
-		out := &boundedWriter{limit: 1 << 20}
+		stdout := &boundedWriter{limit: 1 << 20}
+		stderr := &boundedWriter{limit: 1 << 20}
 		c := exec.Command(cmd, cmdArgs...)
 		c.Dir = e.workDir
-		c.Stdout = out
-		c.Stderr = out
-		c.Run()
+		c.Stdout = stdout
+		c.Stderr = stderr
+		runErr := c.Run()
 
-		raw := out.String()
-		return parseFilenamesOutput(raw, maxResults), nil
+		if runErr != nil {
+			var exitErr *exec.ExitError
+			if errors.As(runErr, &exitErr) {
+				if exitErr.ExitCode() != 1 || stdout.String() != "" {
+					// Exit code 1 with empty stdout = no matches (not an error).
+					// Any other non-zero exit with empty stdout is an error.
+					if stdout.String() == "" {
+						return "", fmt.Errorf("search failed: %s", stderr.String())
+					}
+				}
+			}
+		}
+
+		raw := stdout.String()
+		return parseFilenamesOutput(raw, maxMatches), nil
 	}
 
 	// Pass -m as a safety cap so grep stops scanning extremely large files
-	// early. We use a generous cap (2× default) rather than maxMatches directly
+	// early. We use a generous cap (2× requested) rather than maxMatches directly
 	// because -m limits per-file matches, and setting it to maxMatches would
 	// break total_count accuracy when all matches reside in a single file.
 	// The post-hoc Go cap is still needed for an accurate total_count.
-	if maxMatches > 0 && maxMatches < searchDefaultMax {
-		safetyCap := searchDefaultMax * 2
+	if maxMatches > 0 {
+		safetyCap := maxMatches * 2
+		if safetyCap < searchDefaultMax {
+			safetyCap = searchDefaultMax
+		}
 		cmdArgs = append(cmdArgs, "-m", strconv.Itoa(safetyCap))
 	}
 	cmdArgs = append(cmdArgs, "--", pattern, searchPath)
@@ -132,13 +149,6 @@ func (e *Engine) searchFiles(args map[string]interface{}) (string, error) {
 	}
 
 	raw := stdout.String()
-	if raw != "" {
-		lines := strings.Split(raw, "\n")
-		for i, l := range lines {
-			lines[i] = truncateLine(l, 200)
-		}
-		raw = strings.Join(lines, "\n")
-	}
 	if stdout.Truncated() {
 		raw += "\n[output truncated at 1 MB]"
 	}

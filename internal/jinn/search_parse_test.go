@@ -156,3 +156,66 @@ func TestParseSearchResults_RespectsCap(t *testing.T) {
 		t.Errorf("expected total=100 even when capped, got %d", total)
 	}
 }
+
+// TestParseSearchResults_TruncatedText verifies that a text portion >200 runes
+// is truncated to exactly 200 runes + "..." on the Text field after field
+// extraction. Feeding raw grep "file:line:text" to parseSearchResults ensures
+// truncation happens post-parse (not pre-parse, which would corrupt the parser).
+func TestParseSearchResults_TruncatedText(t *testing.T) {
+	t.Parallel()
+	longText := strings.Repeat("a", 250)
+	raw := "file.go:1:" + longText + "\n"
+
+	results, total := parseSearchResults(raw, 0)
+	if total != 1 {
+		t.Fatalf("expected total=1, got %d", total)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	r := results[0]
+	if r.File != "file.go" {
+		t.Errorf("expected File=file.go, got %q", r.File)
+	}
+	if r.Line != 1 {
+		t.Errorf("expected Line=1, got %d", r.Line)
+	}
+	// 200 runes of content + 3-rune "..." suffix = 203 total.
+	runeCount := len([]rune(r.Text))
+	if runeCount != 203 {
+		t.Errorf("expected Text length 203 runes (200 + ellipsis), got %d: %q", runeCount, r.Text)
+	}
+	if !strings.HasSuffix(r.Text, "...") {
+		t.Errorf("expected Text to end with '...', got %q", r.Text)
+	}
+}
+
+// TestParseSearchResults_ShortTextUnchanged verifies that Text fields at or
+// under 200 runes pass through without modification.
+func TestParseSearchResults_ShortTextUnchanged(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		text string
+	}{
+		{"empty", ""},
+		{"short", "hello world"},
+		{"exactly200", strings.Repeat("b", 200)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			raw := "src.go:5:" + tc.text + "\n"
+			results, total := parseSearchResults(raw, 0)
+			if total != 1 {
+				t.Fatalf("expected total=1, got %d", total)
+			}
+			if len(results) != 1 {
+				t.Fatalf("expected 1 result, got %d", len(results))
+			}
+			if results[0].Text != tc.text {
+				t.Errorf("expected Text=%q unchanged, got %q", tc.text, results[0].Text)
+			}
+		})
+	}
+}
