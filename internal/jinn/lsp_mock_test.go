@@ -116,6 +116,23 @@ func runMockServer(r io.Reader, w io.WriteCloser, slow bool) {
 			}
 			writeMockFrame(w, mockReply(msg.ID, syms))
 
+		case "textDocument/rename":
+			// Return a workspace edit renaming the symbol in one file.
+			edit := map[string]any{
+				"changes": map[string]any{
+					"file:///fake/src.go": []any{
+						map[string]any{
+							"range": map[string]any{
+								"start": map[string]any{"line": 3, "character": 5},
+								"end":   map[string]any{"line": 3, "character": 8},
+							},
+							"newText": "newName",
+						},
+					},
+				},
+			}
+			writeMockFrame(w, mockReply(msg.ID, edit))
+
 		case "shutdown":
 			writeMockFrame(w, mockReply(msg.ID, nil))
 		}
