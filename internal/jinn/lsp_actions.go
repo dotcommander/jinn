@@ -3,12 +3,37 @@ package jinn
 import (
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 )
 
 // --- action methods ---
 
-func (c *lspClient) definition(absPath string, line, char int) (string, error) {
+// unmarshalLocations handles the 3 possible definition response shapes:
+// []Location, single Location, or []LocationLink (normalized to []lspLocation).
+func unmarshalLocations(raw json.RawMessage) []lspLocation {
+	var locs []lspLocation
+	if err := json.Unmarshal(raw, &locs); err == nil && len(locs) > 0 {
+		return locs
+	}
+	var single lspLocation
+	if err := json.Unmarshal(raw, &single); err == nil && single.URI != "" {
+		return []lspLocation{single}
+	}
+	var links []lspLocationLink
+	if err := json.Unmarshal(raw, &links); err == nil && len(links) > 0 {
+		locs = make([]lspLocation, len(links))
+		for i, l := range links {
+			locs[i] = lspLocation{URI: l.TargetURI}
+			locs[i].Range.Start.Line = l.TargetRange.Start.Line
+			locs[i].Range.Start.Character = l.TargetRange.Start.Character
+		}
+		return locs
+	}
+	return nil
+}
+
+func (c *lspClient) definition(absPath string, line, char int, workDir string) (string, error) {
 	raw, err := c.sendRequest("textDocument/definition", tdPos(absPath, line, char))
 	if err != nil {
 		return "", err
@@ -16,19 +41,35 @@ func (c *lspClient) definition(absPath string, line, char int) (string, error) {
 	if string(raw) == "null" || len(raw) == 0 {
 		return "no definition found", nil
 	}
-	// Result can be Location or []Location.
-	var locs []lspLocation
-	if err := json.Unmarshal(raw, &locs); err == nil && len(locs) > 0 {
-		return formatLocation(locs[0]), nil
+
+	// 3-way unmarshal: []Location → single Location → []LocationLink
+	locs := unmarshalLocations(raw)
+	if len(locs) == 0 {
+		return "no definition found", nil
 	}
-	var loc lspLocation
-	if err := json.Unmarshal(raw, &loc); err == nil && loc.URI != "" {
-		return formatLocation(loc), nil
+
+	fileCache := make(map[string][]string)
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("%d location(s) found:\n\n", len(locs)))
+	for _, loc := range locs {
+		path := strings.TrimPrefix(loc.URI, "file://")
+		rel := path
+		if workDir != "" {
+			if r, err := filepath.Rel(workDir, path); err == nil {
+				rel = r
+			}
+		}
+		fmt.Fprintf(&sb, "%s:%d:%d\n", rel, loc.Range.Start.Line+1, loc.Range.Start.Character+1)
+		lines := lspCachedLines(fileCache, path)
+		if ctx := lspFormatContext(lines, loc.Range.Start.Line, 2); ctx != "" {
+			sb.WriteString(ctx)
+			sb.WriteByte('\n')
+		}
 	}
-	return "no definition found", nil
+	return strings.TrimRight(sb.String(), "\n"), nil
 }
 
-func (c *lspClient) references(absPath string, line, char int) (string, error) {
+func (c *lspClient) references(absPath string, line, char int, workDir string) (string, error) {
 	type refParams struct {
 		TextDocument map[string]string `json:"textDocument"`
 		Position     map[string]any    `json:"position"`
@@ -52,10 +93,24 @@ func (c *lspClient) references(absPath string, line, char int) (string, error) {
 	if truncated {
 		locs = locs[:refCap]
 	}
+
+	fileCache := make(map[string][]string)
 	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("%d location(s) found:\n\n", len(locs)))
 	for _, loc := range locs {
-		sb.WriteString(formatLocation(loc))
-		sb.WriteByte('\n')
+		path := strings.TrimPrefix(loc.URI, "file://")
+		rel := path
+		if workDir != "" {
+			if r, err := filepath.Rel(workDir, path); err == nil {
+				rel = r
+			}
+		}
+		fmt.Fprintf(&sb, "%s:%d:%d\n", rel, loc.Range.Start.Line+1, loc.Range.Start.Character+1)
+		lines := lspCachedLines(fileCache, path)
+		if ctx := lspFormatContext(lines, loc.Range.Start.Line, 1); ctx != "" {
+			sb.WriteString(ctx)
+			sb.WriteByte('\n')
+		}
 	}
 	result := strings.TrimRight(sb.String(), "\n")
 	if truncated {
@@ -110,6 +165,24 @@ func symbolKindName(k int) string {
 	return "Symbol"
 }
 
+// lspDocSymbol is DocumentSymbol with Children for hierarchical output.
+type lspDocSymbol struct {
+	Name           string         `json:"name"`
+	Kind           int            `json:"kind"`
+	Range          struct {
+		Start struct {
+			Line int `json:"line"`
+		} `json:"start"`
+	} `json:"range"`
+	SelectionRange struct {
+		Start struct {
+			Line      int `json:"line"`
+			Character int `json:"character"`
+		} `json:"start"`
+	} `json:"selectionRange"`
+	Children []lspDocSymbol `json:"children,omitempty"`
+}
+
 func (c *lspClient) symbols(absPath string) (string, error) {
 	raw, err := c.sendRequest("textDocument/documentSymbol", map[string]any{
 		"textDocument": map[string]string{"uri": pathToURI(absPath)},
@@ -120,7 +193,16 @@ func (c *lspClient) symbols(absPath string) (string, error) {
 	if string(raw) == "null" || len(raw) == 0 {
 		return "no symbols found", nil
 	}
-	// documentSymbol returns []SymbolInformation (has "location") or []DocumentSymbol (has "selectionRange").
+
+	// Try hierarchical DocumentSymbol[] first (has selectionRange + children).
+	var docSyms []lspDocSymbol
+	if err := json.Unmarshal(raw, &docSyms); err == nil && len(docSyms) > 0 {
+		var sb strings.Builder
+		formatSymbolTree(&sb, docSyms, 0)
+		return strings.TrimRight(sb.String(), "\n"), nil
+	}
+
+	// Fall back to flat SymbolInformation[] (has location.uri).
 	type symInfo struct {
 		Name     string      `json:"name"`
 		Kind     int         `json:"kind"`
@@ -128,31 +210,56 @@ func (c *lspClient) symbols(absPath string) (string, error) {
 	}
 	var syms []symInfo
 	if err := json.Unmarshal(raw, &syms); err == nil && len(syms) > 0 && syms[0].Location.URI != "" {
-		var sb strings.Builder
-		for _, s := range syms {
-			fmt.Fprintf(&sb, "%-15s %-20s (%d:%d)\n", symbolKindName(s.Kind), s.Name,
-				s.Location.Range.Start.Line+1, s.Location.Range.Start.Character+1)
+		// Normalize flat symbols into lspDocSymbol for unified formatting.
+		docSyms = make([]lspDocSymbol, len(syms))
+		for i, s := range syms {
+			docSyms[i].Name = s.Name
+			docSyms[i].Kind = s.Kind
+			docSyms[i].Range.Start.Line = s.Location.Range.Start.Line
+			docSyms[i].SelectionRange.Start.Line = s.Location.Range.Start.Line
+			docSyms[i].SelectionRange.Start.Character = s.Location.Range.Start.Character
 		}
+		var sb strings.Builder
+		formatSymbolTree(&sb, docSyms, 0)
 		return strings.TrimRight(sb.String(), "\n"), nil
 	}
-	type docSym struct {
-		Name           string `json:"name"`
-		Kind           int    `json:"kind"`
-		SelectionRange struct {
-			Start struct {
-				Line      int `json:"line"`
-				Character int `json:"character"`
-			} `json:"start"`
-		} `json:"selectionRange"`
-	}
-	var docSyms []docSym
-	if err := json.Unmarshal(raw, &docSyms); err == nil && len(docSyms) > 0 {
-		var sb strings.Builder
-		for _, s := range docSyms {
-			fmt.Fprintf(&sb, "%-15s %-20s (%d:%d)\n", symbolKindName(s.Kind), s.Name,
-				s.SelectionRange.Start.Line+1, s.SelectionRange.Start.Character+1)
-		}
-		return strings.TrimRight(sb.String(), "\n"), nil
-	}
+
 	return "no symbols found", nil
+}
+
+// formatSymbolTree renders symbols as "{indent}Kind Name (line N)" with
+// 2-space indent per depth level for children.
+func formatSymbolTree(sb *strings.Builder, syms []lspDocSymbol, depth int) {
+	indent := strings.Repeat("  ", depth)
+	for _, s := range syms {
+		line := s.Range.Start.Line + 1
+		fmt.Fprintf(sb, "%s%s %s (line %d)\n", indent, symbolKindName(s.Kind), s.Name, line)
+		if len(s.Children) > 0 {
+			formatSymbolTree(sb, s.Children, depth+1)
+		}
+	}
+}
+
+func (c *lspClient) rename(absPath string, line, char int, newName, workDir string) (string, error) {
+	type renameParams struct {
+		TextDocument map[string]string `json:"textDocument"`
+		Position     map[string]any    `json:"position"`
+		NewName      string            `json:"newName"`
+	}
+	raw, err := c.sendRequest("textDocument/rename", renameParams{
+		TextDocument: map[string]string{"uri": pathToURI(absPath)},
+		Position:     lspPosition(line, char),
+		NewName:      newName,
+	})
+	if err != nil {
+		return "", err
+	}
+	if string(raw) == "null" || len(raw) == 0 {
+		return "no rename changes", nil
+	}
+	var edit lspWorkspaceEdit
+	if err := json.Unmarshal(raw, &edit); err != nil {
+		return "", fmt.Errorf("lsp rename parse: %w", err)
+	}
+	return formatWorkspaceEdit(&edit, workDir), nil
 }

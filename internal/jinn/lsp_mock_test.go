@@ -92,6 +92,10 @@ func runMockServer(r io.Reader, w io.WriteCloser, slow bool) {
 				map[string]any{
 					"name": "Foo",
 					"kind": 12, // Function
+					"range": map[string]any{
+						"start": map[string]any{"line": 4, "character": 0},
+						"end":   map[string]any{"line": 4, "character": 3},
+					},
 					"selectionRange": map[string]any{
 						"start": map[string]any{"line": 4, "character": 0},
 						"end":   map[string]any{"line": 4, "character": 3},
@@ -100,6 +104,10 @@ func runMockServer(r io.Reader, w io.WriteCloser, slow bool) {
 				map[string]any{
 					"name": "Bar",
 					"kind": 13, // Variable
+					"range": map[string]any{
+						"start": map[string]any{"line": 9, "character": 0},
+						"end":   map[string]any{"line": 9, "character": 3},
+					},
 					"selectionRange": map[string]any{
 						"start": map[string]any{"line": 9, "character": 0},
 						"end":   map[string]any{"line": 9, "character": 3},

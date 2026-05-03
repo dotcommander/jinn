@@ -50,13 +50,12 @@ func TestLSP_Definition_Succeeds(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	// mock replies with file:///fake/src.go, line 9 (0-based) → 10, char 0 → 1
-	const wantURI = "file:///fake/src.go"
-	const wantPos = "10:1"
-	if !strings.Contains(out, wantURI) {
-		t.Errorf("expected URI %q in output, got: %q", wantURI, out)
+	// After LSP enhancements: definition returns relative paths + header
+	if !strings.Contains(out, "1 location(s) found") {
+		t.Errorf("expected header in output, got: %q", out)
 	}
-	if !strings.Contains(out, wantPos) {
-		t.Errorf("expected position %q in output, got: %q", wantPos, out)
+	if !strings.Contains(out, "/fake/src.go:10:1") {
+		t.Errorf("expected position /fake/src.go:10:1 in output, got: %q", out)
 	}
 }
 
@@ -75,14 +74,14 @@ func TestLSP_References_Returns3Locations(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	// mock returns 3 locations: file:///fake/ref0.go, ref1.go, ref2.go
-	lines := strings.Split(strings.TrimSpace(out), "\n")
-	if len(lines) != 3 {
-		t.Errorf("expected 3 reference lines, got %d:\n%s", len(lines), out)
+	// After LSP enhancements: references returns header + relative paths
+	if !strings.Contains(out, "3 location(s) found") {
+		t.Errorf("expected header in output, got: %q", out)
 	}
-	for i, line := range lines {
-		want := fmt.Sprintf("file:///fake/ref%d.go", i)
-		if !strings.Contains(line, want) {
-			t.Errorf("line %d: expected %q, got: %q", i, want, line)
+	for i := 0; i < 3; i++ {
+		want := fmt.Sprintf("/fake/ref%d.go", i)
+		if !strings.Contains(out, want) {
+			t.Errorf("expected %q in output, got: %q", want, out)
 		}
 	}
 }
@@ -131,12 +130,12 @@ func TestLSP_Symbols_FormattedTable(t *testing.T) {
 	if len(lines) != 2 {
 		t.Errorf("expected 2 symbol lines, got %d:\n%s", len(lines), out)
 	}
-	// positions: Foo at selectionRange line 4 (0-based) → 5:1, Bar at 9 → 10:1
-	if !strings.Contains(out, "(5:1)") {
-		t.Errorf("expected Foo at (5:1), got: %q", out)
+	// After LSP enhancements: hierarchical format uses (line N) instead of (N:M)
+	if !strings.Contains(out, "(line 5)") {
+		t.Errorf("expected Foo at (line 5), got: %q", out)
 	}
-	if !strings.Contains(out, "(10:1)") {
-		t.Errorf("expected Bar at (10:1), got: %q", out)
+	if !strings.Contains(out, "(line 10)") {
+		t.Errorf("expected Bar at (line 10), got: %q", out)
 	}
 }
 
@@ -209,17 +208,12 @@ func TestLSP_MissingArgs(t *testing.T) {
 // produces an ErrWithSuggestion with an install hint. The launcher is injected
 // directly — no real PATH lookup occurs.
 //
-// This test is NOT parallel because it modifies lspTimeoutSec, a package-level
-// variable. Tests that inject a launcher but don't touch lspTimeoutSec can be
-// parallel with each other; only timeout-mutating tests must be serial.
+// This test is parallel — timeout is now per-Engine, not a package-level variable.
 func TestLSP_MissingServerBinary(t *testing.T) {
-	// Shorten timeout so any accidental hang fails fast (also exercises the
-	// timeout path if the injection were to fail silently).
-	orig := lspTimeoutSec
-	lspTimeoutSec = 2
-	t.Cleanup(func() { lspTimeoutSec = orig })
+	t.Parallel()
 
 	e, dir := testEngine(t)
+	e.LSPTimeoutSec = 2
 	writeLSPFile(t, dir, "src.go")
 
 	notFound := &exec.Error{Name: "gopls", Err: exec.ErrNotFound}
@@ -243,13 +237,12 @@ func TestLSP_MissingServerBinary(t *testing.T) {
 }
 
 // TestLSP_Timeout verifies that lspQueryWithLauncher returns a timeout error
-// when the server never responds. This test is also serial (mutates lspTimeoutSec).
+// when the server never responds.
 func TestLSP_Timeout(t *testing.T) {
-	orig := lspTimeoutSec
-	lspTimeoutSec = 1
-	t.Cleanup(func() { lspTimeoutSec = orig })
+	t.Parallel()
 
 	e, dir := testEngine(t)
+	e.LSPTimeoutSec = 1
 	writeLSPFile(t, dir, "src.go")
 
 	_, err := e.lspQueryWithLauncher(lspArgs(

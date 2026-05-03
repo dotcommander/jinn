@@ -261,14 +261,16 @@ const Schema = `[
     "type": "function",
     "function": {
       "name": "lsp_query",
-      "description": "Query a language server (gopls, rust-analyzer, pylsp, typescript-language-server) for semantic info at a source location. Auto-detects the right server from file extension.",
+      "description": "Query a language server for semantic info. Supports: gopls (.go), rust-analyzer (.rs), pylsp (.py), typescript-language-server (.ts/.tsx/.js/.jsx), clangd (.c/.h/.cpp/.cc/.cxx/.hpp), jdtls (.java), lua-language-server (.lua), zls (.zig). Auto-detects from file extension.",
       "parameters": {
         "type": "object",
         "properties": {
-          "action":    {"type": "string", "enum": ["definition", "references", "hover", "symbols"], "description": "Query type."},
+          "action":    {"type": "string", "enum": ["definition", "references", "hover", "symbols", "rename"], "description": "Query type. rename returns a preview of changes (does not apply them)."},
           "path":      {"type": "string", "description": "Path to source file, relative to workDir."},
-          "line":      {"type": "integer", "description": "1-based line number. Required for definition/references/hover."},
-          "character": {"type": "integer", "description": "1-based character offset within the line. Required for definition/references/hover."}
+          "line":      {"type": "integer", "description": "1-based line number. Required for definition/references/hover/rename."},
+          "character": {"type": "integer", "description": "1-based character offset within the line. Required for definition/references/hover/rename unless symbol is provided."},
+          "symbol":    {"type": "string", "description": "Symbol name to find on the line. When provided and character is absent, auto-detects the column by searching for this string on the given line."},
+          "new_name":  {"type": "string", "description": "New name for the symbol. Required when action is rename."}
         },
         "required": ["action", "path"]
       }
@@ -315,7 +317,7 @@ var toolFeatures = map[string][]string{
 	"list_dir":      {"changed_since"},
 	"checksum_tree": {"baseline_diff"},
 	"diff_files":    {"context_lines"},
-	"lsp_query":     {"definition", "references", "hover", "symbols"},
+	"lsp_query":     {"definition", "references", "hover", "symbols", "rename", "symbol_column", "context_lines"},
 }
 
 // Request is the one-shot tool invocation envelope.

@@ -15,9 +15,10 @@ type Engine struct {
 	workDir string
 	version string     // ldflags-injected version ("dev" when un-set)
 	tracker *fileTracker
-	rgPath  string     // path to rg binary, empty if unavailable
-	fdPath  string     // path to fd binary, empty if unavailable
-	memMu   sync.Mutex // guards memory file reads and writes
+	rgPath        string     // path to rg binary, empty if unavailable
+	fdPath        string     // path to fd binary, empty if unavailable
+	LSPTimeoutSec int        // per-query LSP timeout; 0 uses default (10s)
+	memMu         sync.Mutex // guards memory file reads and writes
 }
 
 // New creates an Engine rooted at the given working directory.
@@ -29,7 +30,7 @@ func New(workDir string, version string) *Engine {
 	}
 	rgPath, _ := exec.LookPath("rg")
 	fdPath, _ := exec.LookPath("fd")
-	return &Engine{workDir: workDir, version: version, tracker: newFileTracker(), rgPath: rgPath, fdPath: fdPath}
+	return &Engine{workDir: workDir, version: version, tracker: newFileTracker(), rgPath: rgPath, fdPath: fdPath, LSPTimeoutSec: 10}
 }
 
 // ToolResult is the structured output of a tool handler.
