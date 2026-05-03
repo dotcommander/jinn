@@ -27,6 +27,7 @@ Thumbs.db
 
 # Scratch
 .work/
+.dc/
 
 # Generated
 repomix-output.md
