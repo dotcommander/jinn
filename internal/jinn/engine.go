@@ -2,6 +2,7 @@ package jinn
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os/exec"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 // Engine is a sandboxed tool executor bound to a working directory.
 type Engine struct {
 	workDir string
+	version string     // ldflags-injected version ("dev" when un-set)
 	tracker *fileTracker
 	rgPath  string     // path to rg binary, empty if unavailable
 	fdPath  string     // path to fd binary, empty if unavailable
@@ -21,13 +23,13 @@ type Engine struct {
 // New creates an Engine rooted at the given working directory.
 // The workDir is resolved via EvalSymlinks so that path boundary checks
 // work correctly on platforms where temp dirs are symlinks (e.g., macOS).
-func New(workDir string) *Engine {
+func New(workDir string, version string) *Engine {
 	if resolved, err := filepath.EvalSymlinks(workDir); err == nil {
 		workDir = resolved
 	}
 	rgPath, _ := exec.LookPath("rg")
 	fdPath, _ := exec.LookPath("fd")
-	return &Engine{workDir: workDir, tracker: newFileTracker(), rgPath: rgPath, fdPath: fdPath}
+	return &Engine{workDir: workDir, version: version, tracker: newFileTracker(), rgPath: rgPath, fdPath: fdPath}
 }
 
 // ToolResult is the structured output of a tool handler.
@@ -71,6 +73,9 @@ func (e *Engine) Dispatch(ctx context.Context, tool string, args map[string]inte
 	case "apply_patch":
 		result, err := e.applyPatch(args)
 		return result, nil, err
+	case "diff_files":
+		result, err := e.diffFiles(args)
+		return result, nil, err
 	case "search_files":
 		result, err := e.searchFiles(args)
 		return textResult(result), nil, err
@@ -84,7 +89,22 @@ func (e *Engine) Dispatch(ctx context.Context, tool string, args map[string]inte
 		result, err := e.findFiles(args)
 		return textResult(result), nil, err
 	case "list_tools":
-		return textResult(Schema), nil, nil
+		tools := []string{
+			"run_shell", "read_file", "write_file", "edit_file", "multi_edit",
+			"apply_patch", "diff_files", "search_files", "stat_file", "list_dir",
+			"find_files", "list_tools", "checksum_tree", "detect_project",
+			"memory", "undo", "lsp_query",
+		}
+		caps := ToolCapabilities{
+			JinnVersion: ResolveVersion(e.version),
+			Tools:       tools,
+			Features:    toolFeatures,
+		}
+		capsJSON, err := json.Marshal(caps)
+		if err != nil {
+			return nil, nil, fmt.Errorf("marshal capabilities: %w", err)
+		}
+		return textResult(string(capsJSON) + "\n\n" + Schema), nil, nil
 	case "checksum_tree":
 		result, err := e.checksumTree(args)
 		return textResult(result), nil, err

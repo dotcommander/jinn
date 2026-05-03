@@ -17,7 +17,7 @@ func testEngine(t *testing.T) (*Engine, string) {
 	if real, err := filepath.EvalSymlinks(dir); err == nil {
 		dir = real
 	}
-	return New(dir), dir
+	return New(dir, "dev"), dir
 }
 
 func args(kv ...any) map[string]interface{} {

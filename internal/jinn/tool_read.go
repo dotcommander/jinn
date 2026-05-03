@@ -1,7 +1,9 @@
 package jinn
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
@@ -29,9 +31,14 @@ func (e *Engine) readFile(args map[string]interface{}) (*ToolResult, error) {
 			return nil, &ErrWithSuggestion{
 				Err:        fmt.Errorf("blocked: %w", sErr.Err),
 				Suggestion: sErr.Suggestion,
+				Code:       ErrCodePathOutsideSandbox,
 			}
 		}
-		return nil, fmt.Errorf("blocked: %w", err)
+		return nil, &ErrWithSuggestion{
+			Err:        fmt.Errorf("blocked: %w", err),
+			Suggestion: "path is blocked by sandbox policy; supply a path inside the workdir",
+			Code:       ErrCodePathOutsideSandbox,
+		}
 	}
 
 	info, err := os.Stat(resolved)
@@ -40,12 +47,14 @@ func (e *Engine) readFile(args map[string]interface{}) (*ToolResult, error) {
 			return nil, &ErrWithSuggestion{
 				Err:        fmt.Errorf("file not found: %s", path),
 				Suggestion: "verify the path exists with list_dir on the parent, or check for typos",
+				Code:       ErrCodeFileNotFound,
 			}
 		}
 		if os.IsPermission(err) {
 			return nil, &ErrWithSuggestion{
 				Err:        fmt.Errorf("permission denied: %s", path),
 				Suggestion: "file is not readable by the sandbox; check ownership or choose a different file",
+				Code:       ErrCodePermissionDenied,
 			}
 		}
 		return nil, err
@@ -54,12 +63,14 @@ func (e *Engine) readFile(args map[string]interface{}) (*ToolResult, error) {
 		return nil, &ErrWithSuggestion{
 			Err:        fmt.Errorf("not a regular file: %s", path),
 			Suggestion: "target a regular file, not a directory — use list_dir to enumerate entries",
+			Code:       ErrCodeInvalidArgs,
 		}
 	}
 	if info.Size() > maxFileSize {
 		return nil, &ErrWithSuggestion{
 			Err:        fmt.Errorf("file too large: %d MB (max 50 MB)", info.Size()>>20),
 			Suggestion: "file is too large to read in one shot; use start_line/end_line to window, or search_files for a pattern",
+			Code:       ErrCodeFileTooLarge,
 		}
 	}
 
@@ -69,12 +80,20 @@ func (e *Engine) readFile(args map[string]interface{}) (*ToolResult, error) {
 			return nil, &ErrWithSuggestion{
 				Err:        fmt.Errorf("permission denied: %s", path),
 				Suggestion: "file is not readable by the sandbox; check ownership or choose a different file",
+				Code:       ErrCodePermissionDenied,
 			}
 		}
 		return nil, err
 	}
 
 	e.tracker.record(resolved, info.ModTime())
+
+	includeChecksum, _ := args["include_checksum"].(bool)
+	var checksum string
+	if includeChecksum {
+		h := sha256.Sum256(data)
+		checksum = hex.EncodeToString(h[:])
+	}
 
 	ext := strings.ToLower(filepath.Ext(resolved))
 
@@ -91,6 +110,7 @@ func (e *Engine) readFile(args map[string]interface{}) (*ToolResult, error) {
 		return nil, &ErrWithSuggestion{
 			Err:        fmt.Errorf("pdf extraction not supported in zero-dep mode"),
 			Suggestion: "convert the PDF to text first (pdftotext, pdftk, or a cloud OCR service) and read the text file",
+			Code:       ErrCodeBinaryFile,
 		}
 	}
 
@@ -105,13 +125,13 @@ func (e *Engine) readFile(args map[string]interface{}) (*ToolResult, error) {
 			mime = "image/svg+xml"
 		}
 		encoded := base64.StdEncoding.EncodeToString(data)
-		return &ToolResult{
+		return withChecksum(&ToolResult{
 			Content: []ContentBlock{{
 				Type:     "image",
 				Data:     encoded,
 				MimeType: mime,
 			}},
-		}, nil
+		}, checksum), nil
 	}
 
 	check := data
@@ -121,7 +141,7 @@ func (e *Engine) readFile(args map[string]interface{}) (*ToolResult, error) {
 	// Binary detection: return a plain result (not an error) with a suggestion
 	// appended for LLM guidance — preserves backward compatibility.
 	if strings.ContainsRune(string(check), 0) {
-		return textResult(fmt.Sprintf("[binary file: %d bytes — use checksum_tree for integrity or skip content reads]", len(data))), nil
+		return withChecksum(textResult(fmt.Sprintf("[binary file: %d bytes — use checksum_tree for integrity or skip content reads]", len(data))), checksum), nil
 	}
 
 	tail := 0
@@ -142,6 +162,7 @@ func (e *Engine) readFile(args map[string]interface{}) (*ToolResult, error) {
 		return nil, &ErrWithSuggestion{
 			Err:        fmt.Errorf("invalid truncate value %q", truncateMode),
 			Suggestion: `valid values are "head" (default), "tail", "middle", "none"`,
+			Code:       ErrCodeInvalidArgs,
 		}
 	}
 
@@ -184,6 +205,7 @@ func (e *Engine) readFile(args map[string]interface{}) (*ToolResult, error) {
 		return nil, &ErrWithSuggestion{
 			Err:        fmt.Errorf("file has %d lines, start_line %d is past end", total, startLine),
 			Suggestion: fmt.Sprintf("requested window starts beyond file length (%d lines); reduce start_line", total),
+			Code:       ErrCodeInvalidArgs,
 		}
 	}
 	if endLine > total {
@@ -209,10 +231,10 @@ func (e *Engine) readFile(args map[string]interface{}) (*ToolResult, error) {
 	// the byte-cap loop below would keep nothing. Return a hint instead.
 	if startLine <= total && len(lines[startLine-1]) > readMaxBytes {
 		srcLineLen := len(lines[startLine-1])
-		return textResult(fmt.Sprintf(
+		return withChecksum(textResult(fmt.Sprintf(
 			"[Line %d is %d KB, exceeds 50 KB limit. Use run_shell: sed -n '%dp' %s | head -c 50000]",
 			startLine, srcLineLen/1024, startLine, path,
-		)), nil
+		)), checksum), nil
 	}
 
 	// Apply truncation strategy if windowed chunk exceeds the line limit.
@@ -277,7 +299,7 @@ func (e *Engine) readFile(args map[string]interface{}) (*ToolResult, error) {
 		}
 		hint += "]"
 
-		return &ToolResult{
+		return withChecksum(&ToolResult{
 			Text: strings.Join(kept, "\n") + "\n" + hint,
 			Meta: map[string]any{
 				"truncation": truncationInfo{
@@ -286,7 +308,7 @@ func (e *Engine) readFile(args map[string]interface{}) (*ToolResult, error) {
 					OutputLines: len(kept),
 				},
 			},
-		}, nil
+		}, checksum), nil
 	}
 
 	// Determine if the file itself is longer than the window requested.
@@ -313,7 +335,7 @@ func (e *Engine) readFile(args map[string]interface{}) (*ToolResult, error) {
 		if !tr.Truncated {
 			totalShown = endLine - startLine + 1
 		}
-		return &ToolResult{
+		return withChecksum(&ToolResult{
 			Text: result,
 			Meta: map[string]any{
 				"truncation": truncationInfo{
@@ -322,10 +344,23 @@ func (e *Engine) readFile(args map[string]interface{}) (*ToolResult, error) {
 					OutputLines: totalShown,
 				},
 			},
-		}, nil
+		}, checksum), nil
 	}
 
-	return textResult(result), nil
+	return withChecksum(textResult(result), checksum), nil
+}
+
+// withChecksum adds a SHA-256 checksum to a ToolResult's Meta map.
+// If checksum is empty, the result is returned unchanged.
+func withChecksum(tr *ToolResult, checksum string) *ToolResult {
+	if checksum == "" {
+		return tr
+	}
+	if tr.Meta == nil {
+		tr.Meta = map[string]any{}
+	}
+	tr.Meta["sha256"] = checksum
+	return tr
 }
 
 // writeTruncationRemainder writes the lines from startLine onward to a temp file

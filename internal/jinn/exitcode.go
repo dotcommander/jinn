@@ -26,41 +26,79 @@ const (
 type exitEntry struct {
 	class  Classification
 	reason string
+	hint   string
 }
 
 // exitTable maps command basename → exit code → classification entry.
 // Commands absent from the table default to ClassError for non-zero exits.
 var exitTable = map[string]map[int]exitEntry{
 	"grep": {
-		1: {ClassExpectedNonzero, "no matches found (grep exits 1 when the pattern does not match)"},
+		1: {ClassExpectedNonzero, "no matches found (grep exits 1 when the pattern does not match)", ""},
 	},
 	"rg": {
-		1: {ClassExpectedNonzero, "no matches found (rg exits 1 when the pattern does not match)"},
+		1: {ClassExpectedNonzero, "no matches found (rg exits 1 when the pattern does not match)", ""},
 	},
 	"ag": {
-		1: {ClassExpectedNonzero, "no matches found (ag exits 1 when the pattern does not match)"},
+		1: {ClassExpectedNonzero, "no matches found (ag exits 1 when the pattern does not match)", ""},
 	},
 	"diff": {
-		1: {ClassExpectedNonzero, "files differ (diff exits 1 when inputs are not identical)"},
+		1: {ClassExpectedNonzero, "files differ (diff exits 1 when inputs are not identical)", ""},
 	},
 	"cmp": {
-		1: {ClassExpectedNonzero, "files differ (cmp exits 1 when inputs are not identical)"},
+		1: {ClassExpectedNonzero, "files differ (cmp exits 1 when inputs are not identical)", ""},
 	},
 	"test": {
-		1: {ClassExpectedNonzero, "condition is false (test/[ exits 1 for a false expression)"},
+		1: {ClassExpectedNonzero, "condition is false (test/[ exits 1 for a false expression)", ""},
 	},
 	"[": {
-		1: {ClassExpectedNonzero, "condition is false ([ exits 1 for a false expression)"},
+		1: {ClassExpectedNonzero, "condition is false ([ exits 1 for a false expression)", ""},
 	},
 	"curl": {
-		22: {ClassExpectedNonzero, "HTTP error response (curl exits 22 for 4xx/5xx status codes)"},
+		22: {ClassExpectedNonzero, "HTTP error response (curl exits 22 for 4xx/5xx status codes)", ""},
 	},
 	"ssh": {
-		255: {ClassError, "SSH connection or protocol error (exit 255 indicates a connection-level failure)"},
+		255: {ClassError, "SSH connection or protocol error (exit 255 indicates a connection-level failure)", ""},
 	},
 	"timeout": {
-		124: {ClassTimeout, "command exceeded time limit (timeout exits 124 when the child is killed)"},
+		124: {ClassTimeout, "command exceeded time limit (timeout exits 124 when the child is killed)", ""},
 	},
+}
+
+// stderrHints maps common stderr patterns to actionable recovery hints.
+// Matched case-insensitively against the combined stderr output.
+var stderrHints = []struct {
+	pattern string
+	hint    string
+}{
+	{"go: no go.mod file", "run: go mod init <module-path>"},
+	{"command not found", "install the missing command or check PATH"},
+	{"permission denied", "check file permissions or run with appropriate access"},
+	{"No such file or directory", "verify the file path exists"},
+	{"EADDRINUSE", "port is in use -- kill the process or choose a different port"},
+	{"EACCES", "check file permissions or run with appropriate access"},
+	{"npm ERR! peer dep", "run: npm install --legacy-peer-deps"},
+	{"Cannot find module", "run: npm install (or bun install)"},
+	{"ModuleNotFoundError", "run: pip install <missing-module>"},
+	{"cargo: command not found", "install Rust via rustup"},
+	{"go: module", "run: go mod tidy"},
+	{"connection refused", "target service is not running or wrong port"},
+	{"certificate", "check TLS certificates or use --insecure for testing"},
+	{"out of memory", "increase available memory or reduce workload"},
+	{"disk full", "free disk space"},
+	{"too many open files", "increase ulimit: ulimit -n 4096"},
+	{"killed", "process was killed (OOM or signal) -- check system resources"},
+}
+
+// matchStderrHint returns the first matching recovery hint for the given
+// stderr output, or "" if no pattern matches. Matching is case-insensitive.
+func matchStderrHint(stderr string) string {
+	lower := strings.ToLower(stderr)
+	for _, h := range stderrHints {
+		if strings.Contains(lower, strings.ToLower(h.pattern)) {
+			return h.hint
+		}
+	}
+	return ""
 }
 
 // classifyExitCode returns the classification and a human-readable reason for

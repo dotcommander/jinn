@@ -6,7 +6,7 @@ const Schema = `[
     "type": "function",
     "function": {
       "name": "run_shell",
-      "description": "Run a bash command. Returns stdout/stderr truncated to last 2000 lines or 50KB (whichever is hit first). If truncated, full output is saved to a temp file. Prefixed with [exit: N] and a classification field indicating whether a non-zero exit is a semantic signal (expected_nonzero) or a real failure (error).",
+      "description": "Run a bash command. Returns stdout/stderr (separated in meta as 'stdout'/'stderr' fields). Truncated to last 2000 lines or 50KB. Prefixed with [exit: N], classification, and optional [hint: ...] for recovery. Error responses include error_code.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -23,7 +23,7 @@ const Schema = `[
     "type": "function",
     "function": {
       "name": "read_file",
-      "description": "Read file contents with line numbers. Up to 200 lines per call. Use start_line/end_line for large files. On error, a 'suggestion' field provides a one-sentence next-step hint.",
+      "description": "Read file contents with line numbers. Up to 2000 lines per call. Use start_line/end_line for large files. All error responses include error_code and suggestion fields.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -32,7 +32,8 @@ const Schema = `[
           "end_line": {"type": "integer", "description": "last line (default: start_line+1999)"},
           "tail": {"type": "integer", "description": "Read the last N lines of the file. Takes precedence over start_line/end_line. 0 = disabled.", "default": 0},
           "line_numbers": {"type": "boolean", "description": "Include cat-n style line-number prefixes in output (default: true). Set false to receive raw file content with no numbering.", "default": true},
-          "truncate": {"type": "string", "enum": ["head", "tail", "middle", "none"], "description": "Strategy when output exceeds line limit. head=keep first N (default, paginates with start_line). tail=keep last N (logs). middle=keep both ends, elide middle. none=defer to byte cap only.", "default": "head"}
+          "truncate": {"type": "string", "enum": ["head", "tail", "middle", "none"], "description": "Strategy when output exceeds line limit. head=keep first N (default, paginates with start_line). tail=keep last N (logs). middle=keep both ends, elide middle. none=defer to byte cap only.", "default": "head"},
+          "include_checksum": {"type": "boolean", "description": "When true, response meta includes sha256 hex digest of the full file content. Zero extra I/O cost (computed during read).", "default": false}
         },
         "required": ["path"]
       }
@@ -58,7 +59,7 @@ const Schema = `[
     "type": "function",
     "function": {
       "name": "edit_file",
-      "description": "Replace exact text in a file. old_text must appear exactly once. On multi-match failure, the error includes line numbers of all matches (up to 10) so you can add surrounding context to disambiguate. Atomic via temp+rename.",
+      "description": "Replace exact text in a file. old_text must appear exactly once. On failure, error_code indicates the cause (edit_not_found, edit_not_unique, edit_no_change, etc.). Response meta includes matchType ('exact'|'fuzzy'), fuzzyNormalized, firstChangedLine, and lastChangedLine.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -77,7 +78,7 @@ const Schema = `[
     "type": "function",
     "function": {
       "name": "multi_edit",
-      "description": "Apply multiple edits across files atomically. All edits are validated first; if any fail, none are applied. On multi-match failure, line numbers are included in the error.",
+      "description": "Apply multiple edits across files atomically. All edits are validated first (collect-then-report); if any fail, none are applied. Failures include per-edit error details with error_code per edit. Response meta includes matchType and line range.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -95,7 +96,8 @@ const Schema = `[
               },
               "required": ["path", "old_text", "new_text"]
             }
-          }
+          },
+          "dry_run": {"type": "boolean", "description": "Preview all edits without writing. Returns diffs for each edit.", "default": false}
         },
         "required": ["edits"]
       }
@@ -120,7 +122,7 @@ const Schema = `[
     "type": "function",
     "function": {
       "name": "search_files",
-      "description": "Search file contents with grep. Returns file:line:match. Default limit is 500 matches; set max_matches to adjust. When truncated, response includes truncated=true and total_count.",
+      "description": "Search file contents with grep. Returns file:line:match. Default limit is 500 matches. When zero results, response includes zero_match_reason ('invalid_regex', 'path_not_found', 'path_is_empty_dir', or 'pattern_matched_nothing'). Error responses include error_code.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -141,7 +143,7 @@ const Schema = `[
     "type": "function",
     "function": {
       "name": "stat_file",
-      "description": "Get file metadata without reading contents. Returns size, line count, modification time, and type.",
+      "description": "Get file metadata without reading contents. Returns size, line count, modification time, type, encoding (utf-8|binary), line_ending (lf|crlf|mixed), and bom (none|utf-8-bom|utf-16-le|utf-16-be) for regular files.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -155,13 +157,14 @@ const Schema = `[
     "type": "function",
     "function": {
       "name": "list_dir",
-      "description": "List directory contents. Hidden files excluded. Default limit is 500 entries (max 10000); set max_entries to adjust. When truncated, response includes truncated=true and total_count.",
+      "description": "List directory contents (pure Go, no subprocess). Hidden files excluded. Default limit is 500 entries (max 10000). Supports mtime filtering.",
       "parameters": {
         "type": "object",
         "properties": {
           "path": {"type": "string", "description": "directory to list (default: .)"},
           "depth": {"type": "integer", "description": "max depth (default: 3)"},
-          "max_entries": {"type": "integer", "description": "Maximum number of entries to return (default: 500, cap: 10000). When exceeded, response includes truncated=true and total_count.", "default": 500}
+          "max_entries": {"type": "integer", "description": "Maximum number of entries to return (default: 500, cap: 10000). When exceeded, response includes truncated=true and total_count.", "default": 500},
+          "changed_since": {"type": "number", "description": "Unix epoch seconds. Only list entries modified after this timestamp. 0 or absent = no filter.", "default": 0}
         }
       }
     }
@@ -186,7 +189,7 @@ const Schema = `[
     "type": "function",
     "function": {
       "name": "list_tools",
-      "description": "List available tools and their descriptions.",
+      "description": "List available tools with their schemas and capability metadata (jinn_version, tool list, feature flags per tool).",
       "parameters": {
         "type": "object",
         "properties": {}
@@ -197,12 +200,13 @@ const Schema = `[
     "type": "function",
     "function": {
       "name": "checksum_tree",
-      "description": "Compute SHA-256 hashes for a file tree. Returns JSON map of {path: hash}.",
+      "description": "Compute SHA-256 hashes for a file tree. Returns JSON map of {path: hash}. Supports differential mode with baseline comparison.",
       "parameters": {
         "type": "object",
         "properties": {
           "path": {"type": "string", "description": "directory to checksum (default: .)"},
-          "pattern": {"type": "string", "description": "filepath glob filter, e.g. *.go"}
+          "pattern": {"type": "string", "description": "filepath glob filter, e.g. *.go"},
+          "baseline": {"type": "object", "description": "Optional map of {path: sha256} from a previous run. When provided, response includes changed/added/removed arrays and only returns hashes for changed files.", "additionalProperties": {"type": "string"}}
         }
       }
     }
@@ -269,13 +273,56 @@ const Schema = `[
         "required": ["action", "path"]
       }
     }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "diff_files",
+      "description": "Compare two files and return a unified diff. Uses the same diff engine as edit_file preview. Response meta includes is_identical (bool) and first_changed_line (int).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path_a": {"type": "string", "description": "first file path"},
+          "path_b": {"type": "string", "description": "second file path"},
+          "context_lines": {"type": "integer", "description": "lines of context around changes (default: 3)", "default": 3}
+        },
+        "required": ["path_a", "path_b"]
+      }
+    }
   }
 ]`
 
+// ToolCapabilities describes the features available in this jinn version.
+// Returned by the list_tools tool so callers can adapt behavior to
+// what the current build supports (e.g. dry_run, fuzzy_indent, etc.).
+type ToolCapabilities struct {
+	JinnVersion string              `json:"jinn_version"`
+	Tools       []string            `json:"tools"`
+	Features    map[string][]string `json:"features"`
+}
+
+// toolFeatures lists the optional feature flags each tool supports.
+// Callers should check for a feature key in this map rather than
+// hard-coding support assumptions.
+var toolFeatures = map[string][]string{
+	"edit_file":     {"dry_run", "fuzzy_indent", "show_context"},
+	"multi_edit":    {"overlap_detection", "show_context", "dry_run"},
+	"run_shell":     {"risk_classification", "exit_classification", "dry_run", "stdout_stderr_split", "recovery_hints"},
+	"search_files":  {"literal", "context_lines", "format_json", "case_insensitive", "zero_match_reason"},
+	"read_file":     {"truncate_strategy", "include_checksum", "tail"},
+	"write_file":    {"dry_run"},
+	"stat_file":     {"encoding_detection", "line_ending_detection", "bom_detection"},
+	"list_dir":      {"changed_since"},
+	"checksum_tree": {"baseline_diff"},
+	"diff_files":    {"context_lines"},
+	"lsp_query":     {"definition", "references", "hover", "symbols"},
+}
+
 // Request is the one-shot tool invocation envelope.
 type Request struct {
-	Tool string                 `json:"tool"`
-	Args map[string]interface{} `json:"args"`
+	Tool      string                 `json:"tool"`
+	Args      map[string]interface{} `json:"args"`
+	RequestID string                 `json:"request_id,omitempty"`
 }
 
 // ContentBlock represents a typed piece of content in a tool response (text or image).
@@ -296,4 +343,6 @@ type Response struct {
 	Suggestion     string         `json:"suggestion,omitempty"`
 	Classification string         `json:"classification,omitempty"` // exit-code class: "success", "expected_nonzero", "error", "timeout", "signal"
 	Risk           string         `json:"risk,omitempty"`           // pre-execution risk: "safe", "caution", "dangerous" — only set by run_shell
+	ErrorCode      string         `json:"error_code,omitempty"`
+	RequestID      string         `json:"request_id,omitempty"`
 }

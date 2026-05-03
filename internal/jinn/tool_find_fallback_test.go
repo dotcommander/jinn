@@ -16,7 +16,7 @@ func TestFindViaFind_BasicGlob(t *testing.T) {
 	writeTestFile(t, dir, "b.go", "package main")
 	writeTestFile(t, dir, "c.ts", "export {}")
 
-	e := New(dir) // real engine but we call findViaFind directly
+	e := New(dir, "dev") // real engine but we call findViaFind directly
 	raw, backend := e.findViaFind("*.go", ".")
 	if backend != "find" {
 		t.Errorf("backend = %q, want 'find'", backend)
@@ -37,7 +37,7 @@ func TestFindViaFind_SlashPatternUsesPathFlag(t *testing.T) {
 	writeTestFile(t, dir, "cmd/main.go", "package main")
 	writeTestFile(t, dir, "pkg/lib.go", "package lib")
 
-	e := New(dir)
+	e := New(dir, "dev")
 	// "*/cmd/*.go" — a -path pattern that matches files under any "cmd" dir.
 	raw, _ := e.findViaFind("*/cmd/*.go", ".")
 	if !strings.Contains(raw, "main.go") {
@@ -53,7 +53,7 @@ func TestFindViaFind_NoMatch(t *testing.T) {
 	_, dir := testEngine(t)
 	writeTestFile(t, dir, "foo.go", "package main")
 
-	e := New(dir)
+	e := New(dir, "dev")
 	raw, backend := e.findViaFind("*.xyz", ".")
 	if backend != "find" {
 		t.Errorf("backend = %q, want 'find'", backend)
@@ -69,7 +69,7 @@ func TestFindFiles_FallbackToFind(t *testing.T) {
 	writeTestFile(t, dir, "main.go", "package main")
 
 	// Engine with fdPath cleared to force the find fallback.
-	e := New(dir)
+	e := New(dir, "dev")
 	e.fdPath = ""
 
 	result, err := e.findFiles(args("pattern", "*.go"))
@@ -90,7 +90,7 @@ func TestFindFiles_FallbackToFind_NoMatch(t *testing.T) {
 	_, dir := testEngine(t)
 	writeTestFile(t, dir, "main.go", "package main")
 
-	e := New(dir)
+	e := New(dir, "dev")
 	e.fdPath = ""
 
 	result, err := e.findFiles(args("pattern", "*.xyz"))
@@ -113,7 +113,7 @@ func TestFindFiles_FallbackToFind_Truncation(t *testing.T) {
 		writeTestFile(t, dir, "file_"+string(rune('a'+i))+".txt", "x")
 	}
 
-	e := New(dir)
+	e := New(dir, "dev")
 	e.fdPath = ""
 
 	// limit=3 with 5 matching files → truncated

@@ -6,10 +6,23 @@ import (
 	"strings"
 )
 
+// editStatus records per-edit validation result for collect-then-report.
+type editStatus struct {
+	File      string `json:"file"`
+	EditIndex int    `json:"edit_index"`
+	Status    string `json:"status"`
+	ErrorCode string `json:"error_code,omitempty"`
+	Error     string `json:"error,omitempty"`
+}
+
 func (e *Engine) multiEdit(args map[string]interface{}) (*ToolResult, error) {
 	editsRaw, ok := args["edits"].([]interface{})
 	if !ok || len(editsRaw) == 0 {
-		return nil, fmt.Errorf("edits must be a non-empty array")
+		return nil, &ErrWithSuggestion{
+			Err:        fmt.Errorf("edits must be a non-empty array"),
+			Suggestion: "provide a JSON array of edit objects, each with path, old_text, and new_text",
+			Code:       ErrCodeInvalidArgs,
+		}
 	}
 
 	type pendingEdit struct {
@@ -70,6 +83,7 @@ func (e *Engine) multiEdit(args map[string]interface{}) (*ToolResult, error) {
 			return nil, &ErrWithSuggestion{
 				Err:        fmt.Errorf("edits[%d]: old_text cannot be empty", i),
 				Suggestion: "provide a non-empty string to match — to insert at file start, include the existing first line in old_text and prepend in new_text",
+				Code:       ErrCodeOldTextEmpty,
 			}
 		}
 
@@ -147,6 +161,7 @@ func (e *Engine) multiEdit(args map[string]interface{}) (*ToolResult, error) {
 				return nil, &ErrWithSuggestion{
 					Err:        fmt.Errorf("edits[%d] and edits[%d] target overlapping regions", i, j),
 					Suggestion: "split into separate multi_edit calls, or combine into a single edit covering the full region",
+					Code:       ErrCodeEditOverlap,
 				}
 			}
 		}
@@ -157,6 +172,7 @@ func (e *Engine) multiEdit(args map[string]interface{}) (*ToolResult, error) {
 	// edits to the same file build on each other instead of overwriting.
 	accumulatedContent := make(map[string]string)
 	var edits []pendingEdit
+	var statuses []editStatus
 
 	for _, re := range rawEntries {
 		var data []byte
@@ -168,14 +184,25 @@ func (e *Engine) multiEdit(args map[string]interface{}) (*ToolResult, error) {
 
 		updated, fuzzy, info, err := applyEdit(data, re.oldText, re.newText, re.fuzzyIndent)
 		if err != nil {
-			return nil, fmt.Errorf("edit[%d] %s: %w", re.idx, re.path, err)
+			statuses = append(statuses, editStatus{
+				File:      re.path,
+				EditIndex: re.idx,
+				Status:    "error",
+				ErrorCode: ErrCodeEditNotFound,
+				Error:     err.Error(),
+			})
+			continue
 		}
 
 		if updated == string(data) {
-			return nil, &ErrWithSuggestion{
-				Err:        fmt.Errorf("edits[%d] %s: edit produced no changes", re.idx, re.path),
-				Suggestion: "old_text and new_text are equivalent (possibly after fuzzy normalization) — verify the intended change",
-			}
+			statuses = append(statuses, editStatus{
+				File:      re.path,
+				EditIndex: re.idx,
+				Status:    "error",
+				ErrorCode: ErrCodeEditNoChange,
+				Error:     fmt.Sprintf("edits[%d] %s: edit produced no changes", re.idx, re.path),
+			})
+			continue
 		}
 
 		accumulatedContent[re.resolved] = updated
@@ -191,6 +218,33 @@ func (e *Engine) multiEdit(args map[string]interface{}) (*ToolResult, error) {
 			showContext: re.showContext,
 			preContent:  data,
 		})
+	}
+
+	// If any edits failed validation, return collected statuses.
+	if len(statuses) > 0 {
+		var errMsgs []string
+		for _, s := range statuses {
+			errMsgs = append(errMsgs, fmt.Sprintf("  edits[%d] %s: %s", s.EditIndex, s.File, s.Error))
+		}
+		return nil, &ErrWithSuggestion{
+			Err:        fmt.Errorf("%d of %d edits failed validation:\n%s", len(statuses), len(rawEntries), strings.Join(errMsgs, "\n")),
+			Suggestion: "fix the reported edit(s) and retry — other edits in the batch were skipped",
+			Code:       ErrCodeEditNotFound,
+		}
+	}
+
+	// dry_run: return previews without writing.
+	if dryRun, ok := args["dry_run"].(bool); ok && dryRun {
+		var previews []string
+		for _, ed := range edits {
+			dr := generateEditDiff(string(ed.preContent), ed.updated, ed.path, ed.matchInfo, ed.oldText, ed.newText, 3)
+			if dr.Diff != "" {
+				previews = append(previews, dr.Diff)
+			}
+		}
+		return &ToolResult{
+			Text: fmt.Sprintf("[dry-run] %d edits validated:\n%s", len(edits), strings.Join(previews, "\n")),
+		}, nil
 	}
 
 	// Phase 2: apply all edits atomically.
@@ -225,10 +279,30 @@ func (e *Engine) multiEdit(args map[string]interface{}) (*ToolResult, error) {
 		}
 	}
 
+	// Build aggregate editDetails from all edits.
+	var lastLine int
+	var matchType string
+	var fuzzyNormalized string
+	for _, ed := range edits {
+		newLineCount := strings.Count(ed.newText, "\n") + 1
+		if lcl := ed.matchInfo.startLine + newLineCount - 1; lcl > lastLine {
+			lastLine = lcl
+		}
+		if ed.fuzzy {
+			matchType = "fuzzy"
+			fuzzyNormalized = "whitespace_and_quotes"
+		} else if matchType == "" {
+			matchType = "exact"
+		}
+	}
+
 	meta := map[string]any{
 		"edit": editDetails{
 			Diff:             strings.Join(allDiffs, "\n"),
 			FirstChangedLine: firstLine,
+			LastChangedLine:  lastLine,
+			MatchType:        matchType,
+			FuzzyNormalized:  fuzzyNormalized,
 		},
 	}
 

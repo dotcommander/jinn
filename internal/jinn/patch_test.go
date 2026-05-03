@@ -286,7 +286,7 @@ func TestDeriveUpdatedContent_InvalidContext(t *testing.T) {
 func TestApplyPatch_AddFile(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	e := New(dir)
+	e := New(dir, "dev")
 
 	result, err := e.applyPatch(map[string]interface{}{
 		"patch": "*** Begin Patch\n*** Add File: new.txt\n+hello world\n*** End Patch",
@@ -315,7 +315,7 @@ func TestApplyPatch_DeleteFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	e := New(dir)
+	e := New(dir, "dev")
 	result, err := e.applyPatch(map[string]interface{}{
 		"patch": "*** Begin Patch\n*** Delete File: doomed.txt\n*** End Patch",
 	})
@@ -340,7 +340,7 @@ func TestApplyPatch_UpdateFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	e := New(dir)
+	e := New(dir, "dev")
 	patch := `*** Begin Patch
 *** Update File: main.go
 @@ func main() {
@@ -378,7 +378,7 @@ func TestApplyPatch_DryRun(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	e := New(dir)
+	e := New(dir, "dev")
 	patch := `*** Begin Patch
 *** Update File: main.go
 @@ func main() {
@@ -411,7 +411,7 @@ func TestApplyPatch_DryRun(t *testing.T) {
 func TestApplyPatch_DeleteNonExistent(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	e := New(dir)
+	e := New(dir, "dev")
 
 	_, err := e.applyPatch(map[string]interface{}{
 		"patch": "*** Begin Patch\n*** Delete File: ghost.txt\n*** End Patch",
@@ -424,7 +424,7 @@ func TestApplyPatch_DeleteNonExistent(t *testing.T) {
 func TestApplyPatch_UpdateNonExistent(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	e := New(dir)
+	e := New(dir, "dev")
 
 	_, err := e.applyPatch(map[string]interface{}{
 		"patch": "*** Begin Patch\n*** Update File: ghost.txt\n@@ line1\n-old\n+new\n*** End Patch",
@@ -449,7 +449,7 @@ func TestApplyPatch_MixedOperations(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	e := New(dir)
+	e := New(dir, "dev")
 	patch := `*** Begin Patch
 *** Add File: created.txt
 +new file
@@ -497,7 +497,7 @@ func TestApplyPatch_EOFMarker(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	e := New(dir)
+	e := New(dir, "dev")
 	patch := `*** Begin Patch
 *** Update File: test.txt
 @@
@@ -532,7 +532,7 @@ func TestApplyPatch_BOMPreserved(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	e := New(dir)
+	e := New(dir, "dev")
 	patch := `*** Begin Patch
 *** Update File: bom.txt
 @@ line2

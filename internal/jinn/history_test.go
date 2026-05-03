@@ -18,7 +18,7 @@ func historyEngine(t *testing.T) (*Engine, string) {
 func TestHistoryDir_PerWorkdir(t *testing.T) {
 	t.Setenv("JINN_CONFIG_DIR", t.TempDir())
 	e1, _ := testEngine(t)
-	e2 := New(t.TempDir())
+	e2 := New(t.TempDir(), "dev")
 	if e1.historyDir() == e2.historyDir() {
 		t.Error("two engines with different workDirs must use different history dirs")
 	}

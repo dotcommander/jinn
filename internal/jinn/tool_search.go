@@ -2,7 +2,9 @@ package jinn
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"regexp"
 	"strconv"
@@ -23,11 +25,19 @@ func (e *Engine) searchFiles(args map[string]interface{}) (string, error) {
 	literal, _ := args["literal"].(bool)
 
 	if _, err := e.checkPath(searchPath); err != nil {
+		var sug *ErrWithSuggestion
+		if errors.As(err, &sug) && sug.Code == "" {
+			sug.Code = ErrCodePathOutsideSandbox
+		}
 		return "", err
 	}
 	if !literal {
 		if _, err := regexp.Compile(pattern); err != nil {
-			return "", fmt.Errorf("invalid regex: %w", err)
+			return "", &ErrWithSuggestion{
+				Err:        fmt.Errorf("invalid regex: %w", err),
+				Suggestion: "check your regex syntax — use literal:true for fixed-string search",
+				Code:       ErrCodeInvalidRegex,
+			}
 		}
 	}
 
@@ -95,18 +105,33 @@ func (e *Engine) searchFiles(args map[string]interface{}) (string, error) {
 		return parseFilenamesOutput(raw, maxResults), nil
 	}
 
-	// Pass a generous cap to the underlying tool (fetch more than we need so
-	// we can count total); we enforce maxMatches ourselves post-parse.
+	// Pass -m as a safety cap so grep stops scanning extremely large files
+	// early. We use a generous cap (2× default) rather than maxMatches directly
+	// because -m limits per-file matches, and setting it to maxMatches would
+	// break total_count accuracy when all matches reside in a single file.
+	// The post-hoc Go cap is still needed for an accurate total_count.
+	if maxMatches > 0 && maxMatches < searchDefaultMax {
+		safetyCap := searchDefaultMax * 2
+		cmdArgs = append(cmdArgs, "-m", strconv.Itoa(safetyCap))
+	}
 	cmdArgs = append(cmdArgs, "--", pattern, searchPath)
 
-	out := &boundedWriter{limit: 1 << 20}
+	stdout := &boundedWriter{limit: 1 << 20}
+	stderr := &boundedWriter{limit: 1 << 20}
 	c := exec.Command(cmd, cmdArgs...)
 	c.Dir = e.workDir
-	c.Stdout = out
-	c.Stderr = out
-	c.Run()
+	c.Stdout = stdout
+	c.Stderr = stderr
+	runErr := c.Run()
+	exitCode := 0
+	if runErr != nil {
+		var exitErr *exec.ExitError
+		if errors.As(runErr, &exitErr) {
+			exitCode = exitErr.ExitCode()
+		}
+	}
 
-	raw := out.String()
+	raw := stdout.String()
 	if raw != "" {
 		lines := strings.Split(raw, "\n")
 		for i, l := range lines {
@@ -114,18 +139,23 @@ func (e *Engine) searchFiles(args map[string]interface{}) (string, error) {
 		}
 		raw = strings.Join(lines, "\n")
 	}
-	if out.Truncated() {
+	if stdout.Truncated() {
 		raw += "\n[output truncated at 1 MB]"
 	}
 	if maxResults > 0 {
 		raw += fmt.Sprintf("\n(results capped at max_results=%d, more matches may exist)", maxResults)
 	}
 
+	errOutput := stderr.String()
+
 	if format == "json" {
 		shown, total := parseSearchResults(raw, maxMatches)
 		truncated := total > maxMatches
 
 		resp := searchFilesResult{Results: shown, Truncated: truncated, TotalCount: total}
+		if total == 0 {
+			resp.ZeroMatchReason = e.classifyZeroMatch(pattern, searchPath, literal, exitCode, errOutput)
+		}
 		jsonBytes, err := json.Marshal(resp)
 		if err != nil {
 			return "", fmt.Errorf("marshal search results: %w", err)
@@ -155,5 +185,33 @@ func (e *Engine) searchFiles(args map[string]interface{}) (string, error) {
 	if truncated {
 		result += "\n" + formatTruncatedHint(maxMatches, count, "'max_matches' or a more specific pattern")
 	}
+	if count == 0 {
+		reason := e.classifyZeroMatch(pattern, searchPath, literal, exitCode, errOutput)
+		result += "[no matches: " + reason + "]"
+	}
 	return result, nil
+}
+
+// classifyZeroMatch determines why a grep returned zero results.
+func (e *Engine) classifyZeroMatch(pattern, searchPath string, literal bool, exitCode int, stderr string) string {
+	if !literal {
+		if _, err := regexp.Compile(pattern); err != nil {
+			return "invalid_regex"
+		}
+	}
+	resolved, err := e.checkPath(searchPath)
+	if err != nil {
+		return "path_not_found"
+	}
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return "path_not_found"
+	}
+	if info.IsDir() {
+		entries, _ := os.ReadDir(resolved)
+		if len(entries) == 0 {
+			return "path_is_empty_dir"
+		}
+	}
+	return "pattern_matched_nothing"
 }

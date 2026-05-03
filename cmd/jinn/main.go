@@ -59,7 +59,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	e := jinn.New(wd)
+	e := jinn.New(wd, version)
 
 	var req jinn.Request
 	if err := json.NewDecoder(os.Stdin).Decode(&req); err != nil {
@@ -83,11 +83,13 @@ func main() {
 			Error:          err.Error(),
 			Risk:           risk,
 			Classification: classification,
+			RequestID:      req.RequestID,
 		}
-		// Populate suggestion field when the error carries one.
+		// Populate suggestion and error_code fields when the error carries them.
 		var sErr *jinn.ErrWithSuggestion
 		if errors.As(err, &sErr) {
 			resp.Suggestion = sErr.Suggestion
+			resp.ErrorCode = sErr.Code
 		}
 		json.NewEncoder(os.Stdout).Encode(resp)
 		os.Exit(1)
@@ -95,10 +97,11 @@ func main() {
 
 	// Build success response. Risk/Classification are only set by run_shell.
 	resp := jinn.Response{
-		OK:      true,
-		Result:  result.Text,
-		Content: result.Content,
-		Meta:    result.Meta,
+		OK:        true,
+		Result:    result.Text,
+		Content:   result.Content,
+		Meta:      result.Meta,
+		RequestID: req.RequestID,
 	}
 	if meta != nil {
 		resp.Risk = meta["risk"]

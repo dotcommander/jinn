@@ -42,6 +42,7 @@ func (e *Engine) runShell(ctx context.Context, args map[string]interface{}) (str
 			return "", map[string]string{"risk": riskLevel.String()}, &ErrWithSuggestion{
 				Err:        fmt.Errorf("blocked by risk classifier: %s — %s", riskLevel, riskReason),
 				Suggestion: `pass force:true in args to override, or use a less-destructive command`,
+				Code:       ErrCodeCommandBlocked,
 			}
 		}
 	}
@@ -56,10 +57,11 @@ func (e *Engine) runShell(ctx context.Context, args map[string]interface{}) (str
 	c := exec.CommandContext(ctx, "bash", "-c", cmd)
 	c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
-	out := &boundedWriter{limit: 1 << 20} // 1 MB capture buffer
+	outBuf := &boundedWriter{limit: 1 << 20} // 1 MB capture buffer
+	errBuf := &boundedWriter{limit: 1 << 20} // 1 MB capture buffer
 	c.Env = shellEnv()
-	c.Stdout = out
-	c.Stderr = out
+	c.Stdout = outBuf
+	c.Stderr = errBuf
 
 	exitCode := 0
 	timedOut := false
@@ -89,12 +91,12 @@ func (e *Engine) runShell(ctx context.Context, args map[string]interface{}) (str
 	if timedOut {
 		exitCode = 124 // preserves "timed out after N seconds" message below
 	}
-	raw := collapseRepeatedLines(out.String())
+	raw := collapseRepeatedLines(outBuf.String() + errBuf.String())
 
 	// Apply tail truncation with line + byte limits (matching pi conventions).
 	content, trunc := truncateTailDetailed(raw, DefaultMaxLines, DefaultMaxBytes)
 
-	if out.Truncated() || trunc.Truncated {
+	if outBuf.Truncated() || errBuf.Truncated() || trunc.Truncated {
 		if tmp, err := os.CreateTemp("", "jinn-shell-*.log"); err == nil {
 			tmp.WriteString(raw)
 			content += fmt.Sprintf(
@@ -126,9 +128,15 @@ func (e *Engine) runShell(ctx context.Context, args map[string]interface{}) (str
 	output := fmt.Sprintf("[exit: %d]\n%s", exitCode, content)
 	result := fmt.Sprintf("%s\n[classification: %s — %s]", output, class, reason)
 
+	if hint := matchStderrHint(errBuf.String()); hint != "" {
+		result += fmt.Sprintf("\n[hint: %s]", hint)
+	}
+
 	meta := map[string]string{
 		"risk":           riskLevel.String(),
 		"classification": string(class),
+		"stdout":         outBuf.String(),
+		"stderr":         errBuf.String(),
 	}
 	return result, meta, nil
 }

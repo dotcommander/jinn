@@ -18,9 +18,10 @@ type searchResult struct {
 
 // searchFilesResult wraps search output with truncation metadata.
 type searchFilesResult struct {
-	Results    []searchResult `json:"results"`
-	Truncated  bool           `json:"truncated"`
-	TotalCount int            `json:"total_count"`
+	Results         []searchResult `json:"results"`
+	Truncated       bool           `json:"truncated"`
+	TotalCount      int            `json:"total_count"`
+	ZeroMatchReason string         `json:"zero_match_reason,omitempty"`
 }
 
 // parseSearchResults parses grep/rg output into structured results.

@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 )
 
 func (e *Engine) checksumTree(args map[string]interface{}) (string, error) {
@@ -23,10 +24,18 @@ func (e *Engine) checksumTree(args map[string]interface{}) (string, error) {
 
 	info, err := os.Stat(resolved)
 	if err != nil {
-		return "", fmt.Errorf("path not found: %s", treePath)
+		return "", &ErrWithSuggestion{
+			Err:        fmt.Errorf("path not found: %s", treePath),
+			Suggestion: "Verify the path exists and is within the working directory.",
+			Code:       ErrCodeFileNotFound,
+		}
 	}
 	if !info.IsDir() {
-		return "", fmt.Errorf("path is not a directory: %s", treePath)
+		return "", &ErrWithSuggestion{
+			Err:        fmt.Errorf("path is not a directory: %s", treePath),
+			Suggestion: "checksum_tree requires a directory path.",
+			Code:       ErrCodeInvalidArgs,
+		}
 	}
 
 	pattern, _ := args["pattern"].(string)
@@ -65,6 +74,58 @@ func (e *Engine) checksumTree(args map[string]interface{}) (string, error) {
 	})
 	if err != nil {
 		return "", err
+	}
+
+	// Differential baseline mode: compare against provided baseline hashes
+	baseline := make(map[string]string)
+	if b, ok := args["baseline"].(map[string]interface{}); ok {
+		for k, v := range b {
+			if s, ok := v.(string); ok {
+				baseline[k] = s
+			}
+		}
+	}
+
+	if len(baseline) > 0 {
+		var changed, added, removed []string
+		unchangedCount := 0
+		diffHashes := make(map[string]string)
+
+		for path, hash := range hashes {
+			if baseHash, ok := baseline[path]; ok {
+				if hash != baseHash {
+					changed = append(changed, path)
+					diffHashes[path] = hash
+				} else {
+					unchangedCount++
+				}
+			} else {
+				added = append(added, path)
+				diffHashes[path] = hash
+			}
+		}
+		for path := range baseline {
+			if _, ok := hashes[path]; !ok {
+				removed = append(removed, path)
+			}
+		}
+
+		sort.Strings(changed)
+		sort.Strings(added)
+		sort.Strings(removed)
+
+		result := map[string]interface{}{
+			"changed":         changed,
+			"added":           added,
+			"removed":         removed,
+			"unchanged_count": unchangedCount,
+			"hashes":          diffHashes,
+		}
+		data, err := json.Marshal(result)
+		if err != nil {
+			return "", err
+		}
+		return string(data), nil
 	}
 
 	data, err := json.Marshal(hashes)

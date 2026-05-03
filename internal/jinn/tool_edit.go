@@ -10,6 +10,9 @@ import (
 type editDetails struct {
 	Diff             string `json:"diff"`
 	FirstChangedLine int    `json:"firstChangedLine,omitempty"`
+	LastChangedLine  int    `json:"lastChangedLine,omitempty"`
+	MatchType        string `json:"matchType,omitempty"`
+	FuzzyNormalized  string `json:"fuzzyNormalized,omitempty"`
 }
 
 // matchInfo carries metadata about where old_text was found in the file.
@@ -190,6 +193,7 @@ func (e *Engine) editFile(args map[string]interface{}) (*ToolResult, error) {
 		return nil, &ErrWithSuggestion{
 			Err:        fmt.Errorf("old_text cannot be empty"),
 			Suggestion: "provide a non-empty string to match — to insert at file start, include the existing first line in old_text and prepend in new_text",
+			Code:       ErrCodeOldTextEmpty,
 		}
 	}
 
@@ -204,7 +208,11 @@ func (e *Engine) editFile(args map[string]interface{}) (*ToolResult, error) {
 	data, err := os.ReadFile(resolved)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("file not found: %s", path)
+			return nil, &ErrWithSuggestion{
+				Err:        fmt.Errorf("file not found: %s", path),
+				Suggestion: "verify the path exists with list_dir or check for typos",
+				Code:       ErrCodeFileNotFound,
+			}
 		}
 		return nil, err
 	}
@@ -216,9 +224,24 @@ func (e *Engine) editFile(args map[string]interface{}) (*ToolResult, error) {
 			raw = normalizeToLF(raw)
 			lineNum, lineText := closestLine(oldText, raw)
 			if lineNum > 0 {
-				return nil, fmt.Errorf("old_text not found in %s (%d lines). Nearest match at line %d: %q — did you mean this?", path, countLines(raw), lineNum, lineText)
+				return nil, &ErrWithSuggestion{
+					Err:        fmt.Errorf("old_text not found in %s (%d lines). Nearest match at line %d: %q — did you mean this?", path, countLines(raw), lineNum, lineText),
+					Suggestion: "re-read the file to get current content, then retry with exact text",
+					Code:       ErrCodeEditNotFound,
+				}
 			}
-			return nil, fmt.Errorf("old_text not found in %s (%d lines)", path, countLines(raw))
+			return nil, &ErrWithSuggestion{
+				Err:        fmt.Errorf("old_text not found in %s (%d lines)", path, countLines(raw)),
+				Suggestion: "re-read the file to get current content, then retry with exact text",
+				Code:       ErrCodeEditNotFound,
+			}
+		}
+		if strings.Contains(err.Error(), "matches") && strings.Contains(err.Error(), "locations") {
+			return nil, &ErrWithSuggestion{
+				Err:        err,
+				Suggestion: "add more surrounding lines to old_text to disambiguate the match",
+				Code:       ErrCodeEditNotUnique,
+			}
 		}
 		return nil, err
 	}
@@ -227,6 +250,7 @@ func (e *Engine) editFile(args map[string]interface{}) (*ToolResult, error) {
 		return nil, &ErrWithSuggestion{
 			Err:        fmt.Errorf("edit produced no changes"),
 			Suggestion: "old_text and new_text are equivalent (possibly after fuzzy normalization) — verify the intended change",
+			Code:       ErrCodeEditNoChange,
 		}
 	}
 
@@ -234,6 +258,14 @@ func (e *Engine) editFile(args map[string]interface{}) (*ToolResult, error) {
 	dr := generateEditDiff(string(data), updated, path, info, oldText, newText, 3)
 
 	if dryRun, ok := args["dry_run"].(bool); ok && dryRun {
+		matchType := "exact"
+		fuzzyNormalized := ""
+		if fuzzy {
+			matchType = "fuzzy"
+			fuzzyNormalized = "whitespace_and_quotes"
+		}
+		newLineCount := strings.Count(newText, "\n") + 1
+
 		preview := formatEditPreview(string(data), updated, path, fuzzy)
 		return &ToolResult{
 			Text: preview,
@@ -241,6 +273,9 @@ func (e *Engine) editFile(args map[string]interface{}) (*ToolResult, error) {
 				"edit": editDetails{
 					Diff:             dr.Diff,
 					FirstChangedLine: info.startLine,
+					LastChangedLine:  info.startLine + newLineCount - 1,
+					MatchType:        matchType,
+					FuzzyNormalized:  fuzzyNormalized,
 				},
 			},
 		}, nil
@@ -265,12 +300,24 @@ func (e *Engine) editFile(args map[string]interface{}) (*ToolResult, error) {
 		}
 	}
 
+	matchType := "exact"
+	fuzzyNormalized := ""
+	if fuzzy {
+		matchType = "fuzzy"
+		fuzzyNormalized = "whitespace_and_quotes"
+	}
+	newLineCount := strings.Count(newText, "\n") + 1
+	lastChangedLine := info.startLine + newLineCount - 1
+
 	return &ToolResult{
 		Text: result,
 		Meta: map[string]any{
 			"edit": editDetails{
 				Diff:             dr.Diff,
 				FirstChangedLine: info.startLine,
+				LastChangedLine:  lastChangedLine,
+				MatchType:        matchType,
+				FuzzyNormalized:  fuzzyNormalized,
 			},
 		},
 	}, nil
