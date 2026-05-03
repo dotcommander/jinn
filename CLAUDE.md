@@ -10,7 +10,7 @@ jinn is a sandboxed tool executor for AI coding agents. Single binary, zero exte
 
 ```bash
 go build ./cmd/jinn/          # produces ./jinn
-go test -race ./...            # 570 tests
+go test -race ./...            # 633 tests
 go install github.com/dotcommander/jinn@latest
 jinn --schema                  # emit tool definitions as JSON
 jinn --version                 # version from ldflags or VCS info
@@ -29,7 +29,7 @@ No linter config, no Makefile — intentionally minimal.
 | `edit_file` | old_text/new_text replacement, uniqueness enforcement, empty `old_text` guard, no-op guard, fuzzy fallback, `fuzzy_indent` re-indentation, `dry_run` preview, CRLF/BOM preservation |
 | `multi_edit` | Array of edits across files — validates all first (empty `old_text` guard, no-op guard, overlap detection), applies atomically, same fuzzy/CRLF/BOM as edit_file |
 | `apply_patch` | Codex-style patch format (`*** Begin Patch … *** End Patch`); supports add/delete/update-file operations |
-| `search_files` | Grep with `--exclude-dir`, regex validation, `literal` flag for fixed-string matching, per-line truncation, `format:"json"` for structured results |
+| `search_files` | Grep/ripgrep search with regex validation, literal flag, include glob filter, context_lines, case_insensitive, max_matches (default 500), three formats (text/json/filenames), zero_match_reason diagnostics |
 | `stat_file` | File metadata (size/lines/mtime/type) without reading content |
 | `list_dir` | Recursive find with depth control, hidden files excluded, directories suffixed with `/` |
 | `find_files` | Glob-pattern file search; uses `fd` when available (respects `.gitignore`), falls back to POSIX `find` |
@@ -44,21 +44,25 @@ No linter config, no Makefile — intentionally minimal.
 ## Architecture
 
 ```
-cmd/jinn/main.go                # ~50 lines: flags, signal, JSON I/O, wires to Engine
+cmd/jinn/main.go                # ~110 lines: flags, signal, TTY detection, JSON I/O, wires to Engine
 internal/jinn/
+  command_risk.go                # RiskLevel type, riskTable, ClassifyCommand — command risk classifier for run_shell
+  command_risk_parse.go          # splitOnOperators, containsSubshell, firstVerb — bash syntax parsing for risk classifier
   engine.go                      # Engine struct, New(workDir), Dispatch(), ResolveVersion()
+  lsp_client.go                  # lspClient, lspLauncher — LSP JSON-RPC wire protocol, session lifecycle, result formatting
   schema.go                      # Schema const (OpenAI function-calling JSON) + Request/Response types
+  search_parse.go                # searchResult, parseSearchResults, parseFilenamesOutput — structured grep output parsers
   security.go                    # (e) resolvePath (~/ expansion + sandbox check), checkPath, sensitiveSegments
   tracker.go                     # fileTracker struct — records mtime on read, blocks stale writes
-  normalize.go                   # stripBom, detectLineEnding, normalizeToLF, fuzzy match, shellescape
-  output.go                      # truncateOutput, truncateTail, boundedWriter, collapseRepeatedLines, truncateLine
+  normalize.go                   # stripBom, detectLineEnding, normalizeToLF, restoreLineEndings, fuzzy match, closestLine
+  output.go                      # truncateOutput, truncateTail, boundedWriter, collapseRepeatedLines, collapseBlankLines, truncateLine
   tool_shell.go                  # (e) runShell — Setpgid process-group kill, scrubbed env
   tool_read.go                   # (e) readFile + maxFileSize; line_numbers, tail, truncate strategy, content-based MIME detection, writeTruncationRemainder
   tool_write.go                  # (e) writeFile
   tool_edit.go                   # (e) editFile — exact + fuzzy, empty/no-op guards, CRLF/BOM preservation
   tool_multi_edit.go             # (e) multiEdit — validate-all-then-apply, overlap detection, empty/no-op guards
   tool_patch.go                  # (e) applyPatch — Codex-style patch format
-  tool_search.go                 # (e) searchFiles + grepExcludeDirs; literal flag
+  tool_search.go                 # (e) searchFiles — rg/grep backend, three output formats, classifyZeroMatch
   tool_stat.go                   # (e) statFile
   tool_list.go                   # (e) listDir — directory "/" suffix
   tool_find.go                   # (e) findFiles — fd/find glob search
@@ -68,8 +72,7 @@ internal/jinn/
   tool_undo.go                   # (e) undo — snapshot list/preview/restore/clear
   tool_diff.go                    # (e) diffFiles — unified diff between two files
   tool_lsp.go                    # (e) lspQuery — 8 language servers, symbol auto-detect, rename preview
-  errors.go                      # error code constants (ErrCodeNotFound, ErrCodeFileTooLarge, etc.)
-  errctx.go                      # ErrWithSuggestion type — structured errors with codes and hints
+  errors.go                      # error code constants + ErrWithSuggestion type (structured errors with codes and hints)
   diff.go                        # unifiedDiff, formatEditPreview
 ```
 
