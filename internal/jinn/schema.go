@@ -340,7 +340,7 @@ type ToolCapabilities struct {
 var toolFeatures = map[string][]string{
 	"edit_file":     {"dry_run", "fuzzy_indent", "show_context"},
 	"multi_edit":    {"overlap_detection", "show_context", "dry_run"},
-	"run_shell":     {"risk_classification", "exit_classification", "dry_run", "stdout_stderr_split", "recovery_hints"},
+	"run_shell":     {"risk_classification", "exit_classification", "dry_run", "stdout_stderr_split", "recovery_hints", "compress_output"},
 	"search_files":  {"literal", "context_lines", "format_json", "case_insensitive", "zero_match_reason"},
 	"read_file":     {"truncate_strategy", "include_checksum", "tail"},
 	"multi_read":    {"per_file_windowing", "partial_success"},
@@ -356,6 +356,7 @@ var toolFeatures = map[string][]string{
 type Request struct {
 	Tool      string                 `json:"tool"`
 	Args      map[string]interface{} `json:"args"`
+	Compress  bool                   `json:"compress,omitempty"`
 	RequestID string                 `json:"request_id,omitempty"`
 }
 
