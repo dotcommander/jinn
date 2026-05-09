@@ -60,6 +60,7 @@ func main() {
 	}
 
 	e := jinn.New(wd, version)
+	var compressor *jinn.Compressor
 
 	var req jinn.Request
 	if err := json.NewDecoder(os.Stdin).Decode(&req); err != nil {
@@ -93,6 +94,22 @@ func main() {
 		}
 		json.NewEncoder(os.Stdout).Encode(resp)
 		os.Exit(1)
+	}
+
+	// Apply output compression when requested.
+	var compressMeta jinn.CompressionMeta
+	if req.Compress && result.Text != "" {
+		if compressor == nil {
+			compressor = jinn.NewCompressor()
+		}
+		result.Text, compressMeta = compressor.Compress(result.Text, req.Tool)
+		// Merge compression metadata into result.Meta.
+		if len(compressMeta.Strategies) > 0 {
+			if result.Meta == nil {
+				result.Meta = make(map[string]any)
+			}
+			result.Meta["compression"] = compressMeta
+		}
 	}
 
 	// Build success response. Risk/Classification are only set by run_shell.
