@@ -55,6 +55,8 @@ internal/jinn/
   security.go                    # (e) resolvePath (~/ expansion + sandbox check), checkPath, sensitiveSegments
   tracker.go                     # fileTracker struct — records mtime on read, blocks stale writes
   normalize.go                   # stripBom, detectLineEnding, normalizeToLF, restoreLineEndings, fuzzy match, closestLine
+  compress.go                    # Compressor, Strategy chain (path_prefix_dedup, hash_abbrev, test_result, build_output, git_status); run_shell auto-compresses pre-framing
+  compress_shell.go              # compressShellOutput, lastSegmentVerb, lastSegmentArgs, collapseColumnPadding, condenseGitLog — command-aware pre-processing for run_shell; column-trim for ps/df/ls -l/docker/podman/kubectl/oc tabular subcommands
   output.go                      # truncateOutput, truncateTail, boundedWriter, collapseRepeatedLines, collapseBlankLines, truncateLine
   tool_shell.go                  # (e) runShell — Setpgid process-group kill, scrubbed env
   tool_read.go                   # (e) readFile + maxFileSize; line_numbers, tail, truncate strategy, content-based MIME detection, writeTruncationRemainder
@@ -83,7 +85,7 @@ Key design:
 - **Path security** (`resolvePath`/`checkPath`): Engine methods. `resolvePath` expands `~` and `~/` before joining to workDir. `checkPath` resolves symlinks, checks sensitive segments (`.git/`, `.ssh/`, `.aws/`, `.gnupg/`, `.env*`), and enforces the workDir boundary.
 - **TOCTOU tracker**: Per-engine instance. Records mtime on read, blocks stale writes. No global state.
 - **Text normalization**: Edit tools strip BOM, normalize CRLF→LF for matching, restore after edit. Fuzzy fallback normalizes smart quotes, dashes, spaces when exact match fails.
-- **Output pipeline**: `collapseRepeatedLines` → `boundedWriter` (1 MB cap, spills to temp file) → `truncateTail` (shell) / `truncateOutput`/`truncateOutputHead`/`truncateOutputTail`/`truncateOutputDetailed` (read, driven by `truncate` param).
+- **Output pipeline**: `collapseRepeatedLines` → `boundedWriter` (1 MB cap, spills to temp file) → `truncateTail` (shell) / `truncateOutput`/`truncateOutputHead`/`truncateOutputTail`/`truncateOutputDetailed` (read, driven by `truncate` param). run_shell additionally runs the Compressor (strategy chain in compress.go) on the raw output before adding the [exit:]/[classification:] frame; other tools opt in via the request's compress field. The run_shell path is command-aware (compress_shell.go): it dispatches on the last pipeline segment's verb — collapsing column padding for ps/df/ls -l/docker/kubectl/etc tabular subcommands, condensing `git log` medium-format output to one line per commit, and folding plain `go test ./...` output — before the generic chain.
 - **All tests parallel**: `testEngine(t)` returns isolated `(*Engine, string)` per test. No `os.Chdir`, no global reset.
 
 ## Design Constraints
