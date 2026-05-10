@@ -1,6 +1,6 @@
 # Tool Reference
 
-jinn exposes 16 tools through a JSON-over-stdin/stdout protocol. You call them by piping a request object:
+jinn exposes 17 tools through a JSON-over-stdin/stdout protocol. You call them by piping a request object:
 
 ```bash
 echo '{"tool":"read_file","args":{"path":"main.go"}}' | jinn
@@ -67,6 +67,52 @@ Read the last 5 lines:
 
 ```bash
 echo '{"tool":"read_file","args":{"path":"main.go","tail":5}}' | jinn
+```
+
+### multi_read
+
+Read multiple files in a single call.
+
+```bash
+echo '{"tool":"multi_read","args":{"files":[{"path":"main.go"},{"path":"go.mod"}]}}' | jinn
+```
+
+**Parameters:**
+
+| Name | Type | Required | Default | Description |
+|------|------|----------|---------|-------------|
+| `files` | array | Yes | -- | List of file read requests, 1–20 entries |
+
+Each file entry:
+
+| Name | Type | Required | Default | Description |
+|------|------|----------|---------|-------------|
+| `path` | string | Yes | -- | File path relative to working directory |
+| `start_line` | int | No | `1` | First line to return |
+| `end_line` | int | No | `start_line + 1999` | Last line to return |
+| `tail` | int | No | `0` (disabled) | Return last N lines. Overrides `start_line`/`end_line` |
+| `line_numbers` | bool | No | `true` | Prefix each output line with a right-justified line number |
+| `truncate` | string | No | `"head"` | Truncation strategy: `head`, `tail`, `middle`, or `none` |
+
+**Notes:**
+
+- Returns JSON with three maps: `files` (path→content), `errors` (path→error detail), and `truncation` (path→metadata).
+- **Partial success:** if some files fail, they appear in `errors` while successful reads still return in `files`.
+- Only returns `ok: false` if ALL files fail.
+- Binary/image files are reported in `errors` with `error_code: "binary_file"` — use `read_file` for single-image viewing.
+- Per-file windowing: each file entry supports independent `start_line`/`end_line`/`tail`/`truncate`.
+- Duplicate paths: last entry wins.
+
+Read with per-file windowing:
+
+```bash
+echo '{"tool":"multi_read","args":{"files":[{"path":"main.go","start_line":1,"end_line":10},{"path":"go.mod","tail":5}]}}' | jinn
+```
+
+Mixed success (some files missing):
+
+```bash
+echo '{"tool":"multi_read","args":{"files":[{"path":"main.go"},{"path":"nonexistent.go"}]}}' | jinn
 ```
 
 ### write_file
