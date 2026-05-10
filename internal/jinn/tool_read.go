@@ -20,39 +20,34 @@ const (
 	readTruncLines   = 2000      // head+tail collapse threshold
 )
 
-func (e *Engine) readFile(args map[string]interface{}) (*ToolResult, error) {
-	path, _ := args["path"].(string)
-	resolved, err := e.checkPath(path)
-	if err != nil {
-		// Wrap with "blocked:" prefix for backward compat, preserving any
-		// ErrWithSuggestion so callers can surface the suggestion field.
-		var sErr *ErrWithSuggestion
-		if errors.As(err, &sErr) {
-			return nil, &ErrWithSuggestion{
-				Err:        fmt.Errorf("blocked: %w", sErr.Err),
-				Suggestion: sErr.Suggestion,
-				Code:       ErrCodePathOutsideSandbox,
-			}
-		}
-		return nil, &ErrWithSuggestion{
-			Err:        fmt.Errorf("blocked: %w", err),
-			Suggestion: "path is blocked by sandbox policy; supply a path inside the workdir",
-			Code:       ErrCodePathOutsideSandbox,
-		}
-	}
+// readContentResult holds the output of readFileContent.
+// The caller is responsible for wrapping this into a ToolResult.
+type readContentResult struct {
+	Content     string // processed, line-numbered (and possibly truncated) text
+	TotalLines  int    // total lines in the source file
+	OutputLines int    // lines actually included in Content
+	Truncated   bool   // true if content was truncated in any way
+	ByteHint    string // truncation hint appended after Content (byte or window)
+	TempFile    string // path to spilled remainder file, if any
+}
 
+// readFileContent reads and processes a file's text content. It handles stat
+// checks, reading, PDF/binary detection, line splitting, windowing, and
+// truncation. The caller is responsible for sandbox validation (checkPath),
+// image detection, checksum computation, and ToolResult wrapping.
+func (e *Engine) readFileContent(resolved string, args map[string]interface{}) (*readContentResult, error) {
 	info, err := os.Stat(resolved)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, &ErrWithSuggestion{
-				Err:        fmt.Errorf("file not found: %s", path),
+				Err:        fmt.Errorf("file not found: %s", resolved),
 				Suggestion: "verify the path exists with list_dir on the parent, or check for typos",
 				Code:       ErrCodeFileNotFound,
 			}
 		}
 		if os.IsPermission(err) {
 			return nil, &ErrWithSuggestion{
-				Err:        fmt.Errorf("permission denied: %s", path),
+				Err:        fmt.Errorf("permission denied: %s", resolved),
 				Suggestion: "file is not readable by the sandbox; check ownership or choose a different file",
 				Code:       ErrCodePermissionDenied,
 			}
@@ -61,7 +56,7 @@ func (e *Engine) readFile(args map[string]interface{}) (*ToolResult, error) {
 	}
 	if !info.Mode().IsRegular() {
 		return nil, &ErrWithSuggestion{
-			Err:        fmt.Errorf("not a regular file: %s", path),
+			Err:        fmt.Errorf("not a regular file: %s", resolved),
 			Suggestion: "target a regular file, not a directory — use list_dir to enumerate entries",
 			Code:       ErrCodeInvalidArgs,
 		}
@@ -78,7 +73,7 @@ func (e *Engine) readFile(args map[string]interface{}) (*ToolResult, error) {
 	if err != nil {
 		if os.IsPermission(err) {
 			return nil, &ErrWithSuggestion{
-				Err:        fmt.Errorf("permission denied: %s", path),
+				Err:        fmt.Errorf("permission denied: %s", resolved),
 				Suggestion: "file is not readable by the sandbox; check ownership or choose a different file",
 				Code:       ErrCodePermissionDenied,
 			}
@@ -87,13 +82,6 @@ func (e *Engine) readFile(args map[string]interface{}) (*ToolResult, error) {
 	}
 
 	e.tracker.record(resolved, info.ModTime())
-
-	includeChecksum, _ := args["include_checksum"].(bool)
-	var checksum string
-	if includeChecksum {
-		h := sha256.Sum256(data)
-		checksum = hex.EncodeToString(h[:])
-	}
 
 	ext := strings.ToLower(filepath.Ext(resolved))
 
@@ -104,7 +92,7 @@ func (e *Engine) readFile(args map[string]interface{}) (*ToolResult, error) {
 		detected = strings.TrimSpace(detected[:i])
 	}
 
-	// PDF: reject before image/binary checks — pdftotext is a better tool.
+	// PDF: reject before binary checks — pdftotext is a better tool.
 	// Either the content detector or the extension is sufficient evidence.
 	if detected == "application/pdf" || ext == ".pdf" {
 		return nil, &ErrWithSuggestion{
@@ -114,34 +102,17 @@ func (e *Engine) readFile(args map[string]interface{}) (*ToolResult, error) {
 		}
 	}
 
-	// Image: DetectContentType identifies most raster formats; SVG is XML so it
-	// returns text/xml — fall back to extension for that case.
-	isImage := strings.HasPrefix(detected, "image/") || ext == ".svg"
-	if isImage {
-		var mime string
-		if strings.HasPrefix(detected, "image/") {
-			mime = detected
-		} else {
-			mime = "image/svg+xml"
-		}
-		encoded := base64.StdEncoding.EncodeToString(data)
-		return withChecksum(&ToolResult{
-			Content: []ContentBlock{{
-				Type:     "image",
-				Data:     encoded,
-				MimeType: mime,
-			}},
-		}, checksum), nil
-	}
-
 	check := data
 	if len(check) > 512 {
 		check = check[:512]
 	}
-	// Binary detection: return a plain result (not an error) with a suggestion
-	// appended for LLM guidance — preserves backward compatibility.
+	// Binary detection: return an error so the caller can decide how to present it.
 	if strings.ContainsRune(string(check), 0) {
-		return withChecksum(textResult(fmt.Sprintf("[binary file: %d bytes — use checksum_tree for integrity or skip content reads]", len(data))), checksum), nil
+		return nil, &ErrWithSuggestion{
+			Err:        fmt.Errorf("binary file: %d bytes", len(data)),
+			Suggestion: "use checksum_tree for integrity or skip content reads",
+			Code:       ErrCodeBinaryFile,
+		}
 	}
 
 	tail := 0
@@ -231,10 +202,14 @@ func (e *Engine) readFile(args map[string]interface{}) (*ToolResult, error) {
 	// the byte-cap loop below would keep nothing. Return a hint instead.
 	if startLine <= total && len(lines[startLine-1]) > readMaxBytes {
 		srcLineLen := len(lines[startLine-1])
-		return withChecksum(textResult(fmt.Sprintf(
-			"[Line %d is %d KB, exceeds 50 KB limit. Use run_shell: sed -n '%dp' %s | head -c 50000]",
-			startLine, srcLineLen/1024, startLine, path,
-		)), checksum), nil
+		return &readContentResult{
+			Content: fmt.Sprintf(
+				"[Line %d is %d KB, exceeds 50 KB limit. Use run_shell: sed -n '%dp' %s | head -c 50000]",
+				startLine, srcLineLen/1024, startLine, resolved,
+			),
+			TotalLines:  total,
+			OutputLines: 1,
+		}, nil
 	}
 
 	// Apply truncation strategy if windowed chunk exceeds the line limit.
@@ -282,8 +257,6 @@ func (e *Engine) readFile(args map[string]interface{}) (*ToolResult, error) {
 		}
 
 		// Collect source lines beyond the kept output lines for the remainder.
-		// Each output line starts with "<num>\t", so the number of kept output
-		// lines maps directly to source lines consumed.
 		remainingStart := startLine + len(kept)
 		var srcRemainder []string
 		for i := remainingStart - 1; i < total && i < len(lines); i++ {
@@ -299,35 +272,34 @@ func (e *Engine) readFile(args map[string]interface{}) (*ToolResult, error) {
 		}
 		hint += "]"
 
-		return withChecksum(&ToolResult{
-			Text: strings.Join(kept, "\n") + "\n" + hint,
-			Meta: map[string]any{
-				"truncation": truncationInfo{
-					Truncated:   true,
-					TotalLines:  total,
-					OutputLines: len(kept),
-				},
-			},
-		}, checksum), nil
+		return &readContentResult{
+			Content:     strings.Join(kept, "\n"),
+			TotalLines:  total,
+			OutputLines: len(kept),
+			Truncated:   true,
+			ByteHint:    hint,
+			TempFile:    tmpPath,
+		}, nil
 	}
 
 	// Determine if the file itself is longer than the window requested.
 	windowTruncated := total > endLine
 
-	result := tr.Content
+	content := tr.Content
+	var hint string
+	var tmpPath string
 	if windowTruncated {
 		// Write remainder to temp file for seamless continuation.
-		tmpPath, _ := writeTruncationRemainder(resolved, endLine+1, lines[endLine:total])
-		hint := fmt.Sprintf("\n[Showing lines %d-%d of %d. Use start_line=%d to continue.",
+		tmpPath, _ = writeTruncationRemainder(resolved, endLine+1, lines[endLine:total])
+		hint = fmt.Sprintf("\n[Showing lines %d-%d of %d. Use start_line=%d to continue.",
 			startLine, endLine, total, endLine+1)
 		if tmpPath != "" {
 			hint += fmt.Sprintf(" Remainder saved to %s.", tmpPath)
 		}
 		hint += "]"
-		result += hint
 	}
 
-	// Build truncation metadata for callers (pi TUI, LLM context).
+	// Build truncation metadata for callers.
 	// Set when either the window didn't cover the whole file, or head+tail
 	// collapse happened within the windowed chunk.
 	if windowTruncated || tr.Truncated {
@@ -335,19 +307,154 @@ func (e *Engine) readFile(args map[string]interface{}) (*ToolResult, error) {
 		if !tr.Truncated {
 			totalShown = endLine - startLine + 1
 		}
+		return &readContentResult{
+			Content:     content,
+			TotalLines:  total,
+			OutputLines: totalShown,
+			Truncated:   true,
+			ByteHint:    hint,
+			TempFile:    tmpPath,
+		}, nil
+	}
+
+	return &readContentResult{
+		Content:     content,
+		TotalLines:  total,
+		OutputLines: total,
+	}, nil
+}
+
+func (e *Engine) readFile(args map[string]interface{}) (*ToolResult, error) {
+	path, _ := args["path"].(string)
+	resolved, err := e.checkPath(path)
+	if err != nil {
+		// Wrap with "blocked:" prefix for backward compat, preserving any
+		// ErrWithSuggestion so callers can surface the suggestion field.
+		var sErr *ErrWithSuggestion
+		if errors.As(err, &sErr) {
+			return nil, &ErrWithSuggestion{
+				Err:        fmt.Errorf("blocked: %w", sErr.Err),
+				Suggestion: sErr.Suggestion,
+				Code:       ErrCodePathOutsideSandbox,
+			}
+		}
+		return nil, &ErrWithSuggestion{
+			Err:        fmt.Errorf("blocked: %w", err),
+			Suggestion: "path is blocked by sandbox policy; supply a path inside the workdir",
+			Code:       ErrCodePathOutsideSandbox,
+		}
+	}
+
+	ext := strings.ToLower(filepath.Ext(resolved))
+
+	// Image detection: peek at the first 512 bytes for MIME sniffing.
+	// SVG returns text/xml from DetectContentType, so check extension too.
+	isImage := false
+	var detected string
+	if f, ferr := os.Open(resolved); ferr == nil {
+		peek := make([]byte, 512)
+		if n, _ := f.Read(peek); n > 0 {
+			detected = http.DetectContentType(peek[:n])
+			if i := strings.Index(detected, ";"); i != -1 {
+				detected = strings.TrimSpace(detected[:i])
+			}
+			isImage = strings.HasPrefix(detected, "image/")
+		}
+		f.Close()
+	}
+	if !isImage && ext == ".svg" {
+		isImage = true
+	}
+
+	if isImage {
+		data, rerr := os.ReadFile(resolved)
+		if rerr != nil {
+			if os.IsPermission(rerr) {
+				return nil, &ErrWithSuggestion{
+					Err:        fmt.Errorf("permission denied: %s", path),
+					Suggestion: "file is not readable by the sandbox; check ownership or choose a different file",
+					Code:       ErrCodePermissionDenied,
+				}
+			}
+			return nil, rerr
+		}
+
+		info, serr := os.Stat(resolved)
+		if serr == nil {
+			e.tracker.record(resolved, info.ModTime())
+		}
+
+		var checksum string
+		if inc, _ := args["include_checksum"].(bool); inc {
+			h := sha256.Sum256(data)
+			checksum = hex.EncodeToString(h[:])
+		}
+
+		var mime string
+		if strings.HasPrefix(detected, "image/") {
+			mime = detected
+		} else {
+			mime = "image/svg+xml"
+		}
+		encoded := base64.StdEncoding.EncodeToString(data)
 		return withChecksum(&ToolResult{
-			Text: result,
+			Content: []ContentBlock{{
+				Type:     "image",
+				Data:     encoded,
+				MimeType: mime,
+			}},
+		}, checksum), nil
+	}
+
+	// Delegate to the shared content reader.
+	result, err := e.readFileContent(resolved, args)
+	if err != nil {
+		// Binary detection returns an ErrWithSuggestion — convert to the
+		// backward-compatible textResult format with a bracketed hint.
+		var sErr *ErrWithSuggestion
+		if errors.As(err, &sErr) && sErr.Code == ErrCodeBinaryFile && strings.HasPrefix(sErr.Err.Error(), "binary file:") {
+			var checksum string
+			if inc, _ := args["include_checksum"].(bool); inc {
+				if d, rerr := os.ReadFile(resolved); rerr == nil {
+					h := sha256.Sum256(d)
+					checksum = hex.EncodeToString(h[:])
+				}
+			}
+			return withChecksum(textResult(fmt.Sprintf("[%s — %s]", sErr.Err.Error(), sErr.Suggestion)), checksum), nil
+		}
+		return nil, err
+	}
+
+	// Compute checksum if requested (separate read; include_checksum is rare).
+	var checksum string
+	if inc, _ := args["include_checksum"].(bool); inc {
+		if d, rerr := os.ReadFile(resolved); rerr == nil {
+			h := sha256.Sum256(d)
+			checksum = hex.EncodeToString(h[:])
+		}
+	}
+
+	// Build final text: content + byte/window hint.
+	text := result.Content
+	if result.ByteHint != "" {
+		text += result.ByteHint
+	}
+
+	// Wrap in ToolResult with truncation metadata when applicable.
+	if result.Truncated {
+		return withChecksum(&ToolResult{
+			Text: text,
 			Meta: map[string]any{
 				"truncation": truncationInfo{
 					Truncated:   true,
-					TotalLines:  total,
-					OutputLines: totalShown,
+					TotalLines:  result.TotalLines,
+					OutputLines: result.OutputLines,
 				},
 			},
 		}, checksum), nil
 	}
 
-	return withChecksum(textResult(result), checksum), nil
+	return withChecksum(textResult(text), checksum), nil
 }
 
 // withChecksum adds a SHA-256 checksum to a ToolResult's Meta map.
