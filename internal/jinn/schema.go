@@ -42,6 +42,37 @@ const Schema = `[
   {
     "type": "function",
     "function": {
+      "name": "multi_read",
+      "description": "Read multiple files in one call. Returns a JSON object with {files: {path: content}, errors: {path: {error, suggestion, error_code}}, truncation: {path: {truncated, total_lines, output_lines}}}. Supports start_line/end_line/tail per file. Failed individual reads are reported in the errors map without failing the entire call.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "files": {
+            "type": "array",
+            "description": "List of file read requests. Each entry is an object with path and optional windowing.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "path":         {"type": "string",  "description": "file path to read"},
+                "start_line":   {"type": "integer", "description": "first line (1-indexed, default: 1)"},
+                "end_line":     {"type": "integer", "description": "last line (default: start_line+1999)"},
+                "tail":         {"type": "integer", "description": "Read last N lines. Overrides start_line/end_line. 0=disabled.", "default": 0},
+                "line_numbers": {"type": "boolean", "description": "Include line-number prefixes (default: true)", "default": true},
+                "truncate":     {"type": "string",  "enum": ["head","tail","middle","none"], "description": "Truncation strategy (default: head)", "default": "head"}
+              },
+              "required": ["path"]
+            },
+            "minItems": 1,
+            "maxItems": 20
+          }
+        },
+        "required": ["files"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
       "name": "write_file",
       "description": "Write content to a file (creates parent dirs). Atomic via temp+rename.",
       "parameters": {
@@ -312,6 +343,7 @@ var toolFeatures = map[string][]string{
 	"run_shell":     {"risk_classification", "exit_classification", "dry_run", "stdout_stderr_split", "recovery_hints"},
 	"search_files":  {"literal", "context_lines", "format_json", "case_insensitive", "zero_match_reason"},
 	"read_file":     {"truncate_strategy", "include_checksum", "tail"},
+	"multi_read":    {"per_file_windowing", "partial_success"},
 	"write_file":    {"dry_run"},
 	"stat_file":     {"encoding_detection", "line_ending_detection", "bom_detection"},
 	"list_dir":      {"changed_since"},
