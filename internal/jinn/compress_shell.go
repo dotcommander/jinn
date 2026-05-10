@@ -190,11 +190,7 @@ func condenseGitLog(output string) string {
 			return
 		}
 		var sb strings.Builder
-		if len(hash) > 8 {
-			sb.WriteString(hash[:8])
-		} else {
-			sb.WriteString(hash)
-		}
+		sb.WriteString(hash[:min(len(hash), 8)])
 		if decoration != "" {
 			sb.WriteString(" (")
 			sb.WriteString(decoration)
@@ -238,7 +234,7 @@ func condenseGitLog(output string) string {
 			continue
 		}
 		// Indented body lines (4 spaces).
-		if len(line) >= 4 && line[:4] == "    " {
+		if strings.HasPrefix(line, "    ") {
 			if subject == "" {
 				subject = strings.TrimSpace(line)
 			}

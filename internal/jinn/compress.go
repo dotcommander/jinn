@@ -114,14 +114,16 @@ type pathPrefixStrategy struct{}
 func (s *pathPrefixStrategy) Name() string { return "path_prefix_dedup" }
 
 func (s *pathPrefixStrategy) AppliesTo(output string, tool string) bool {
-	lines := splitLines(output)
 	pathCount := 0
-	for _, line := range lines {
+	for _, line := range splitLines(output) {
 		if isPathLine(line) {
 			pathCount++
+			if pathCount >= 3 {
+				return true
+			}
 		}
 	}
-	return pathCount >= 3
+	return false
 }
 
 func (s *pathPrefixStrategy) Compress(output string) string {
@@ -147,25 +149,15 @@ func (s *pathPrefixStrategy) Compress(output string) string {
 		return output
 	}
 
-	// Count lines that actually use this prefix.
-	count := 0
-	for _, line := range lines {
-		t := strings.TrimLeft(line, " \t")
-		if strings.HasPrefix(t, prefix) {
-			count++
-		}
-	}
-	if count < 3 {
-		return output
-	}
-
 	var b strings.Builder
 	fmt.Fprintf(&b, "[cwd: %s]", strings.TrimSuffix(prefix, "/"))
 
+	count := 0
 	for _, line := range lines {
 		b.WriteByte('\n')
 		t := strings.TrimLeft(line, " \t")
 		if strings.HasPrefix(t, prefix) {
+			count++
 			leading := line[:len(line)-len(t)]
 			relative := t[len(prefix):]
 			if relative == "" {
@@ -178,6 +170,9 @@ func (s *pathPrefixStrategy) Compress(output string) string {
 		}
 	}
 
+	if count < 3 {
+		return output
+	}
 	result := b.String()
 	if len(result) >= len(output) {
 		return output
