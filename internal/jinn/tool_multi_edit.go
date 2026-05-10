@@ -16,60 +16,53 @@ type editStatus struct {
 	Error     string `json:"error,omitempty"`
 }
 
-func (e *Engine) multiEdit(args map[string]interface{}) (*ToolResult, error) {
-	editsRaw, ok := args["edits"].([]interface{})
-	if !ok || len(editsRaw) == 0 {
-		return nil, &ErrWithSuggestion{
-			Err:        fmt.Errorf("edits must be a non-empty array"),
-			Suggestion: "provide a JSON array of edit objects, each with path, old_text, and new_text",
-			Code:       ErrCodeInvalidArgs,
-		}
-	}
+// rawEntry holds parsed, path-resolved, and file-read data for one edit before application.
+type rawEntry struct {
+	idx         int
+	path        string
+	resolved    string
+	oldText     string
+	newText     string
+	fuzzyIndent bool
+	showContext int
+	origData    []byte // on-disk bytes (first read per file)
+}
 
-	type pendingEdit struct {
-		path        string
-		resolved    string
-		oldText     string // for fast-path diff (line count of removed region)
-		newText     string // for fast-path diff (line count of added region)
-		fuzzyIndent bool
-		updated     string
-		fuzzy       bool
-		matchInfo   matchInfo
-		showContext int
-		preContent  []byte // pre-mutation bytes for undo snapshot
-		// matchOffset/matchLength are set only when oldText was found in the
-		// original (pre-any-edit) file; used for overlap detection.
-		matchOffset     int
-		matchLength     int
-		matchInOriginal bool
-	}
+// pendingEdit holds a validated, applied edit ready for atomic write.
+type pendingEdit struct {
+	path        string
+	resolved    string
+	oldText     string // for fast-path diff (line count of removed region)
+	newText     string // for fast-path diff (line count of added region)
+	fuzzyIndent bool
+	updated     string
+	fuzzy       bool
+	matchInfo   matchInfo
+	showContext int
+	preContent  []byte // pre-mutation bytes for undo snapshot
+	// matchOffset/matchLength are set only when oldText was found in the
+	// original (pre-any-edit) file; used for overlap detection.
+	matchOffset     int
+	matchLength     int
+	matchInOriginal bool
+}
 
-	// Phase 1a: parse inputs, check paths, read originals, detect overlaps.
-	// Overlap detection requires all match offsets against the original before
-	// any accumulated applyEdit runs — so we do a two-pass approach.
-
-	type rawEntry struct {
-		idx         int
-		path        string
-		resolved    string
-		oldText     string
-		newText     string
-		fuzzyIndent bool
-		showContext int
-		origData    []byte // on-disk bytes (first read per file)
-	}
-	var rawEntries []rawEntry
-
-	// originalContent stores normalized on-disk bytes for the first read of
-	// each file; used for overlap detection.
-	originalContent := make(map[string]string)
-	// origData caches raw bytes per resolved path for the accumulated phase.
+// parseAndResolveEdits iterates the raw edits array, validates each entry
+// (empty old_text guard, path security checks, stale check), reads each
+// file's on-disk bytes once, and returns the resolved entries along with
+// the normalized original content map used for overlap detection.
+func (e *Engine) parseAndResolveEdits(editsRaw []interface{}) (
+	entries []rawEntry,
+	originalContent map[string]string,
+	err error,
+) {
+	originalContent = make(map[string]string)
 	origDataCache := make(map[string][]byte)
 
 	for i, raw := range editsRaw {
 		entry, ok := raw.(map[string]interface{})
 		if !ok {
-			return nil, fmt.Errorf("edit[%d]: invalid format", i)
+			return nil, nil, fmt.Errorf("edit[%d]: invalid format", i)
 		}
 		path, _ := entry["path"].(string)
 		oldText, _ := entry["old_text"].(string)
@@ -81,7 +74,7 @@ func (e *Engine) multiEdit(args map[string]interface{}) (*ToolResult, error) {
 		}
 
 		if oldText == "" {
-			return nil, &ErrWithSuggestion{
+			return nil, nil, &ErrWithSuggestion{
 				Err:        fmt.Errorf("edits[%d]: old_text cannot be empty", i),
 				Suggestion: "provide a non-empty string to match — to insert at file start, include the existing first line in old_text and prepend in new_text",
 				Code:       ErrCodeOldTextEmpty,
@@ -90,23 +83,23 @@ func (e *Engine) multiEdit(args map[string]interface{}) (*ToolResult, error) {
 
 		resolved, err := e.checkPath(path)
 		if err != nil {
-			return nil, fmt.Errorf("edit[%d] %s: %w", i, path, err)
+			return nil, nil, fmt.Errorf("edit[%d] %s: %w", i, path, err)
 		}
 		if err := e.tracker.checkStale(resolved); err != nil {
-			return nil, fmt.Errorf("edit[%d] %s: %w", i, path, err)
+			return nil, nil, fmt.Errorf("edit[%d] %s: %w", i, path, err)
 		}
 
 		if _, seen := origDataCache[resolved]; !seen {
 			data, err := os.ReadFile(resolved)
 			if err != nil {
-				return nil, fmt.Errorf("edit[%d] %s: %w", i, path, err)
+				return nil, nil, fmt.Errorf("edit[%d] %s: %w", i, path, err)
 			}
 			origDataCache[resolved] = data
 			norm, _ := stripBom(string(data))
 			originalContent[resolved] = normalizeToLF(norm)
 		}
 
-		rawEntries = append(rawEntries, rawEntry{
+		entries = append(entries, rawEntry{
 			idx:         i,
 			path:        path,
 			resolved:    resolved,
@@ -117,12 +110,15 @@ func (e *Engine) multiEdit(args map[string]interface{}) (*ToolResult, error) {
 			origData:    origDataCache[resolved],
 		})
 	}
+	return entries, originalContent, nil
+}
 
-	// Overlap detection: locate each edit in the original content, then check
-	// that no two edits for the same file target overlapping byte ranges.
-	// Edits whose oldText does not appear in the original (dependent/chained
-	// edits that rely on a prior edit's output) are skipped — they cannot
-	// overlap with original-baseline edits by definition.
+// detectOverlaps checks that no two edits for the same file target overlapping
+// byte ranges in the original content. It also reorders rawEntries so that
+// same-file edits are processed in top-to-bottom (positional) order; chained
+// edits not found in the original retain their relative order after positioned
+// edits. Returns the (possibly reordered) entries and any overlap error.
+func detectOverlaps(rawEntries []rawEntry, originalContent map[string]string) ([]rawEntry, error) {
 	type offsetEntry struct {
 		editIdx     int
 		matchOffset int
@@ -204,9 +200,14 @@ func (e *Engine) multiEdit(args map[string]interface{}) (*ToolResult, error) {
 		})
 	}
 
-	// Phase 1b: run applyEdit against accumulated content, validate results.
-	// accumulatedContent tracks the evolving content per file so multiple
-	// edits to the same file build on each other instead of overwriting.
+	return rawEntries, nil
+}
+
+// applyPendingEdits runs applyEdit against accumulated per-file content for
+// each rawEntry, collects successes into pendingEdit slice and failures into
+// editStatus slice, then returns an error if any validation failures occurred.
+// It does NOT write files; all writes are deferred to the caller.
+func applyPendingEdits(rawEntries []rawEntry) ([]pendingEdit, error) {
 	accumulatedContent := make(map[string]string)
 	var edits []pendingEdit
 	var statuses []editStatus
@@ -279,7 +280,6 @@ func (e *Engine) multiEdit(args map[string]interface{}) (*ToolResult, error) {
 		})
 	}
 
-	// If any edits failed validation, return collected statuses.
 	if len(statuses) > 0 {
 		var errMsgs []string
 		for _, s := range statuses {
@@ -290,6 +290,37 @@ func (e *Engine) multiEdit(args map[string]interface{}) (*ToolResult, error) {
 			Suggestion: "fix the reported edit(s) and retry — other edits in the batch were skipped",
 			Code:       ErrCodeEditNotFound,
 		}
+	}
+
+	return edits, nil
+}
+
+func (e *Engine) multiEdit(args map[string]interface{}) (*ToolResult, error) {
+	editsRaw, ok := args["edits"].([]interface{})
+	if !ok || len(editsRaw) == 0 {
+		return nil, &ErrWithSuggestion{
+			Err:        fmt.Errorf("edits must be a non-empty array"),
+			Suggestion: "provide a JSON array of edit objects, each with path, old_text, and new_text",
+			Code:       ErrCodeInvalidArgs,
+		}
+	}
+
+	// Phase 1a: parse inputs, check paths, read originals.
+	rawEntries, originalContent, err := e.parseAndResolveEdits(editsRaw)
+	if err != nil {
+		return nil, err
+	}
+
+	// Phase 1b: overlap detection + positional sorting.
+	rawEntries, err = detectOverlaps(rawEntries, originalContent)
+	if err != nil {
+		return nil, err
+	}
+
+	// Phase 1c: run applyEdit against accumulated content, validate results.
+	edits, err := applyPendingEdits(rawEntries)
+	if err != nil {
+		return nil, err
 	}
 
 	// dry_run: return previews without writing.
