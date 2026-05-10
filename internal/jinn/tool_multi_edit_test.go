@@ -546,3 +546,198 @@ func TestMultiEdit_FuzzyIndentDefaultFalse(t *testing.T) {
 		t.Errorf("replacement should not be re-indented without fuzzy_indent, got:\n%s", s)
 	}
 }
+
+// --- Grafted from multi-edit.ts comparison: positional sorting + redundant skip ---
+
+func TestMultiEdit_PositionalSorting_OutOfOrder(t *testing.T) {
+	t.Parallel()
+	// Same-file edits listed in reverse order (bottom-to-top) should succeed
+	// because positional sorting reorders them to top-to-bottom.
+	e, dir := testEngine(t)
+	writeTestFile(t, dir, "pos.txt", "alpha\nbravo\ncharlie\n")
+
+	edits := []interface{}{
+		map[string]interface{}{"path": "pos.txt", "old_text": "charlie", "new_text": "CHARLIE"},
+		map[string]interface{}{"path": "pos.txt", "old_text": "alpha", "new_text": "ALPHA"},
+		map[string]interface{}{"path": "pos.txt", "old_text": "bravo", "new_text": "BRAVO"},
+	}
+	result, err := e.multiEdit(args("edits", edits))
+	if err != nil {
+		t.Fatalf("positional sorting should reorder edits: %v", err)
+	}
+	if !strings.Contains(result.Text, "applied 3 edits") {
+		t.Errorf("expected 3 edits applied, got: %s", result.Text)
+	}
+
+	data, _ := os.ReadFile(filepath.Join(dir, "pos.txt"))
+	s := string(data)
+	if !strings.Contains(s, "ALPHA") || !strings.Contains(s, "BRAVO") || !strings.Contains(s, "CHARLIE") {
+		t.Errorf("all edits should be applied, got:\n%s", s)
+	}
+}
+
+func TestMultiEdit_PositionalSorting_PreservesChainedEdits(t *testing.T) {
+	t.Parallel()
+	// Mix of original-baseline edits (found in original) and chained edits
+	// (only found after a prior edit). Chained edits should come after positioned
+	// edits but still work.
+	e, dir := testEngine(t)
+	writeTestFile(t, dir, "chain.txt", "one\ntwo\nthree\n")
+
+	edits := []interface{}{
+		// Chained: "ONE_AND_A_HALF" only exists after "one" → "ONE_AND_A_HALF_TWO" ... wait, this is complex.
+		// Let's do: first edit changes "one" → "ONE", second changes "ONE" → "UNO".
+		// The second edit depends on the first — it won't be found in the original.
+		map[string]interface{}{"path": "chain.txt", "old_text": "one", "new_text": "UNO"},
+		map[string]interface{}{"path": "chain.txt", "old_text": "three", "new_text": "THREE"},
+		map[string]interface{}{"path": "chain.txt", "old_text": "UNO", "new_text": "UNO_FINAL"},
+	}
+	result, err := e.multiEdit(args("edits", edits))
+	if err != nil {
+		t.Fatalf("chained edits should work with positional sorting: %v", err)
+	}
+	if !strings.Contains(result.Text, "applied 3 edits") {
+		t.Errorf("expected 3 edits applied, got: %s", result.Text)
+	}
+
+	data, _ := os.ReadFile(filepath.Join(dir, "chain.txt"))
+	s := string(data)
+	if !strings.Contains(s, "UNO_FINAL") {
+		t.Errorf("chained edit should be applied, got:\n%s", s)
+	}
+	if !strings.Contains(s, "THREE") {
+		t.Errorf("original-baseline edit should be applied, got:\n%s", s)
+	}
+	if !strings.Contains(s, "two") {
+		t.Errorf("unchanged line should survive, got:\n%s", s)
+	}
+}
+
+func TestMultiEdit_PositionalSorting_CrossFileOrderPreserved(t *testing.T) {
+	t.Parallel()
+	// Edits across different files should retain their original relative order.
+	e, dir := testEngine(t)
+	writeTestFile(t, dir, "a.txt", "alpha\nbeta\n")
+	writeTestFile(t, dir, "b.txt", "gamma\ndelta\n")
+
+	edits := []interface{}{
+		map[string]interface{}{"path": "b.txt", "old_text": "delta", "new_text": "DELTA"},
+		map[string]interface{}{"path": "a.txt", "old_text": "alpha", "new_text": "ALPHA"},
+		map[string]interface{}{"path": "b.txt", "old_text": "gamma", "new_text": "GAMMA"},
+		map[string]interface{}{"path": "a.txt", "old_text": "beta", "new_text": "BETA"},
+	}
+	result, err := e.multiEdit(args("edits", edits))
+	if err != nil {
+		t.Fatalf("cross-file edits should succeed: %v", err)
+	}
+	if !strings.Contains(result.Text, "applied 4 edits") {
+		t.Errorf("expected 4 edits, got: %s", result.Text)
+	}
+
+	a, _ := os.ReadFile(filepath.Join(dir, "a.txt"))
+	b, _ := os.ReadFile(filepath.Join(dir, "b.txt"))
+	if !strings.Contains(string(a), "ALPHA") || !strings.Contains(string(a), "BETA") {
+		t.Errorf("a.txt edits missing, got: %q", a)
+	}
+	if !strings.Contains(string(b), "GAMMA") || !strings.Contains(string(b), "DELTA") {
+		t.Errorf("b.txt edits missing, got: %q", b)
+	}
+}
+
+func TestMultiEdit_RedundantEditSkip(t *testing.T) {
+	t.Parallel()
+	// Model lists the same replacement twice — second should be skipped gracefully.
+	e, dir := testEngine(t)
+	writeTestFile(t, dir, "redundant.txt", "foo bar baz\n")
+
+	edits := []interface{}{
+		map[string]interface{}{"path": "redundant.txt", "old_text": "foo", "new_text": "FOO"},
+		map[string]interface{}{"path": "redundant.txt", "old_text": "foo", "new_text": "FOO"},
+	}
+	result, err := e.multiEdit(args("edits", edits))
+	if err != nil {
+		t.Fatalf("redundant edit should be skipped, not cause error: %v", err)
+	}
+	// Only 1 edit should actually be applied (the second was skipped).
+	if !strings.Contains(result.Text, "applied 1 edits") {
+		t.Errorf("expected 1 edit applied (second skipped), got: %s", result.Text)
+	}
+
+	data, _ := os.ReadFile(filepath.Join(dir, "redundant.txt"))
+	if string(data) != "FOO bar baz\n" {
+		t.Errorf("content = %q, want %q", data, "FOO bar baz\n")
+	}
+}
+
+func TestMultiEdit_RedundantEditSkip_PreserveOtherEdits(t *testing.T) {
+	t.Parallel()
+	// Redundant skip in one file should not prevent edits in another file.
+	e, dir := testEngine(t)
+	writeTestFile(t, dir, "dup.txt", "xxx\n")
+	writeTestFile(t, dir, "other.txt", "yyy\n")
+
+	edits := []interface{}{
+		map[string]interface{}{"path": "dup.txt", "old_text": "xxx", "new_text": "XXX"},
+		map[string]interface{}{"path": "other.txt", "old_text": "yyy", "new_text": "YYY"},
+		map[string]interface{}{"path": "dup.txt", "old_text": "xxx", "new_text": "XXX"}, // redundant
+	}
+	result, err := e.multiEdit(args("edits", edits))
+	if err != nil {
+		t.Fatalf("should succeed with redundant skip: %v", err)
+	}
+	// 2 real edits applied (dup.txt first, other.txt), third skipped.
+	if !strings.Contains(result.Text, "applied 2 edits") {
+		t.Errorf("expected 2 edits (1 redundant skipped), got: %s", result.Text)
+	}
+
+	dup, _ := os.ReadFile(filepath.Join(dir, "dup.txt"))
+	other, _ := os.ReadFile(filepath.Join(dir, "other.txt"))
+	if string(dup) != "XXX\n" {
+		t.Errorf("dup.txt = %q, want %q", dup, "XXX\n")
+	}
+	if string(other) != "YYY\n" {
+		t.Errorf("other.txt = %q, want %q", other, "YYY\n")
+	}
+}
+
+func TestMultiEdit_RedundantEditSkip_DifferentReplacement(t *testing.T) {
+	t.Parallel()
+	// Same old_text but different new_text is NOT redundant — should error
+	// because after first edit, the second edit's old_text is gone and the
+	// pair is different.
+	e, dir := testEngine(t)
+	writeTestFile(t, dir, "diff_repl.txt", "same_text\n")
+
+	edits := []interface{}{
+		map[string]interface{}{"path": "diff_repl.txt", "old_text": "same_text", "new_text": "REPLACEMENT_A"},
+		map[string]interface{}{"path": "diff_repl.txt", "old_text": "same_text", "new_text": "REPLACEMENT_B"},
+	}
+	_, err := e.multiEdit(args("edits", edits))
+	// The second edit has a different pair, so it should NOT be skipped.
+	// It should fail because "same_text" is no longer in the file after the first edit.
+	if err == nil {
+		t.Fatal("expected error: second edit targets different replacement for consumed text")
+	}
+}
+
+func TestMultiEdit_OverlapDetectionStillWorksWithSorting(t *testing.T) {
+	t.Parallel()
+	// Overlap detection must still fire after positional sorting is added.
+	e, dir := testEngine(t)
+	writeTestFile(t, dir, "overlap.txt", "AAA BBB CCC\n")
+
+	edits := []interface{}{
+		// These two overlap: "AAA BBB" and "BBB CCC" share "BBB"
+		map[string]interface{}{"path": "overlap.txt", "old_text": "BBB CCC", "new_text": "XXX"},
+		map[string]interface{}{"path": "overlap.txt", "old_text": "AAA BBB", "new_text": "YYY"},
+	}
+	_, err := e.multiEdit(args("edits", edits))
+	if err == nil || !strings.Contains(err.Error(), "overlapping regions") {
+		t.Errorf("expected overlap error, got: %v", err)
+	}
+	// File must be untouched.
+	data, _ := os.ReadFile(filepath.Join(dir, "overlap.txt"))
+	if string(data) != "AAA BBB CCC\n" {
+		t.Errorf("file should be unchanged after overlap error, got: %q", data)
+	}
+}

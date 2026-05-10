@@ -3,6 +3,7 @@ package jinn
 import (
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 )
 
@@ -142,6 +143,11 @@ func (e *Engine) multiEdit(args map[string]interface{}) (*ToolResult, error) {
 		}
 		// offset < 0 means oldText only exists in accumulated (chained) content — skip overlap check.
 	}
+	// Build a lookup from editIdx to old_text+new_text for duplicate detection.
+	editPair := make(map[int]string)
+	for _, re := range rawEntries {
+		editPair[re.idx] = re.oldText + "\x00" + re.newText
+	}
 	for _, entries := range fileOffsets {
 		// Sort by match offset ascending.
 		for a := 0; a < len(entries)-1; a++ {
@@ -153,6 +159,11 @@ func (e *Engine) multiEdit(args map[string]interface{}) (*ToolResult, error) {
 		}
 		for k := 0; k < len(entries)-1; k++ {
 			prev, curr := entries[k], entries[k+1]
+			// Skip overlap check for exact duplicate edits (same old_text→new_text).
+				// These will be handled by redundant edit skip in Phase 1b.
+				if editPair[prev.editIdx] == editPair[curr.editIdx] {
+					continue
+				}
 			if prev.matchOffset+prev.matchLength > curr.matchOffset {
 				i, j := prev.editIdx, curr.editIdx
 				if i > j {
@@ -167,12 +178,42 @@ func (e *Engine) multiEdit(args map[string]interface{}) (*ToolResult, error) {
 		}
 	}
 
+	// Positional sorting: reorder rawEntries so that same-file edits are
+	// processed in top-to-bottom order (by occurrence in original content).
+	// Edits whose old_text was not found in the original (chained/dependent
+	// edits) retain their original relative order and appear after positioned edits.
+	{
+		// Build a position map: editIdx -> matchOffset (MAX_INT if not in original).
+		editPos := make(map[int]int)
+		for _, oe := range fileOffsets {
+			for _, entry := range oe {
+				editPos[entry.editIdx] = entry.matchOffset
+			}
+		}
+		const notFoundOffset = int(^uint(0) >> 1) // max int
+		sort.SliceStable(rawEntries, func(a, b int) bool {
+			reA, reB := rawEntries[a], rawEntries[b]
+			if reA.resolved != reB.resolved {
+				return false // different files: keep original order
+			}
+			posA, okA := editPos[reA.idx]
+			posB, okB := editPos[reB.idx]
+			if !okA { posA = notFoundOffset }
+			if !okB { posB = notFoundOffset }
+			return posA < posB
+		})
+	}
+
 	// Phase 1b: run applyEdit against accumulated content, validate results.
 	// accumulatedContent tracks the evolving content per file so multiple
 	// edits to the same file build on each other instead of overwriting.
 	accumulatedContent := make(map[string]string)
 	var edits []pendingEdit
 	var statuses []editStatus
+
+	// Track applied old_text→new_text pairs per file for redundant edit detection.
+	type pairKey struct{ oldText, newText string }
+	appliedPairs := make(map[string]map[pairKey]int) // resolved -> pair -> count applied
 
 	for _, re := range rawEntries {
 		var data []byte
@@ -184,6 +225,18 @@ func (e *Engine) multiEdit(args map[string]interface{}) (*ToolResult, error) {
 
 		updated, fuzzy, info, err := applyEdit(data, re.oldText, re.newText, re.fuzzyIndent)
 		if err != nil {
+			// Redundant edit skip: if the same old_text→new_text pair was already
+			// applied in this file, the model likely over-counted occurrences.
+			// Skip gracefully instead of aborting the entire batch.
+			if strings.Contains(err.Error(), "old_text not found") {
+				if pairs, ok := appliedPairs[re.resolved]; ok {
+					key := pairKey{re.oldText, re.newText}
+					if pairs[key] > 0 {
+						// This replacement was already applied — skip silently.
+						continue
+					}
+				}
+			}
 			statuses = append(statuses, editStatus{
 				File:      re.path,
 				EditIndex: re.idx,
@@ -204,6 +257,12 @@ func (e *Engine) multiEdit(args map[string]interface{}) (*ToolResult, error) {
 			})
 			continue
 		}
+
+		// Record applied pair for redundant detection.
+		if appliedPairs[re.resolved] == nil {
+			appliedPairs[re.resolved] = make(map[pairKey]int)
+		}
+		appliedPairs[re.resolved][pairKey{re.oldText, re.newText}]++
 
 		accumulatedContent[re.resolved] = updated
 
