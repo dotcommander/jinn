@@ -60,7 +60,6 @@ func main() {
 	}
 
 	e := jinn.New(wd, version)
-	var compressor *jinn.Compressor
 
 	var req jinn.Request
 	if err := json.NewDecoder(os.Stdin).Decode(&req); err != nil {
@@ -96,13 +95,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Apply output compression when requested.
+	// Apply output compression when requested. run_shell compresses internally
+	// (pre-framing); every other tool opts in via req.Compress.
 	var compressMeta jinn.CompressionMeta
-	if req.Compress && result.Text != "" {
-		if compressor == nil {
-			compressor = jinn.NewCompressor()
-		}
-		result.Text, compressMeta = compressor.Compress(result.Text, req.Tool)
+	if req.Compress && req.Tool != "run_shell" && result.Text != "" {
+		result.Text, compressMeta = jinn.NewCompressor().Compress(result.Text, req.Tool)
 		// Merge compression metadata into result.Meta.
 		if len(compressMeta.Strategies) > 0 {
 			if result.Meta == nil {

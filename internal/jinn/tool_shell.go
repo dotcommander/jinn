@@ -93,6 +93,9 @@ func (e *Engine) runShell(ctx context.Context, args map[string]interface{}) (str
 	}
 	raw := collapseRepeatedLines(outBuf.String() + errBuf.String())
 	raw = collapseBlankLines(raw, 3)
+	// Apply command-aware compression before framing (compress_shell.go dispatches on
+	// the last pipeline segment's verb, then falls through to the generic strategy chain).
+	raw = compressShellOutput(raw, cmd)
 
 	// Apply tail truncation with line + byte limits (matching pi conventions).
 	content, trunc := truncateTailDetailed(raw, DefaultMaxLines, DefaultMaxBytes)

@@ -44,6 +44,9 @@ func NewCompressor() *Compressor {
 	}
 }
 
+// defaultCompressor is a shared, stateless Compressor used by run_shell.
+var defaultCompressor = NewCompressor()
+
 // Compress applies all applicable strategies to the output.
 // It returns the compressed text and metadata about what was applied.
 // If compression panics, the original output is returned (fail-open).
@@ -267,6 +270,8 @@ func (s *testResultStrategy) Compress(output string) string {
 	switch {
 	case isGoTestOutput(output):
 		return s.compressGoTest(output)
+	case isGoTestPlainOutput(output):
+		return s.compressGoTestPlain(output)
 	case isPytestOutput(output):
 		return s.compressPytest(output)
 	case isCargoTestOutput(output):
@@ -446,6 +451,77 @@ func isTestOutputLine(line string) bool {
 func isGoTestOutput(output string) bool {
 	return strings.Contains(output, "=== RUN") &&
 		(strings.Contains(output, "--- PASS") || strings.Contains(output, "--- FAIL"))
+}
+
+// isGoTestPlainOutput reports whether output looks like non-verbose `go test ./...`
+// output: has per-package result lines but no `=== RUN` markers (which would mean -v).
+func isGoTestPlainOutput(output string) bool {
+	if strings.Contains(output, "=== RUN") {
+		return false
+	}
+	for _, line := range splitLines(output) {
+		if reGoTestOK.MatchString(line) || reGoTestFailPkg.MatchString(line) {
+			return true
+		}
+	}
+	return false
+}
+
+// compressGoTestPlain compresses non-verbose `go test ./...` output.
+// All packages pass -> single summary line. Any failure -> keep only the
+// signal (failure blocks, panics, FAIL lines), dropping per-package `ok`
+// lines, `?  [no test files]` lines, and any stray PASS/RUN noise.
+func (s *testResultStrategy) compressGoTestPlain(output string) string {
+	lines := splitLines(output)
+	okPkgs, noTestPkgs := 0, 0
+	hasFailure := false
+	for _, line := range lines {
+		switch {
+		case reGoTestOK.MatchString(line):
+			okPkgs++
+		case strings.HasPrefix(line, "?") && strings.Contains(line, "[no test files]"):
+			noTestPkgs++
+		case reGoTestFail.MatchString(line) || reGoTestFailPkg.MatchString(line) ||
+			strings.HasPrefix(line, "--- FAIL:") || line == "FAIL" || strings.HasPrefix(line, "panic:"):
+			hasFailure = true
+		}
+	}
+
+	if !hasFailure && okPkgs > 0 {
+		var b strings.Builder
+		fmt.Fprintf(&b, "✓ %d package(s) ok", okPkgs)
+		if noTestPkgs > 0 {
+			fmt.Fprintf(&b, " (%d with no test files)", noTestPkgs)
+		}
+		result := b.String()
+		if len(result) >= len(output) {
+			return output
+		}
+		return result
+	}
+
+	// Failures present: drop only lines we are certain are noise; keep everything else.
+	var kept []string
+	for _, line := range lines {
+		if reGoTestOK.MatchString(line) {
+			continue // "ok  \tpkg\t0.2s" — a passing package
+		}
+		if strings.HasPrefix(line, "?") && strings.Contains(line, "[no test files]") {
+			continue
+		}
+		if reGoTestRun.MatchString(line) || reGoTestPass.MatchString(line) || line == "PASS" {
+			continue // -v leftovers, shouldn't appear in plain output but be safe
+		}
+		kept = append(kept, line)
+	}
+	if len(kept) == 0 {
+		return output
+	}
+	result := strings.Join(kept, "\n")
+	if len(result) >= len(output) {
+		return output
+	}
+	return result
 }
 
 // isPytestOutput returns true if the output looks like pytest output.
