@@ -96,6 +96,18 @@ Follow the suggestion before retrying. Common suggestions map to these error pat
 
 ---
 
+## multi_read — batch file reads
+
+Read multiple files in a single call. Returns JSON with `files` (path→content), `errors` (path→error detail), and `truncation` (path→metadata) maps. Partial success: individual failures go to `errors` without failing the entire call. Use when you need 2+ files at once.
+
+```
+echo '{"tool":"multi_read","args":{"files":[{"path":"a.go"},{"path":"b.go"}]}}' | jinn
+```
+
+Per-file windowing via `start_line`/`end_line`/`tail` on each entry. Max 20 files per call.
+
+---
+
 ## list_dir and search_files — entry limits
 
 Both tools enforce a default cap of **500 entries/matches** to prevent context window overflow.
