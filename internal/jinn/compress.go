@@ -365,7 +365,9 @@ func (s *testResultStrategy) compressCargoTest(output string) string {
 		if idx := strings.Index(line, ". "); idx >= 0 {
 			rest := line[idx+2:]
 			if pIdx := strings.Index(rest, " passed"); pIdx >= 0 {
-				fmt.Sscanf(rest[:pIdx], "%d", &passCount)
+				if n, _ := fmt.Sscanf(rest[:pIdx], "%d", &passCount); n != 1 {
+					passCount = 0
+				}
 			}
 		}
 		var duration string
