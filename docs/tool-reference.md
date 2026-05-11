@@ -46,7 +46,7 @@ echo '{"tool":"read_file","args":{"path":"main.go"}}' | jinn
 | `end_line` | int | No | `start_line + 1999` | Last line to return |
 | `tail` | int | No | `0` (disabled) | Return last N lines. Overrides `start_line`/`end_line` |
 | `line_numbers` | bool | No | `true` | Prefix each output line with a right-justified line number. Set `false` for raw content without numbering. |
-| `truncate` | string | No | `"head"` | Strategy when windowed output exceeds the line limit: `head` (keep first N lines, paginate with `start_line`), `tail` (keep last N lines, useful for logs), `middle` (keep both ends, elide center), `none` (no line-level truncation, byte cap still applies). |
+| `truncate` | string | No | `"head"` | Strategy when windowed output exceeds the line limit: `head` (keep first N lines, paginate with `start_line`), `tail` (keep last N lines, useful for logs), `middle` (keep both ends, elide center), `none` (no line-level truncation, byte cap still applies), `smart` (brace-depth heuristic — cuts at block boundaries for C-syntax files `.go`/`.rs`/`.ts`/`.js`/`.java`/`.c`/`.cpp`/`.h`/`.hpp`/`.tsx`/`.jsx`, falls back to `head` for others). |
 
 **Notes:**
 
@@ -92,7 +92,7 @@ Each file entry:
 | `end_line` | int | No | `start_line + 1999` | Last line to return |
 | `tail` | int | No | `0` (disabled) | Return last N lines. Overrides `start_line`/`end_line` |
 | `line_numbers` | bool | No | `true` | Prefix each output line with a right-justified line number |
-| `truncate` | string | No | `"head"` | Truncation strategy: `head`, `tail`, `middle`, or `none` |
+| `truncate` | string | No | `"head"` | Truncation strategy: `head`, `tail`, `middle`, `none`, or `smart` (brace-depth heuristic for C-syntax files) |
 
 **Notes:**
 

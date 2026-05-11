@@ -24,6 +24,30 @@ clean:
 version:
     @git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo "0.0.0"
 
+# Force-clean after /cpt leaves dirt — add everything, amend, push, retag.
+cpt-clean:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if git diff --quiet && git diff --cached --quiet && [ -z "$(git ls-files --others --exclude-standard)" ]; then
+        echo "✓ workspace clean"
+        exit 0
+    fi
+    echo "⚠ dirty after /cpt — grabbing everything"
+    git status --short
+    git add -A
+    git commit --amend --no-edit
+    git push origin main --force-with-lease
+    # Retag — old tag points to pre-amend commit
+    TAG=$(git describe --tags --abbrev=0 2>/dev/null || true)
+    if [ -n "$TAG" ]; then
+        TAG_COMMIT=$(git rev-list -1 "$TAG")
+        HEAD_COMMIT=$(git rev-parse HEAD)
+        if [ "$TAG_COMMIT" != "$HEAD_COMMIT" ]; then
+            git tag -f "$TAG" HEAD
+            git push origin "$TAG" --force
+        fi
+    fi
+    echo "✓ workspace clean"
 # Tag, push, and create GitHub release. Bump = patch | minor | major | X.Y.Z
 release bump:
     #!/usr/bin/env bash

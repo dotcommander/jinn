@@ -6,6 +6,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 jinn is a sandboxed tool executor for AI coding agents. Single binary, zero external dependencies — stdlib only. It exposes 17 tools via a one-shot JSON-over-stdin/stdout protocol compatible with OpenAI function calling.
 
+## Post-/cpt Cleanup
+
+`/cpt` must leave a clean workspace. After it completes:
+1. `git add -A` — grab everything (other agents may have edited files)
+2. Run `just cpt-clean` — amends the release commit with any remaining changes, force-pushes, retags
+3. Verify `git status` shows clean
+
+If the workspace is already clean, `cpt-clean` exits 0 immediately. No exceptions.
+
 ## Build / Test / Install
 
 ```bash

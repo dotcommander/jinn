@@ -132,7 +132,7 @@ jinn caps output to prevent unbounded memory growth:
 | Per-line truncation | Truncated at rune boundary + `...` | All tools |
 | Repeated line collapse | 3+ identical consecutive lines collapsed | All tools |
 | Shell tail truncation | Last N lines kept | `run_shell` |
-| Read truncation | Configurable strategy (`head`/`tail`/`middle`/`none`); default keeps first N lines. Truncation hint appended: `[Showing lines X-Y of Z. Use start_line=N to continue. Remainder saved to <path>.]` | `read_file` |
+| Read truncation | Configurable strategy (`head`/`tail`/`middle`/`none`/`smart`); default keeps first N lines. `smart` uses brace-depth heuristic for C-syntax files, cutting at block boundaries. Truncation hint appended: `[Showing lines X-Y of Z. Use start_line=N to continue. Remainder saved to <path>.]` | `read_file` |
 | File size limit | 50 MB | `read_file` |
 
 When shell output exceeds 1 MB, it spills to a temp file (`jinn-shell-*.log`). jinn keeps the tail of the output so you always see the exit code and final lines.
