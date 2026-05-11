@@ -127,12 +127,12 @@ func (e *Engine) readFileContent(resolved string, args map[string]interface{}) (
 		truncateMode = "head"
 	}
 	switch truncateMode {
-	case "head", "tail", "middle", "none":
+	case "head", "tail", "middle", "none", "smart":
 		// valid
 	default:
 		return nil, &ErrWithSuggestion{
 			Err:        fmt.Errorf("invalid truncate value %q", truncateMode),
-			Suggestion: `valid values are "head" (default), "tail", "middle", "none"`,
+			Suggestion: `valid values are "head" (default), "tail", "middle", "none", "smart"`,
 			Code:       ErrCodeInvalidArgs,
 		}
 	}
@@ -227,6 +227,8 @@ func (e *Engine) readFileContent(resolved string, args map[string]interface{}) (
 		tr = truncateOutputTail(rawContent, readTruncLines)
 	case "middle":
 		tr = truncateOutputDetailed(rawContent, readTruncLines)
+	case "smart":
+		tr = truncateOutputSmart(rawContent, readTruncLines, ext)
 	case "none":
 		tr.Content = rawContent
 		lines2 := strings.Split(rawContent, "\n")

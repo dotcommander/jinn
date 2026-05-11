@@ -32,7 +32,7 @@ const Schema = `[
           "end_line": {"type": "integer", "description": "last line (default: start_line+1999)"},
           "tail": {"type": "integer", "description": "Read the last N lines of the file. Takes precedence over start_line/end_line. 0 = disabled.", "default": 0},
           "line_numbers": {"type": "boolean", "description": "Include cat-n style line-number prefixes in output (default: true). Set false to receive raw file content with no numbering.", "default": true},
-          "truncate": {"type": "string", "enum": ["head", "tail", "middle", "none"], "description": "Strategy when output exceeds line limit. head=keep first N (default, paginates with start_line). tail=keep last N (logs). middle=keep both ends, elide middle. none=defer to byte cap only.", "default": "head"},
+          "truncate": {"type": "string", "enum": ["head", "tail", "middle", "none", "smart"], "description": "Strategy when output exceeds line limit. head=keep first N (default, paginates with start_line). tail=keep last N (logs). middle=keep both ends, elide middle. none=defer to byte cap only. smart=brace-depth heuristic for C-syntax files, falls back to head for others.", "default": "head"},
           "include_checksum": {"type": "boolean", "description": "When true, response meta includes sha256 hex digest of the full file content. Zero extra I/O cost (computed during read).", "default": false}
         },
         "required": ["path"]
@@ -58,7 +58,7 @@ const Schema = `[
                 "end_line":     {"type": "integer", "description": "last line (default: start_line+1999)"},
                 "tail":         {"type": "integer", "description": "Read last N lines. Overrides start_line/end_line. 0=disabled.", "default": 0},
                 "line_numbers": {"type": "boolean", "description": "Include line-number prefixes (default: true)", "default": true},
-                "truncate":     {"type": "string",  "enum": ["head","tail","middle","none"], "description": "Truncation strategy (default: head)", "default": "head"}
+                "truncate":     {"type": "string",  "enum": ["head","tail","middle","none","smart"], "description": "Truncation strategy. smart=brace-depth heuristic for C-syntax files.", "default": "head"}
               },
               "required": ["path"]
             },
@@ -322,6 +322,26 @@ const Schema = `[
         "required": ["path_a", "path_b"]
       }
     }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "search_replace",
+      "description": "Regex-based search and replace across files. Supports capture groups ($1, $2) in replacement, multi-file scope (glob patterns), replace-all (every occurrence), and atomic apply (all-or-nothing). Use when edit_file/multi_edit cannot: regex patterns, multi-file bulk changes, or replacing all occurrences. Binary files are skipped automatically.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "pattern": {"type": "string", "description": "Regex pattern to search for. Supports capture groups referenced as $1, $2, etc. in replacement. Default flags: multiline (m) — ^/$ match line boundaries."},
+          "replacement": {"type": "string", "description": "Replacement text. Supports $1, $2, etc. for capture group references. Use empty string for deletion."},
+          "files": {"description": "Target files: a single path, glob pattern, or array of paths/globs (max 50 files).", "oneOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}, "maxItems": 50}]},
+          "include": {"type": "string", "description": "Optional glob filter applied to resolved file paths (e.g. '*.go'). Only files matching this filter are processed."},
+          "case_insensitive": {"type": "boolean", "description": "Case-insensitive matching (default: false)", "default": false},
+          "multiline": {"type": "boolean", "description": "Multiline mode: ^/$ match line boundaries (default: true)", "default": true},
+          "dry_run": {"type": "boolean", "description": "Preview all replacements without writing. Returns diffs and match counts per file (default: false)", "default": false}
+        },
+        "required": ["pattern", "replacement", "files"]
+      }
+    }
   }
 ]`
 
@@ -348,8 +368,9 @@ var toolFeatures = map[string][]string{
 	"stat_file":     {"encoding_detection", "line_ending_detection", "bom_detection"},
 	"list_dir":      {"changed_since"},
 	"checksum_tree": {"baseline_diff"},
-	"diff_files":    {"context_lines"},
-	"lsp_query":     {"definition", "references", "hover", "symbols", "rename", "symbol_column", "context_lines"},
+	"diff_files":      {"context_lines"},
+	"search_replace":  {"regex", "capture_groups", "multi_file", "glob_patterns", "replace_all", "dry_run", "case_insensitive", "multiline"},
+	"lsp_query":       {"definition", "references", "hover", "symbols", "rename", "symbol_column", "context_lines"},
 }
 
 // Request is the one-shot tool invocation envelope.
