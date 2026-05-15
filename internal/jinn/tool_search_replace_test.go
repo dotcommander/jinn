@@ -356,6 +356,101 @@ func TestSearchReplace_GlobPattern(t *testing.T) {
 	}
 }
 
+func TestSearchReplace_FilesGlobPattern(t *testing.T) {
+	t.Parallel()
+	e, dir := testEngine(t)
+	writeTestFile(t, dir, "a.go", "oldFunc()\n")
+	writeTestFile(t, dir, "b.go", "oldFunc()\n")
+	writeTestFile(t, dir, "c.ts", "oldFunc()\n")
+
+	result, err := e.searchReplace(args(
+		"pattern", "oldFunc",
+		"replacement", "newFunc",
+		"files", "*.go",
+	))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result.Text, "2 files") {
+		t.Errorf("expected 2 files changed, got: %s", result.Text)
+	}
+
+	for _, name := range []string{"a.go", "b.go"} {
+		data, readErr := os.ReadFile(filepath.Join(dir, name))
+		if readErr != nil {
+			t.Fatalf("read %s: %v", name, readErr)
+		}
+		if !strings.Contains(string(data), "newFunc") {
+			t.Errorf("%s should be changed, got: %s", name, data)
+		}
+	}
+	dataC, _ := os.ReadFile(filepath.Join(dir, "c.ts"))
+	if !strings.Contains(string(dataC), "oldFunc") {
+		t.Errorf("c.ts should be unchanged, got: %s", dataC)
+	}
+}
+
+func TestSearchReplace_DirectoryExpandsFiles(t *testing.T) {
+	t.Parallel()
+	e, dir := testEngine(t)
+	writeTestFile(t, dir, "sub/a.txt", "old\n")
+	writeTestFile(t, dir, "sub/b.txt", "old\n")
+
+	result, err := e.searchReplace(args(
+		"pattern", "old",
+		"replacement", "new",
+		"files", "sub",
+	))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result.Text, "2 files") {
+		t.Errorf("expected 2 files changed, got: %s", result.Text)
+	}
+}
+
+func TestSearchReplace_GlobNoMatch(t *testing.T) {
+	t.Parallel()
+	e, _ := testEngine(t)
+
+	_, err := e.searchReplace(args(
+		"pattern", "old",
+		"replacement", "new",
+		"files", "*.missing",
+	))
+	if err == nil {
+		t.Fatal("expected error for glob with no matches")
+	}
+	if !strings.Contains(err.Error(), `no files matched`) {
+		t.Errorf("expected no-files-matched error, got: %v", err)
+	}
+}
+
+func TestSearchReplace_FilesGlobWithInclude(t *testing.T) {
+	t.Parallel()
+	e, dir := testEngine(t)
+	writeTestFile(t, dir, "a.go", "old\n")
+	writeTestFile(t, dir, "b.txt", "old\n")
+
+	result, err := e.searchReplace(args(
+		"pattern", "old",
+		"replacement", "new",
+		"files", "*.*",
+		"include", "*.go",
+	))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result.Text, "1 files") {
+		t.Errorf("expected 1 file changed, got: %s", result.Text)
+	}
+
+	txt, _ := os.ReadFile(filepath.Join(dir, "b.txt"))
+	if string(txt) != "old\n" {
+		t.Errorf("include filter should leave b.txt unchanged, got: %q", txt)
+	}
+}
+
 func TestSearchReplace_CRLFPreserved(t *testing.T) {
 	t.Parallel()
 	e, dir := testEngine(t)

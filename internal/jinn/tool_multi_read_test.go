@@ -48,6 +48,34 @@ func TestMultiReadHappyPath(t *testing.T) {
 	}
 }
 
+func TestMultiReadEmptyFile(t *testing.T) {
+	t.Parallel()
+	e, dir := testEngine(t)
+	writeTestFile(t, dir, "empty.txt", "")
+
+	result, _, err := e.Dispatch(context.Background(), "multi_read", args("files", []interface{}{
+		map[string]interface{}{"path": "empty.txt"},
+	}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var mr multiReadResult
+	if err := json.Unmarshal([]byte(result.Text), &mr); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	content, ok := mr.Files["empty.txt"]
+	if !ok {
+		t.Fatal("expected empty.txt in files")
+	}
+	if content != "" {
+		t.Errorf("expected empty content, got: %q", content)
+	}
+	if len(mr.Errors) != 0 {
+		t.Errorf("expected 0 errors, got %d: %v", len(mr.Errors), mr.Errors)
+	}
+}
+
 func TestMultiReadMixedSuccess(t *testing.T) {
 	t.Parallel()
 	e, dir := testEngine(t)

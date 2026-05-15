@@ -9,7 +9,7 @@ import (
 
 // applyPatch executes a parsed set of Codex-style patch operations.
 // Phase 1: validate all operations (preflight) without writing.
-// Phase 2: apply all operations atomically with undo snapshots.
+// Phase 2: apply operations with per-file atomic writes and undo snapshots.
 func (e *Engine) applyPatch(args map[string]interface{}) (*ToolResult, error) {
 	patchText, _ := args["patch"].(string)
 	if patchText == "" {
@@ -45,6 +45,11 @@ func (e *Engine) applyPatch(args map[string]interface{}) (*ToolResult, error) {
 	for i, r := range resolved {
 		switch r.op.kind {
 		case "add":
+			if _, err := os.Stat(r.resolved); err == nil {
+				return nil, fmt.Errorf("add %s: file already exists", r.op.path)
+			} else if !os.IsNotExist(err) {
+				return nil, fmt.Errorf("add %s: %w", r.op.path, err)
+			}
 			preflights[i].newContent = r.op.contents
 
 		case "delete":

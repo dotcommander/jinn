@@ -154,6 +154,52 @@ func TestApplyPatch_Engine_DryRun_Add(t *testing.T) {
 	}
 }
 
+func TestApplyPatch_Engine_AddExistingFails(t *testing.T) {
+	t.Parallel()
+	e, dir := testEngine(t)
+	writeTestFile(t, dir, "existing.txt", "keep\n")
+
+	patch := "*** Begin Patch\n*** Add File: existing.txt\n+replace\n*** End Patch"
+	_, err := e.applyPatch(args("patch", patch))
+	if err == nil {
+		t.Fatal("expected error for Add File targeting existing file")
+	}
+	if !strings.Contains(err.Error(), "already exists") {
+		t.Errorf("expected already-exists error, got: %v", err)
+	}
+
+	data, readErr := os.ReadFile(filepath.Join(dir, "existing.txt"))
+	if readErr != nil {
+		t.Fatalf("read failed: %v", readErr)
+	}
+	if string(data) != "keep\n" {
+		t.Errorf("existing file should be unchanged, got: %q", data)
+	}
+}
+
+func TestApplyPatch_Engine_DryRunAddExistingFails(t *testing.T) {
+	t.Parallel()
+	e, dir := testEngine(t)
+	writeTestFile(t, dir, "existing.txt", "keep\n")
+
+	patch := "*** Begin Patch\n*** Add File: existing.txt\n+replace\n*** End Patch"
+	_, err := e.applyPatch(args("patch", patch, "dry_run", true))
+	if err == nil {
+		t.Fatal("expected dry-run error for Add File targeting existing file")
+	}
+	if !strings.Contains(err.Error(), "already exists") {
+		t.Errorf("expected already-exists error, got: %v", err)
+	}
+
+	data, readErr := os.ReadFile(filepath.Join(dir, "existing.txt"))
+	if readErr != nil {
+		t.Fatalf("read failed: %v", readErr)
+	}
+	if string(data) != "keep\n" {
+		t.Errorf("existing file should be unchanged, got: %q", data)
+	}
+}
+
 // TestApplyPatch_Engine_StaleFile verifies that an update op is rejected with a
 // staleness error when the file has been modified out-of-band after the engine
 // last read it. The file must not be modified by the rejected call.

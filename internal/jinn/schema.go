@@ -109,7 +109,7 @@ const Schema = `[
     "type": "function",
     "function": {
       "name": "multi_edit",
-      "description": "Apply multiple edits across files atomically. All edits are validated first (collect-then-report); if any fail, none are applied. Failures include per-edit error details with error_code per edit. Response meta includes matchType and line range.",
+      "description": "Apply multiple edits across files. All edits are validated first (collect-then-report); if validation fails, none are applied. Writes are per-file atomic and are not rolled back if a later write fails. Failures include per-edit error details with error_code per edit. Response meta includes matchType and line range.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -138,7 +138,7 @@ const Schema = `[
     "type": "function",
     "function": {
       "name": "apply_patch",
-      "description": "Apply a Codex-style patch (*** Begin Patch ... *** End Patch) to create, delete, or update files atomically. Supports add-file, delete-file, and update-file operations with hunk-based editing using @@ context markers and space/minus/plus prefixed lines. All operations are validated before any file is modified; if any operation fails, none are applied.",
+      "description": "Apply a Codex-style patch (*** Begin Patch ... *** End Patch) to create, delete, or update files. Supports add-file, delete-file, and update-file operations with hunk-based editing using @@ context markers and space/minus/plus prefixed lines. All operations are validated before writing; writes are per-file atomic and are not rolled back if a later write fails.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -327,7 +327,7 @@ const Schema = `[
     "type": "function",
     "function": {
       "name": "search_replace",
-      "description": "Regex-based search and replace across files. Supports capture groups ($1, $2) in replacement, multi-file scope (glob patterns), replace-all (every occurrence), and atomic apply (all-or-nothing). Use when edit_file/multi_edit cannot: regex patterns, multi-file bulk changes, or replacing all occurrences. Binary files are skipped automatically.",
+      "description": "Regex-based search and replace across files. Supports capture groups ($1, $2) in replacement, multi-file scope (glob patterns), replace-all (every occurrence), validate-first apply, and per-file atomic writes. Use when edit_file/multi_edit cannot: regex patterns, multi-file bulk changes, or replacing all occurrences. Binary files are skipped automatically.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -358,19 +358,19 @@ type ToolCapabilities struct {
 // Callers should check for a feature key in this map rather than
 // hard-coding support assumptions.
 var toolFeatures = map[string][]string{
-	"edit_file":     {"dry_run", "fuzzy_indent", "show_context"},
-	"multi_edit":    {"overlap_detection", "show_context", "dry_run"},
-	"run_shell":     {"risk_classification", "exit_classification", "dry_run", "stdout_stderr_split", "recovery_hints", "compress_output"},
-	"search_files":  {"literal", "context_lines", "format_json", "case_insensitive", "zero_match_reason"},
-	"read_file":     {"truncate_strategy", "include_checksum", "tail"},
-	"multi_read":    {"per_file_windowing", "partial_success"},
-	"write_file":    {"dry_run"},
-	"stat_file":     {"encoding_detection", "line_ending_detection", "bom_detection"},
-	"list_dir":      {"changed_since"},
-	"checksum_tree": {"baseline_diff"},
-	"diff_files":      {"context_lines"},
-	"search_replace":  {"regex", "capture_groups", "multi_file", "glob_patterns", "replace_all", "dry_run", "case_insensitive", "multiline"},
-	"lsp_query":       {"definition", "references", "hover", "symbols", "rename", "symbol_column", "context_lines"},
+	"edit_file":      {"dry_run", "fuzzy_indent", "show_context"},
+	"multi_edit":     {"overlap_detection", "show_context", "dry_run"},
+	"run_shell":      {"risk_classification", "exit_classification", "dry_run", "stdout_stderr_split", "recovery_hints", "compress_output"},
+	"search_files":   {"literal", "context_lines", "format_json", "case_insensitive", "zero_match_reason"},
+	"read_file":      {"truncate_strategy", "include_checksum", "tail"},
+	"multi_read":     {"per_file_windowing", "partial_success"},
+	"write_file":     {"dry_run"},
+	"stat_file":      {"encoding_detection", "line_ending_detection", "bom_detection"},
+	"list_dir":       {"changed_since"},
+	"checksum_tree":  {"baseline_diff"},
+	"diff_files":     {"context_lines"},
+	"search_replace": {"regex", "capture_groups", "multi_file", "glob_patterns", "replace_all", "dry_run", "case_insensitive", "multiline"},
+	"lsp_query":      {"definition", "references", "hover", "symbols", "rename", "symbol_column", "context_lines"},
 }
 
 // Request is the one-shot tool invocation envelope.

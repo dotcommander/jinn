@@ -1,6 +1,7 @@
 package jinn
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"regexp"
@@ -16,16 +17,16 @@ const (
 
 // srFileResult describes what happened in one file.
 type srFileResult struct {
-	Path        string `json:"path"`
-	Matches     int    `json:"matches"`
-	Replaced    int    `json:"replaced"`
-	Unchanged   bool   `json:"unchanged,omitempty"`
-	MatchType   string `json:"matchType,omitempty"`
-	FirstLine   int    `json:"firstLine,omitempty"`
-	LastLine    int    `json:"lastLine,omitempty"`
-	Error       string `json:"error,omitempty"`
-	ErrorCode   string `json:"errorCode,omitempty"`
-	Suggestion  string `json:"suggestion,omitempty"`
+	Path       string `json:"path"`
+	Matches    int    `json:"matches"`
+	Replaced   int    `json:"replaced"`
+	Unchanged  bool   `json:"unchanged,omitempty"`
+	MatchType  string `json:"matchType,omitempty"`
+	FirstLine  int    `json:"firstLine,omitempty"`
+	LastLine   int    `json:"lastLine,omitempty"`
+	Error      string `json:"error,omitempty"`
+	ErrorCode  string `json:"errorCode,omitempty"`
+	Suggestion string `json:"suggestion,omitempty"`
 }
 
 // srCandidate holds a file path that matched the glob (and optional path filter).
@@ -81,22 +82,23 @@ func (e *Engine) collectSRFiles(args map[string]interface{}) ([]srCandidate, err
 		if err == nil {
 			// It's a real path — check if it's a directory.
 			info, statErr := os.Stat(resolved)
-			if statErr != nil {
+			if statErr == nil {
+				if !info.IsDir() {
+					if !seen[resolved] {
+						seen[resolved] = true
+						candidates = append(candidates, srCandidate{path: pat, resolved: resolved})
+					}
+					continue
+				}
+				// Directory: treat as glob "**/*" within it.
+				pat = strings.TrimRight(pat, "/") + "/**/*"
+			} else if !looksLikeGlob(pat) {
 				return nil, &ErrWithSuggestion{
 					Err:        fmt.Errorf("cannot stat %s: %w", pat, statErr),
 					Suggestion: "verify the path exists",
 					Code:       ErrCodeFileNotFound,
 				}
 			}
-			if !info.IsDir() {
-				if !seen[resolved] {
-					seen[resolved] = true
-					candidates = append(candidates, srCandidate{path: pat, resolved: resolved})
-				}
-				continue
-			}
-			// Directory: treat as glob "**/*" within it.
-			pat = pat + "/**/*"
 		}
 
 		// Treat as a glob pattern — use findFiles logic.
@@ -153,7 +155,6 @@ func (e *Engine) globExpand(pattern string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	// findFiles returns newline-separated paths.
 	if res == "" {
 		return nil, fmt.Errorf("no matches for %q", pattern)
 	}
@@ -162,14 +163,18 @@ func (e *Engine) globExpand(pattern string) ([]string, error) {
 	if idx := strings.Index(raw, "\n[TRUNCATED"); idx >= 0 {
 		raw = raw[:idx]
 	}
-	var paths []string
-	for _, line := range strings.Split(raw, "\n") {
-		line = strings.TrimSpace(line)
-		if line != "" {
-			paths = append(paths, line)
-		}
+	var found findFilesResult
+	if err := json.Unmarshal([]byte(raw), &found); err != nil {
+		return nil, fmt.Errorf("parse find_files result: %w", err)
 	}
-	return paths, nil
+	if len(found.Files) == 0 {
+		return nil, fmt.Errorf("no matches for %q", pattern)
+	}
+	return found.Files, nil
+}
+
+func looksLikeGlob(pattern string) bool {
+	return strings.ContainsAny(pattern, "*?[")
 }
 
 // srApplyOne applies the regex replacement to a single file.
@@ -430,7 +435,7 @@ func (e *Engine) searchReplace(args map[string]interface{}) (*ToolResult, error)
 		}, nil
 	}
 
-	// --- Phase 2: Apply all changes atomically ---
+	// --- Phase 2: Apply all changes with per-file atomic writes ---
 	var applied []string
 	for _, p := range pending {
 		_ = e.recordSnapshot(p.candidate.resolved, p.candidate.path, "search_replace", p.preData)

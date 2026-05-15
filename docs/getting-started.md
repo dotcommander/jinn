@@ -45,7 +45,7 @@ You'll get a response like:
 ```json
 {
   "ok": true,
-  "result": "     1\tmodule github.com/dotcommander/jinn\n     2\t\n     3\tgo 1.22\n"
+  "result": "1\tmodule github.com/dotcommander/jinn\n2\t\n3\tgo 1.26\n4\t\n5\ttoolchain go1.26.2\n"
 }
 ```
 
@@ -179,7 +179,7 @@ echo '{"tool":"lsp_query","args":{"action":"definition","path":"main.go","line":
 echo '{"tool":"lsp_query","args":{"action":"symbols","path":"internal/jinn/engine.go"}}' | jinn
 ```
 
-Supported actions: `definition`, `references`, `hover`, `symbols`. Supported extensions: `.go`, `.rs`, `.py`, `.ts`, `.tsx`, `.js`, `.jsx`. The server binary must be on `PATH`; if missing, the response includes a `suggestion` with the install command.
+Supported actions: `definition`, `references`, `hover`, `symbols`, and `rename` preview. Supported extensions include Go, Rust, Python, TypeScript/JavaScript, C/C++, Java, Lua, and Zig. The server binary must be on `PATH`; if missing, the response includes a `suggestion` with the install command.
 
 ## What's Next
 

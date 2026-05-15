@@ -1,6 +1,6 @@
 # Tool Reference
 
-jinn exposes 17 tools through a JSON-over-stdin/stdout protocol. You call them by piping a request object:
+jinn exposes 19 tools through a JSON-over-stdin/stdout protocol. You call them by piping a request object:
 
 ```bash
 echo '{"tool":"read_file","args":{"path":"main.go"}}' | jinn
@@ -51,6 +51,7 @@ echo '{"tool":"read_file","args":{"path":"main.go"}}' | jinn
 **Notes:**
 
 - Files larger than 50 MB are rejected.
+- Empty text files are valid and return an empty result.
 - **PDF files** return `ok: false` with `suggestion: "convert the PDF to text first (pdftotext, pdftk, or a cloud OCR service) and read the text file"`. Content is never returned.
 - **Image files** are detected by content rather than extension — a `.png` renamed without an extension is still identified as an image. Detected images return a base64-encoded content block with the correct MIME type (`image/png`, `image/jpeg`, etc.). SVG files return `image/svg+xml`. Pass the result directly to a vision model.
 - Binary files (null byte in first 512 bytes) return `[binary file: N bytes — use checksum_tree for integrity or skip content reads]` as a success result (not an error).
@@ -100,6 +101,7 @@ Each file entry:
 - **Partial success:** if some files fail, they appear in `errors` while successful reads still return in `files`.
 - Only returns `ok: false` if ALL files fail.
 - Binary/image files are reported in `errors` with `error_code: "binary_file"` — use `read_file` for single-image viewing.
+- Empty text files are returned in `files` with an empty string value.
 - Per-file windowing: each file entry supports independent `start_line`/`end_line`/`tail`/`truncate`.
 - Duplicate paths: last entry wins.
 
@@ -188,7 +190,7 @@ echo '{"tool":"edit_file","args":{"path":"config.yaml","old_text":"port: 8080","
 
 ### multi_edit
 
-Apply multiple edits across files atomically.
+Apply multiple edits across files. jinn validates all edits before writing, then writes each changed file atomically.
 
 ```bash
 echo '{"tool":"multi_edit","args":{"edits":[{"path":"a.go","old_text":"foo","new_text":"bar"},{"path":"b.go","old_text":"baz","new_text":"qux"}]}}' | jinn
@@ -212,12 +214,42 @@ Each edit object:
 
 **Notes:**
 
-- **Two-phase commit.** jinn validates every edit (path security, TOCTOU, match uniqueness) before applying any. If any edit fails validation, zero edits are applied.
+- **Validate first.** jinn validates every edit (path security, TOCTOU, match uniqueness) before applying any. If any edit fails validation, zero edits are applied.
+- **Per-file atomic writes.** Each changed file is written via temp+rename. If a write fails after validation, earlier successful file writes are not rolled back.
 - `old_text` cannot be empty in any edit entry. An empty value returns an error immediately, before any edits are applied.
 - **Overlap detection.** Edits targeting overlapping byte ranges in the same file are rejected in the validation phase. The error names which two edit indices conflict. Split them into separate `multi_edit` calls or combine them into a single edit.
 - If any edit's `old_text` and `new_text` are equivalent (including after fuzzy normalization), jinn returns an error and applies nothing.
 - Each edit uses the same matching and normalization rules as [`edit_file`](#edit_file).
 - Multiple edits to the same file are applied sequentially in array order. Later edits in the array see the file as modified by earlier ones (chained edits).
+
+### apply_patch
+
+Apply a Codex-style patch payload.
+
+```bash
+echo '{"tool":"apply_patch","args":{"patch":"*** Begin Patch\n*** Update File: main.go\n@@\n-old\n+new\n*** End Patch"}}' | jinn
+```
+
+**Parameters:**
+
+| Name | Type | Required | Default | Description |
+|------|------|----------|---------|-------------|
+| `patch` | string | Yes | -- | Patch text starting with `*** Begin Patch` and ending with `*** End Patch` |
+| `dry_run` | bool | No | `false` | Validate and preview changes without writing |
+
+**Supported operations:**
+
+| Operation | Behavior |
+|-----------|----------|
+| `*** Add File: path` | Creates a new file. Fails if the target already exists. |
+| `*** Delete File: path` | Deletes an existing file. Fails if the target does not exist. |
+| `*** Update File: path` | Applies hunk-based edits using context, removed, and added lines. |
+
+**Notes:**
+
+- All operations are validated before writing starts.
+- Writes are per-file atomic. If a later write fails after validation, earlier successful writes are not rolled back.
+- Update hunks support progressive fuzzy matching when exact context fails.
 
 ---
 
@@ -265,6 +297,55 @@ List files with match counts:
 echo '{"tool":"search_files","args":{"pattern":"TODO","format":"filenames"}}' | jinn
 ```
 
+### find_files
+
+Find files by glob pattern.
+
+```bash
+echo '{"tool":"find_files","args":{"pattern":"*.go","path":"internal"}}' | jinn
+```
+
+**Parameters:**
+
+| Name | Type | Required | Default | Description |
+|------|------|----------|---------|-------------|
+| `pattern` | string | Yes | -- | Glob pattern such as `*.go`, `**/*.json`, or `src/**/*_test.go` |
+| `path` | string | No | `"."` | Directory to search in |
+| `limit` | int | No | `1000` | Maximum number of results before truncation |
+
+**Notes:**
+
+- Uses `fd` when available and falls back to POSIX `find`.
+- Returns JSON with `files`, `truncated`, `total_count`, `limit_used`, and `backend`.
+- Excludes `.git`, `node_modules`, `vendor`, `__pycache__`, `.cache`, `dist`, and `build`.
+
+### search_replace
+
+Replace regex matches across explicit files or glob patterns.
+
+```bash
+echo '{"tool":"search_replace","args":{"pattern":"oldName","replacement":"newName","files":"*.go","dry_run":true}}' | jinn
+```
+
+**Parameters:**
+
+| Name | Type | Required | Default | Description |
+|------|------|----------|---------|-------------|
+| `pattern` | string | Yes | -- | Regex pattern to search for |
+| `replacement` | string | Yes | -- | Replacement text. Supports `$1`, `$2`, etc. for capture groups. |
+| `files` | string or array | Yes | -- | Target path, glob pattern, directory, or array of paths/globs. Max 50 resolved files. |
+| `include` | string | No | -- | Optional glob filter applied after target expansion, e.g. `"*.go"` |
+| `case_insensitive` | bool | No | `false` | Match case-insensitively |
+| `multiline` | bool | No | `true` | Enable `^`/`$` line-boundary matching |
+| `dry_run` | bool | No | `false` | Preview diffs and match counts without writing |
+
+**Notes:**
+
+- Each file is validated before any writes are applied.
+- Writes are per-file atomic. If a later write fails after validation, earlier successful writes are not rolled back.
+- Binary files are skipped with structured per-file errors.
+- Empty `replacement` is valid and deletes the matched text.
+
 ### stat_file
 
 Get file metadata without reading content.
@@ -304,6 +385,7 @@ echo '{"tool":"list_dir","args":{"path":".","depth":2}}' | jinn
 | `path` | string | No | `"."` | Directory to list |
 | `depth` | int | No | `3` | Maximum recursion depth (clamped to 1--10) |
 | `max_entries` | int | No | `500` | Maximum number of entries to return (cap: 10000). When exceeded, response includes `truncated: true` and `total_count`. |
+| `changed_since` | number | No | `0` | Unix epoch seconds. Only list entries modified after this timestamp. |
 
 **Notes:**
 
@@ -521,6 +603,7 @@ echo '{"tool":"lsp_query","args":{"action":"hover","path":"main.go","line":12,"c
 **Notes:**
 
 - The language server is started, queried, and torn down within a single call. There is no persistent daemon.
+- `rename` returns a preview of changes; it does not modify files.
 - Hard timeout: 10 seconds per query. Slow server startups may cause timeouts on cold runs.
 - If the server binary is not on `PATH`, `ok: false` is returned with a `suggestion` containing the install command.
 - Path must be inside the working directory (normal path security applies).

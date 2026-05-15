@@ -7,6 +7,19 @@ and jinn adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.8] - 2026-05-15
+
+### Fixed
+
+- `apply_patch`: reject `*** Add File:` when the target already exists, including dry runs.
+- `search_replace`: expand documented glob targets in `files`.
+- `read_file`, `multi_read`: treat empty text files as successful empty reads.
+
+### Documentation
+
+- Document validate-first/per-file atomic write semantics for batch mutation tools.
+- Update README and tool reference coverage for the current 19-tool schema.
+
 ### Added
 
 - `read_file`: `truncate` parameter — strategy when windowed output exceeds the line limit: `head` (default, paginate with `start_line`), `tail` (keep last N, useful for logs), `middle` (keep both ends, elide center), `none` (defer to byte cap only)
@@ -68,7 +81,8 @@ and jinn adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `--schema` flag to emit tool definitions
 - `--version` flag with ldflags and VCS fallback
 
-[Unreleased]: https://github.com/dotcommander/jinn/compare/v0.3.2...HEAD
+[Unreleased]: https://github.com/dotcommander/jinn/compare/v0.8.8...HEAD
+[0.8.8]: https://github.com/dotcommander/jinn/compare/v0.8.7...v0.8.8
 [0.3.2]: https://github.com/dotcommander/jinn/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/dotcommander/jinn/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/dotcommander/jinn/compare/v0.2.0...v0.3.0

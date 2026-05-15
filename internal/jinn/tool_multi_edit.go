@@ -156,10 +156,10 @@ func detectOverlaps(rawEntries []rawEntry, originalContent map[string]string) ([
 		for k := 0; k < len(entries)-1; k++ {
 			prev, curr := entries[k], entries[k+1]
 			// Skip overlap check for exact duplicate edits (same old_text→new_text).
-				// These will be handled by redundant edit skip in Phase 1b.
-				if editPair[prev.editIdx] == editPair[curr.editIdx] {
-					continue
-				}
+			// These will be handled by redundant edit skip in Phase 1b.
+			if editPair[prev.editIdx] == editPair[curr.editIdx] {
+				continue
+			}
 			if prev.matchOffset+prev.matchLength > curr.matchOffset {
 				i, j := prev.editIdx, curr.editIdx
 				if i > j {
@@ -194,8 +194,12 @@ func detectOverlaps(rawEntries []rawEntry, originalContent map[string]string) ([
 			}
 			posA, okA := editPos[reA.idx]
 			posB, okB := editPos[reB.idx]
-			if !okA { posA = notFoundOffset }
-			if !okB { posB = notFoundOffset }
+			if !okA {
+				posA = notFoundOffset
+			}
+			if !okB {
+				posB = notFoundOffset
+			}
 			return posA < posB
 		})
 	}
@@ -337,7 +341,7 @@ func (e *Engine) multiEdit(args map[string]interface{}) (*ToolResult, error) {
 		}, nil
 	}
 
-	// Phase 2: apply all edits atomically.
+	// Phase 2: apply all edits with per-file atomic writes.
 	var results []string
 	var allDiffs []string
 	var firstLine int

@@ -142,6 +142,13 @@ func (e *Engine) readFileContent(resolved string, args map[string]interface{}) (
 	if lines[total-1] == "" {
 		total--
 	}
+	if total == 0 {
+		return &readContentResult{
+			Content:     "",
+			TotalLines:  0,
+			OutputLines: 0,
+		}, nil
+	}
 
 	// Explicit tail= arg (number of lines from end) takes precedence.
 	startLine := 1

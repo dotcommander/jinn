@@ -300,6 +300,6 @@ All operations are validated in a preflight pass before any file is mutated. If 
 
 ### When to use
 
-- Multi-file changes that must be atomic (create + update + delete in one call)
+- Multi-file changes that should be validated together before per-file atomic writes (create + update + delete in one call)
 - Hunk-based edits where context lines are more natural than old_text/new_text pairs
 - Interoperability with tools that emit Codex-style patches

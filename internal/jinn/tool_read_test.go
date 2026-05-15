@@ -22,6 +22,20 @@ func TestReadFile_Basic(t *testing.T) {
 	}
 }
 
+func TestReadFile_EmptyFile(t *testing.T) {
+	t.Parallel()
+	e, dir := testEngine(t)
+	writeTestFile(t, dir, "empty.txt", "")
+
+	result, err := e.readFile(args("path", "empty.txt"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Text != "" {
+		t.Errorf("expected empty result for empty file, got: %q", result.Text)
+	}
+}
+
 func TestReadFile_NotFound(t *testing.T) {
 	t.Parallel()
 	e, _ := testEngine(t)

@@ -59,7 +59,7 @@ The TOCTOU tracker is per-engine instance. Each `jinn` process starts fresh -- t
 
 ## Atomic Writes
 
-`write_file`, `edit_file`, and `multi_edit` all use the same atomic write pattern:
+`write_file`, `edit_file`, and batch mutation tools all use the same per-file atomic write pattern:
 
 1. Write content to a hidden temp file (`.jinn-*` prefix).
 2. `chmod` to match existing file permissions (or use default for new files).
@@ -71,6 +71,8 @@ echo '{"tool":"write_file","args":{"path":"data.json","content":"{\"status\":\"o
 ```
 
 If the process crashes mid-write, the target file is never left in a partial state. The rename is atomic on all major filesystems. The temp file is cleaned up on error.
+
+Batch mutation tools validate all inputs before writing, but they do not roll back earlier successful writes if a later per-file write fails.
 
 ## Command Risk Classifier
 
@@ -161,8 +163,8 @@ The `memory` tool stores its file at `~/.config/jinn/memory.json` (or `$JINN_CON
 |-----------|-------|-------------|
 | Path confinement | All file tools | No |
 | Sensitive path blocking | All file tools | No |
-| TOCTOU tracking | `read_file` records, `write_file`/`edit_file`/`multi_edit` enforce | No |
-| Atomic writes | `write_file`, `edit_file`, `multi_edit` | No |
+| TOCTOU tracking | `read_file` records, mutation tools enforce where applicable | No |
+| Atomic writes | Per-file writes in mutation tools | No |
 | Environment scrubbing | `run_shell` | No |
 | Risk classifier | `run_shell` | `force: true` overrides dangerous block |
 | Output bounds | All tools | No |
