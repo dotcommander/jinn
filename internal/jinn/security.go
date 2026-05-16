@@ -19,6 +19,22 @@ func sensitivePathErr(p string) error {
 	}
 }
 
+func hasSensitivePathSegment(p string) bool {
+	clean := filepath.Clean(p)
+	for _, seg := range sensitiveSegments {
+		if strings.Contains(clean, seg) {
+			return true
+		}
+	}
+	base := filepath.Base(clean)
+	for _, dir := range sensitiveDirs {
+		if base == dir {
+			return true
+		}
+	}
+	return base == ".env" || strings.HasPrefix(base, ".env.")
+}
+
 func (e *Engine) resolvePath(p string) (string, error) {
 	if p == "~" || strings.HasPrefix(p, "~/") {
 		home, err := os.UserHomeDir()
@@ -62,18 +78,7 @@ func (e *Engine) checkPath(p string) (string, error) {
 	}
 
 	// Check sensitive segments on the resolved path.
-	for _, seg := range sensitiveSegments {
-		if strings.Contains(real, seg) {
-			return "", sensitivePathErr(p)
-		}
-	}
-	base := filepath.Base(real)
-	for _, dir := range sensitiveDirs {
-		if base == dir {
-			return "", sensitivePathErr(p)
-		}
-	}
-	if base == ".env" || strings.HasPrefix(base, ".env.") {
+	if hasSensitivePathSegment(real) {
 		return "", sensitivePathErr(p)
 	}
 

@@ -220,7 +220,7 @@ const Schema = `[
     "type": "function",
     "function": {
       "name": "list_tools",
-      "description": "List available tools with their schemas and capability metadata (jinn_version, tool list, feature flags per tool).",
+      "description": "List tools and schemas.",
       "parameters": {
         "type": "object",
         "properties": {}
@@ -285,6 +285,23 @@ const Schema = `[
           "limit":  {"type": "integer", "description": "Max entries to return for list (default: 50)."}
         },
         "required": ["action"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "related_context",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {"type": "string"},
+          "types": {"type": "array", "items": {"type": "string"}},
+          "limit": {"type": "integer"},
+          "client": {"type": "string", "enum": ["claude","codex","pi","all"]},
+          "rebuild": {"type": "boolean"}
+        },
+        "required": ["query"]
       }
     }
   },
@@ -377,6 +394,7 @@ var toolFeatures = map[string][]string{
 type Request struct {
 	Tool      string                 `json:"tool"`
 	Args      map[string]interface{} `json:"args"`
+	Client    string                 `json:"client,omitempty"`
 	Compress  bool                   `json:"compress,omitempty"`
 	RequestID string                 `json:"request_id,omitempty"`
 }

@@ -7,6 +7,20 @@ and jinn adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.9] - 2026-05-15
+
+### Added
+
+- `related_context`: rank local KB, skills, agents, commands, and configured
+  context paths for a prompt or tool failure.
+- Request envelope `client` field so callers can declare `claude`, `codex`, or
+  `pi` and receive only the matching client-specific skill context.
+
+### Changed
+
+- Store `related_context` indexes in per-client cache files to avoid rebuild
+  churn when multiple clients use jinn on the same machine.
+
 ## [0.8.8] - 2026-05-15
 
 ### Fixed
@@ -81,7 +95,8 @@ and jinn adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `--schema` flag to emit tool definitions
 - `--version` flag with ldflags and VCS fallback
 
-[Unreleased]: https://github.com/dotcommander/jinn/compare/v0.8.8...HEAD
+[Unreleased]: https://github.com/dotcommander/jinn/compare/v0.8.9...HEAD
+[0.8.9]: https://github.com/dotcommander/jinn/compare/v0.8.8...v0.8.9
 [0.8.8]: https://github.com/dotcommander/jinn/compare/v0.8.7...v0.8.8
 [0.3.2]: https://github.com/dotcommander/jinn/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/dotcommander/jinn/compare/v0.3.0...v0.3.1

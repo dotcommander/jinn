@@ -12,9 +12,9 @@ import (
 
 // Engine is a sandboxed tool executor bound to a working directory.
 type Engine struct {
-	workDir string
-	version string     // ldflags-injected version ("dev" when un-set)
-	tracker *fileTracker
+	workDir       string
+	version       string // ldflags-injected version ("dev" when un-set)
+	tracker       *fileTracker
 	rgPath        string     // path to rg binary, empty if unavailable
 	fdPath        string     // path to fd binary, empty if unavailable
 	LSPTimeoutSec int        // per-query LSP timeout; 0 uses default (10s)
@@ -97,7 +97,7 @@ func (e *Engine) Dispatch(ctx context.Context, tool string, args map[string]inte
 			"run_shell", "read_file", "multi_read", "write_file", "edit_file", "multi_edit",
 			"apply_patch", "diff_files", "search_files", "stat_file", "list_dir",
 			"find_files", "list_tools", "checksum_tree", "detect_project",
-			"memory", "undo", "lsp_query", "search_replace",
+			"memory", "undo", "lsp_query", "search_replace", "related_context",
 		}
 		caps := ToolCapabilities{
 			JinnVersion: ResolveVersion(e.version),
@@ -127,6 +127,9 @@ func (e *Engine) Dispatch(ctx context.Context, tool string, args map[string]inte
 	case "search_replace":
 		result, err := e.searchReplace(args)
 		return result, nil, err
+	case "related_context":
+		result, err := e.relatedContext(ctx, args)
+		return textResult(result), nil, err
 	default:
 		return nil, nil, fmt.Errorf("unknown tool: %s", tool)
 	}

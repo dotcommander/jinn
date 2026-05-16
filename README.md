@@ -56,7 +56,7 @@ echo '{"tool":"run_shell","args":{"command":"go test ./..."}}' | jinn
 
 ## Toolset
 
-`jinn` exposes 19 specialized tools for coding agents:
+`jinn` exposes 20 specialized tools for coding agents:
 
 | Tool | Description |
 | :--- | :--- |
@@ -79,6 +79,7 @@ echo '{"tool":"run_shell","args":{"command":"go test ./..."}}' | jinn
 | `memory` | Persistent key/value store across sessions. Actions: `save`, `recall`, `list`, `forget`. |
 | `undo` | Browse, preview, and restore file snapshots captured automatically before every mutation. |
 | `lsp_query` | Query a language server for `definition`, `references`, `hover`, `symbols`, or `rename`. |
+| `related_context` | Rank local KB entries, skills, agents, and commands for a prompt or tool failure. |
 
 ---
 

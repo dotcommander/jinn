@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-jinn is a sandboxed tool executor for AI coding agents. Single binary, zero external dependencies — stdlib only. It exposes 17 tools via a one-shot JSON-over-stdin/stdout protocol compatible with OpenAI function calling.
+jinn is a sandboxed tool executor for AI coding agents. Single binary, zero external dependencies — stdlib only. It exposes 20 tools via a one-shot JSON-over-stdin/stdout protocol compatible with OpenAI function calling.
 
 ## Post-/cpt Cleanup
 
@@ -49,6 +49,7 @@ No linter config, no Makefile — intentionally minimal.
 | `undo` | Snapshot history for all file mutations; actions: `list`, `preview`, `restore`, `clear` |
 | `diff_files` | Unified diff between two files |
 | `lsp_query` | Language server queries (gopls, rust-analyzer, pylsp, typescript-language-server, clangd, jdtls, lua-language-server, zls): `definition`, `references`, `hover`, `symbols`, `rename`; `symbol` name auto-detect for column resolution |
+| `related_context` | Offline ranking of local KB entries, skills, agents, and commands for a prompt or tool failure |
 
 ## Architecture
 
@@ -83,6 +84,7 @@ internal/jinn/
   tool_undo.go                   # (e) undo — snapshot list/preview/restore/clear
   tool_diff.go                    # (e) diffFiles — unified diff between two files
   tool_lsp.go                    # (e) lspQuery — 8 language servers, symbol auto-detect, rename preview
+  tool_related_context.go         # (e) related_context — offline local context discovery
   errors.go                      # error code constants + ErrWithSuggestion type (structured errors with codes and hints)
   diff.go                        # unifiedDiff, formatEditPreview
 ```
