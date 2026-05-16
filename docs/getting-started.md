@@ -30,7 +30,7 @@ You'll see the version derived from your VCS tag or module path. To dump all too
 jinn --schema
 ```
 
-This prints the full [OpenAI function-calling schema](https://platform.openai.com/docs/guides/function-calling) for every tool jinn exposes. You can also get this schema at runtime via the [`list_tools`](tool-reference.md#list_tools) tool.
+This prints the full compact [OpenAI function-calling schema](https://platform.openai.com/docs/guides/function-calling) for every tool jinn exposes. For in-protocol discovery, [`list_tools`](tool-reference.md#list_tools) returns compact capability metadata by default and includes the schema only when requested.
 
 ## Your First Tool Call
 

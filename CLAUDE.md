@@ -42,7 +42,7 @@ No linter config, no Makefile — intentionally minimal.
 | `stat_file` | File metadata (size/lines/mtime/type) without reading content |
 | `list_dir` | Recursive find with depth control, hidden files excluded, directories suffixed with `/` |
 | `find_files` | Glob-pattern file search; uses `fd` when available (respects `.gitignore`), falls back to POSIX `find` |
-| `list_tools` | Returns the JSON schema for all tools jinn exposes — same content as `jinn --schema`, but accessible in-protocol |
+| `list_tools` | Returns compact capability metadata; pass `include_schema:true` only when runtime schema discovery is needed |
 | `checksum_tree` | SHA-256 hashes for a file tree, with optional glob filter |
 | `detect_project` | Detect language, framework, build/test/lint commands from config files |
 | `memory` | Persistent key/value store at `~/.config/jinn/memory.json`; actions: `save`, `recall`, `list`, `forget` |

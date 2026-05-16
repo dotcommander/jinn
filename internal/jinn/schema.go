@@ -220,10 +220,12 @@ const Schema = `[
     "type": "function",
     "function": {
       "name": "list_tools",
-      "description": "List tools and schemas.",
+      "description": "List tool capability metadata. Pass include_schema=true only for runtime schema discovery.",
       "parameters": {
         "type": "object",
-        "properties": {}
+        "properties": {
+          "include_schema": {"type": "boolean", "description": "Also include the compact OpenAI tool schema (default: false).", "default": false}
+        }
       }
     }
   },

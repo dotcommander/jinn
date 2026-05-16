@@ -2,6 +2,7 @@ package jinn
 
 import (
 	"context"
+	"strings"
 	"testing"
 )
 
@@ -38,6 +39,21 @@ func TestDispatch_ListTools(t *testing.T) {
 	}
 	if result.Text == "" {
 		t.Error("list_tools result should not be empty")
+	}
+	if strings.Contains(result.Text, `"type":"function"`) {
+		t.Error("list_tools should not include schema unless include_schema is true")
+	}
+}
+
+func TestDispatch_ListToolsIncludeSchema(t *testing.T) {
+	t.Parallel()
+	e, _ := testEngine(t)
+	result, _, err := e.Dispatch(context.Background(), "list_tools", args("include_schema", true))
+	if err != nil {
+		t.Fatalf("list_tools include_schema: %v", err)
+	}
+	if !strings.Contains(result.Text, `"type":"function"`) {
+		t.Error("list_tools include_schema should include compact schema")
 	}
 }
 

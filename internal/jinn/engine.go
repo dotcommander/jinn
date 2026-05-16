@@ -108,7 +108,15 @@ func (e *Engine) Dispatch(ctx context.Context, tool string, args map[string]inte
 		if err != nil {
 			return nil, nil, fmt.Errorf("marshal capabilities: %w", err)
 		}
-		return textResult(string(capsJSON) + "\n\n" + Schema), nil, nil
+		includeSchema, _ := args["include_schema"].(bool)
+		if !includeSchema {
+			return textResult(string(capsJSON)), nil, nil
+		}
+		schema, err := LeanSchema()
+		if err != nil {
+			return nil, nil, fmt.Errorf("lean schema: %w", err)
+		}
+		return textResult(string(capsJSON) + "\n\n" + schema), nil, nil
 	case "checksum_tree":
 		result, err := e.checksumTree(args)
 		return textResult(result), nil, err

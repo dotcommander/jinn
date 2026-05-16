@@ -19,6 +19,45 @@ func TestSchema_Valid(t *testing.T) {
 	}
 }
 
+func TestCompactSchema_Valid(t *testing.T) {
+	t.Parallel()
+	schema, err := CompactSchema()
+	if err != nil {
+		t.Fatalf("CompactSchema: %v", err)
+	}
+	if strings.Contains(schema, "\n") {
+		t.Fatal("compact schema should not contain newlines")
+	}
+	var tools []json.RawMessage
+	if err := json.Unmarshal([]byte(schema), &tools); err != nil {
+		t.Fatalf("compact schema is not valid JSON: %v", err)
+	}
+	if len(tools) != 20 {
+		t.Fatalf("expected 20 tools, got %d", len(tools))
+	}
+}
+
+func TestLeanSchema_Valid(t *testing.T) {
+	t.Parallel()
+	schema, err := LeanSchema()
+	if err != nil {
+		t.Fatalf("LeanSchema: %v", err)
+	}
+	if strings.Contains(schema, "file path to read") {
+		t.Fatal("lean schema should omit nested parameter descriptions")
+	}
+	if !strings.Contains(schema, "Read file contents") {
+		t.Fatal("lean schema should keep function descriptions")
+	}
+	var tools []json.RawMessage
+	if err := json.Unmarshal([]byte(schema), &tools); err != nil {
+		t.Fatalf("lean schema is not valid JSON: %v", err)
+	}
+	if len(tools) != 20 {
+		t.Fatalf("expected 20 tools, got %d", len(tools))
+	}
+}
+
 func TestDispatch_UnknownTool(t *testing.T) {
 	t.Parallel()
 	e, _ := testEngine(t)

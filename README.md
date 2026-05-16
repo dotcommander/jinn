@@ -75,7 +75,7 @@ echo '{"tool":"run_shell","args":{"command":"go test ./..."}}' | jinn
 | `diff_files` | Unified diff between two files with `is_identical` and `first_changed_line` metadata. |
 | `detect_project` | Auto-detect language, frameworks, and build/test/lint commands. |
 | `checksum_tree` | Compute SHA-256 hashes for a tree to verify workspace integrity. |
-| `list_tools` | Programmatic access to the tool schema from within the protocol. |
+| `list_tools` | Programmatic tool capability metadata; can include the compact schema on request. |
 | `memory` | Persistent key/value store across sessions. Actions: `save`, `recall`, `list`, `forget`. |
 | `undo` | Browse, preview, and restore file snapshots captured automatically before every mutation. |
 | `lsp_query` | Query a language server for `definition`, `references`, `hover`, `symbols`, or `rename`. |

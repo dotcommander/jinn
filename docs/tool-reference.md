@@ -445,15 +445,19 @@ echo '{"tool":"run_shell","args":{"command":"rm -rf /tmp/test","dry_run":true}}'
 
 ### list_tools
 
-Get the JSON schema for all tools jinn exposes.
+Get tool capability metadata. By default this avoids returning the full schema again.
 
 ```bash
 echo '{"tool":"list_tools","args":{}}' | jinn
 ```
 
-**Parameters:** none.
+**Parameters:**
 
-This returns the same content as `jinn --schema`, but through the protocol. Use it when the calling agent needs to discover available tools at runtime.
+| Name | Type | Required | Default | Description |
+|------|------|----------|---------|-------------|
+| `include_schema` | boolean | No | `false` | Also include the compact OpenAI tool schema for runtime discovery |
+
+Use `include_schema: true` only when the calling agent needs to discover schemas at runtime.
 
 ### checksum_tree
 

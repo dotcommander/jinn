@@ -34,7 +34,12 @@ func main() {
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
 		case "--schema":
-			fmt.Println(jinn.Schema)
+			schema, err := jinn.LeanSchema()
+			if err != nil {
+				json.NewEncoder(os.Stdout).Encode(jinn.Response{Error: fmt.Sprintf("lean schema: %s", err)})
+				os.Exit(1)
+			}
+			fmt.Println(schema)
 			return
 		case "--version":
 			fmt.Println(jinn.ResolveVersion(version))

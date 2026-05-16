@@ -458,8 +458,8 @@ func TestTokenEfficiency_ListTools_OutputSize(t *testing.T) {
 	}
 
 	tokens := estimateTokens(result.Text)
-	if tokens > 6000 {
-		t.Errorf("list_tools output is %.0f tokens, expected < 6000", tokens)
+	if tokens > 500 {
+		t.Errorf("list_tools output is %.0f tokens, expected < 500", tokens)
 	}
 }
 
@@ -701,7 +701,7 @@ func TestTokenEfficiency_TruncationHint_Conciseness(t *testing.T) {
 
 	// Table of test cases that produce truncated output.
 	tests := []struct {
-		name string
+		name  string
 		setup func() string // returns truncated output text
 	}{
 		{
