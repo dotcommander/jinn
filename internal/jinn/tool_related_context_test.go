@@ -3,6 +3,7 @@ package jinn
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -163,6 +164,154 @@ Package and publish Pi extensions.
 	}
 	if got.Results[0].Name != "pi-release" || got.Results[0].Type != "skill" {
 		t.Fatalf("unexpected result: %#v", got.Results[0])
+	}
+}
+
+func TestRelatedContext_PiPackageSkillRoots(t *testing.T) {
+	e, _ := testEngine(t)
+	home := t.TempDir()
+	pkgRoot := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("JINN_CONFIG_DIR", t.TempDir())
+
+	writeTestFile(t, pkgRoot, "skills/package-skill.md", `---
+name: package-skill
+description: Skill discovered from package metadata
+---
+# Package Skill
+
+Index this unique package index token.
+`)
+	writeTestFile(t, home, ".pi/agent/settings.json", `{"packages":["`+pkgRoot+`"]}`)
+
+	got := callRelatedContext(t, e, args(
+		"query", "package index token",
+		"types", []interface{}{"skill"},
+		"client", "pi",
+		"rebuild", true,
+	))
+	if len(got.Results) != 1 {
+		t.Fatalf("results len = %d, want 1: %#v", len(got.Results), got.Results)
+	}
+	if got.Results[0].Name != "package-skill" || got.Results[0].Type != "skill" {
+		t.Fatalf("unexpected result: %#v", got.Results[0])
+	}
+}
+
+func TestRelatedContext_PiPackageSkillRootsFromObject(t *testing.T) {
+	e, _ := testEngine(t)
+	home := t.TempDir()
+	pkgRoot := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("JINN_CONFIG_DIR", t.TempDir())
+
+	writeTestFile(t, pkgRoot, "skills/package-skill-object.md", `---
+name: package-skill-object
+description: Skill discovered from package object
+---
+# Package Skill Object
+
+Find this package-object token.
+`)
+	writeTestFile(t, home, ".pi/agent/settings.json", `{"packages":[{"source":"`+pkgRoot+`"}]}`)
+
+	got := callRelatedContext(t, e, args(
+		"query", "package-object token",
+		"types", []interface{}{"skill"},
+		"client", "pi",
+		"rebuild", true,
+	))
+	if len(got.Results) != 1 {
+		t.Fatalf("results len = %d, want 1: %#v", len(got.Results), got.Results)
+	}
+	if got.Results[0].Name != "package-skill-object" || got.Results[0].Type != "skill" {
+		t.Fatalf("unexpected result: %#v", got.Results[0])
+	}
+}
+
+func TestRelatedContext_ResolvePiPackageRoot(t *testing.T) {
+	t.Parallel()
+
+	got := relatedContextResolvePiPackageRoot("/home/user", "~/repos/pkg")
+	want := "/home/user/repos/pkg"
+	if got != want {
+		t.Fatalf("resolve home path = %q, want %q", got, want)
+	}
+
+	got = relatedContextResolvePiPackageRoot("/home/user", "./relative/pkg")
+	if got == "" || !strings.HasPrefix(got, "/") {
+		t.Fatalf("expected absolute path for relative source, got %q", got)
+	}
+
+	got = relatedContextResolvePiPackageRoot("/home/user", "npm:pi-package")
+	if got != "" {
+		t.Fatalf("expected npm package source to be skipped, got %q", got)
+	}
+
+	got = relatedContextResolvePiPackageRoot("/home/user", "git:github.com/example/repo@main")
+	want = "/home/user/.pi/agent/git/github.com/example/repo"
+	if got != want {
+		t.Fatalf("resolve git source = %q, want %q", got, want)
+	}
+}
+
+func TestRelatedContext_PiKnowledgeDefaults(t *testing.T) {
+	e, _ := testEngine(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("JINN_CONFIG_DIR", t.TempDir())
+
+	writeTestFile(t, home, ".pi/docs/pi-doc-note.md", "# Pi Docs Note\n\nContains pi-doc-note-token.\n")
+	writeTestFile(t, home, ".pi/agent/kb/agent-kb-note.md", "# Agent KB Note\n\nContains agent-kb-note-token.\n")
+
+	got := callRelatedContext(t, e, args(
+		"query", "agent-kb-note-token",
+		"types", []interface{}{"kb"},
+		"client", "pi",
+		"rebuild", true,
+	))
+	if len(got.Results) != 1 {
+		t.Fatalf("results len = %d, want 1: %#v", len(got.Results), got.Results)
+	}
+	if got.Results[0].Name != "agent-kb-note" || got.Results[0].Type != "kb" {
+		t.Fatalf("unexpected result: %#v", got.Results[0])
+	}
+}
+
+func TestRelatedContext_MultiTypeLimitIsPerType(t *testing.T) {
+	e, _ := testEngine(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("JINN_CONFIG_DIR", t.TempDir())
+
+	writeTestFile(t, home, ".pi/agent/skills/dc-skill.md", `---
+name: dc-skill
+description: dc replacement skill
+---
+# DC Skill
+
+Contains dc parity token.
+`)
+	for i := range 6 {
+		writeTestFile(t, home, filepath.Join(".pi/agent/kb", fmt.Sprintf("dc-kb-%d.md", i)), fmt.Sprintf("# DC KB %d\n\nContains dc parity token.\n", i))
+	}
+
+	got := callRelatedContext(t, e, args(
+		"query", "dc parity token",
+		"types", []interface{}{"skill", "kb"},
+		"client", "pi",
+		"limit", float64(5),
+		"rebuild", true,
+	))
+	if len(got.Results) != 6 {
+		t.Fatalf("results len = %d, want 6 (1 skill + 5 kb): %#v", len(got.Results), got.Results)
+	}
+	counts := map[string]int{}
+	for _, result := range got.Results {
+		counts[result.Type]++
+	}
+	if counts["skill"] != 1 || counts["kb"] != 5 {
+		t.Fatalf("counts = %#v, want skill=1 kb=5; results=%#v", counts, got.Results)
 	}
 }
 

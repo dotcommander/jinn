@@ -369,11 +369,11 @@ func relatedContextSourceDirs(client string) ([]string, []string) {
 	case "codex":
 		candidates = append(candidates, filepath.Join(home, ".codex", "skills"))
 	case "pi":
-		candidates = append(candidates, filepath.Join(home, ".pi", "agent", "skills"))
+		candidates = append(candidates, relatedContextPiSourceDirs(home)...)
 	case "all":
 		candidates = append(candidates, relatedContextClaudeDirs(home)...)
 		candidates = append(candidates, filepath.Join(home, ".codex", "skills"))
-		candidates = append(candidates, filepath.Join(home, ".pi", "agent", "skills"))
+		candidates = append(candidates, relatedContextPiSourceDirs(home)...)
 	}
 	configDirs, configWarnings := relatedContextConfigDirs()
 	candidates = append(candidates, configDirs...)
@@ -381,6 +381,10 @@ func relatedContextSourceDirs(client string) ([]string, []string) {
 	seen := make(map[string]bool, len(candidates))
 	out := make([]string, 0, len(candidates))
 	for _, dir := range candidates {
+		real, err := filepath.EvalSymlinks(dir)
+		if err == nil {
+			dir = real
+		}
 		if dir == "" || seen[dir] {
 			continue
 		}
@@ -392,6 +396,16 @@ func relatedContextSourceDirs(client string) ([]string, []string) {
 		out = append(out, dir)
 	}
 	return out, configWarnings
+}
+
+func relatedContextPiSourceDirs(home string) []string {
+	dirs := []string{
+		filepath.Join(home, ".pi", "agent", "skills"),
+		filepath.Join(home, ".pi", "docs"),
+		filepath.Join(home, ".pi", "agent", "kb"),
+	}
+	dirs = append(dirs, relatedContextPiSkillPackageDirs(home)...)
+	return dirs
 }
 
 func relatedContextClaudeDirs(home string) []string {
@@ -490,6 +504,80 @@ func relatedContextPluginComponentDirs(installPath string) []string {
 	dirs = append(dirs, filepath.Join(installPath, "agents"))
 	dirs = append(dirs, relatedContextManifestPaths(installPath, manifest.Commands)...)
 	return dirs
+}
+
+func relatedContextPiSkillPackageDirs(home string) []string {
+	settingsPath := filepath.Join(home, ".pi", "agent", "settings.json")
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		return nil
+	}
+
+	var payload struct {
+		Packages []json.RawMessage `json:"packages"`
+	}
+	if err := json.Unmarshal(data, &payload); err != nil || len(payload.Packages) == 0 {
+		return nil
+	}
+
+	var dirs []string
+	for _, raw := range payload.Packages {
+		var pkgSource string
+		if err := json.Unmarshal(raw, &pkgSource); err == nil {
+			pkgSource = strings.TrimSpace(pkgSource)
+		} else {
+			var obj struct {
+				Source string `json:"source"`
+			}
+			if err := json.Unmarshal(raw, &obj); err != nil {
+				continue
+			}
+			pkgSource = strings.TrimSpace(obj.Source)
+		}
+		root := relatedContextResolvePiPackageRoot(home, pkgSource)
+		if root == "" {
+			continue
+		}
+		skillsRoot := filepath.Join(root, "skills")
+		dirs = append(dirs, skillsRoot)
+	}
+	return dirs
+}
+
+func relatedContextResolvePiPackageRoot(home, source string) string {
+	source = strings.TrimSpace(source)
+	if source == "" {
+		return ""
+	}
+
+	if strings.HasPrefix(source, "npm:") || strings.HasPrefix(source, "http:") || strings.HasPrefix(source, "https:") || strings.HasPrefix(source, "ssh:") {
+		return ""
+	}
+
+	if strings.HasPrefix(source, "git:") || strings.HasPrefix(source, "github:") {
+		rest := strings.TrimPrefix(strings.TrimPrefix(source, "git:"), "github:")
+		if strings.HasPrefix(rest, "git@") {
+			parts := strings.SplitN(strings.TrimPrefix(rest, "git@"), ":", 2)
+			if len(parts) == 2 {
+				rest = filepath.Join(parts[0], parts[1])
+			}
+		}
+		if at := strings.LastIndex(rest, "@"); at >= 0 {
+			rest = rest[:at]
+		}
+		return filepath.Join(home, ".pi", "agent", "git", filepath.FromSlash(rest))
+	}
+
+	target := source
+	if target == "~" {
+		target = home
+	} else if strings.HasPrefix(target, "~"+string(filepath.Separator)) {
+		target = filepath.Join(home, strings.TrimPrefix(target, "~/"))
+	}
+	if !filepath.IsAbs(target) {
+		target, _ = filepath.Abs(target)
+	}
+	return target
 }
 
 func relatedContextManifestPaths(installPath string, raw json.RawMessage) []string {
@@ -737,10 +825,27 @@ func scoreRelatedContext(entries []relatedContextEntry, tokens []string, allowed
 		}
 		return results[i].Path < results[j].Path
 	})
-	if limit > 0 && len(results) > limit {
-		results = results[:limit]
+	return limitRelatedContextResults(results, allowedTypes, limit)
+}
+
+func limitRelatedContextResults(results []relatedContextResult, allowedTypes map[string]bool, limit int) []relatedContextResult {
+	if limit <= 0 || len(results) <= limit {
+		return results
 	}
-	return results
+	if len(allowedTypes) <= 1 {
+		return results[:limit]
+	}
+
+	counts := make(map[string]int, len(allowedTypes))
+	out := make([]relatedContextResult, 0, min(len(results), limit*len(allowedTypes)))
+	for _, result := range results {
+		if counts[result.Type] >= limit {
+			continue
+		}
+		counts[result.Type]++
+		out = append(out, result)
+	}
+	return out
 }
 
 func scoreRelatedEntry(entry relatedContextEntry, tokens []string) (int, []string) {

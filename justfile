@@ -16,6 +16,10 @@ install: build
 test:
     go test -race ./...
 
+# Re-run the related_context regression test (client=pi source inclusion)
+related-context-test:
+    bash scripts/related-context-test.sh
+
 # Remove the local jinn binary and the demo binary
 clean:
     rm -f ./jinn ./examples/demo/demo
