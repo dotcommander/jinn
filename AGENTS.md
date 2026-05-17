@@ -222,12 +222,14 @@ If the binary is not on `PATH`, the response includes a `suggestion` with the in
 | `references` | `path`, `line`, `character` | One `file:line:col` per reference (capped at 100) |
 | `hover` | `path`, `line`, `character` | Documentation / type info string |
 | `symbols` | `path` | `Kind   Name   (line:col)` table |
+| `diagnostics` | `path` | Pull diagnostics for the file as `file:line:col severity source/code: message` |
 
-`line` and `character` are 1-based. `symbols` does not require a position.
+`line` and `character` are 1-based. `symbols` and `diagnostics` do not require a position.
 
 ```bash
 echo '{"tool":"lsp_query","args":{"action":"hover","path":"main.go","line":12,"character":5}}' | jinn
 echo '{"tool":"lsp_query","args":{"action":"symbols","path":"internal/jinn/engine.go"}}' | jinn
+echo '{"tool":"lsp_query","args":{"action":"diagnostics","path":"main.go"}}' | jinn
 ```
 
 ---

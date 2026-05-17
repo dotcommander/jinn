@@ -48,7 +48,7 @@ No linter config, no Makefile — intentionally minimal.
 | `memory` | Persistent key/value store at `~/.config/jinn/memory.json`; actions: `save`, `recall`, `list`, `forget` |
 | `undo` | Snapshot history for all file mutations; actions: `list`, `preview`, `restore`, `clear` |
 | `diff_files` | Unified diff between two files |
-| `lsp_query` | Language server queries (gopls, rust-analyzer, pylsp, typescript-language-server, clangd, jdtls, lua-language-server, zls): `definition`, `references`, `hover`, `symbols`, `rename`; `symbol` name auto-detect for column resolution |
+| `lsp_query` | Language server queries (gopls, rust-analyzer, pylsp, typescript-language-server, clangd, jdtls, lua-language-server, zls): `definition`, `references`, `hover`, `symbols`, `diagnostics`, `rename`; `symbol` name auto-detect for column resolution |
 | `related_context` | Offline ranking of local KB entries, skills, agents, and commands for a prompt or tool failure |
 
 ## Architecture
