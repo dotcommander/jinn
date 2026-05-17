@@ -19,7 +19,7 @@ type lspLauncher func(argv []string) (stdin io.WriteCloser, stdout io.ReadCloser
 
 func realLauncher(argv []string) (io.WriteCloser, io.ReadCloser, func() error, error) {
 	cmd := exec.Command(argv[0], argv[1:]...) //nolint:gosec
-	cmd.Stderr = io.Discard // suppress LSP server stderr noise
+	cmd.Stderr = io.Discard                   // suppress LSP server stderr noise
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("lsp stdin pipe: %w", err)
@@ -78,7 +78,7 @@ func formatLocation(loc lspLocation) string {
 // lspLocationLink is an alternative definition response format.
 // Some servers return LocationLink[] instead of Location[].
 type lspLocationLink struct {
-	TargetURI            string `json:"targetUri"`
+	TargetURI            string   `json:"targetUri"`
 	TargetRange          lspRange `json:"targetRange"`
 	TargetSelectionRange lspRange `json:"targetSelectionRange"`
 }
@@ -89,6 +89,10 @@ type lspRange struct {
 		Line      int `json:"line"`
 		Character int `json:"character"`
 	} `json:"start"`
+	End struct {
+		Line      int `json:"line"`
+		Character int `json:"character"`
+	} `json:"end"`
 }
 
 // lspWorkspaceEdit is the result of textDocument/rename.
@@ -100,6 +104,15 @@ type lspWorkspaceEdit struct {
 type lspTextEdit struct {
 	Range   lspRange `json:"range"`
 	NewText string   `json:"newText"`
+}
+
+// lspDiagnostic is the subset of LSP Diagnostic fields Jinn renders.
+type lspDiagnostic struct {
+	Range    lspRange `json:"range"`
+	Severity int      `json:"severity,omitempty"`
+	Code     any      `json:"code,omitempty"`
+	Source   string   `json:"source,omitempty"`
+	Message  string   `json:"message"`
 }
 
 func newLSPClient(launcher lspLauncher) *lspClient {
@@ -216,14 +229,20 @@ func (c *lspClient) handshake(workDir string) error {
 		Version string `json:"version"`
 	}
 	type initParams struct {
-		ProcessID    int        `json:"processId"`
-		RootURI      string     `json:"rootUri"`
-		Capabilities struct{}   `json:"capabilities"`
-		ClientInfo   clientInfo `json:"clientInfo"`
+		ProcessID    int            `json:"processId"`
+		RootURI      string         `json:"rootUri"`
+		Capabilities map[string]any `json:"capabilities"`
+		ClientInfo   clientInfo     `json:"clientInfo"`
 	}
 	_, err := c.sendRequest("initialize", initParams{
-		ProcessID:  os.Getpid(),
-		RootURI:    pathToURI(workDir),
+		ProcessID: os.Getpid(),
+		RootURI:   pathToURI(workDir),
+		Capabilities: map[string]any{
+			"textDocument": map[string]any{
+				"diagnostic":         map[string]any{"dynamicRegistration": false},
+				"publishDiagnostics": map[string]any{},
+			},
+		},
 		ClientInfo: clientInfo{Name: "jinn", Version: "0.1"},
 	})
 	if err != nil {

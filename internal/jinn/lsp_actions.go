@@ -167,9 +167,9 @@ func symbolKindName(k int) string {
 
 // lspDocSymbol is DocumentSymbol with Children for hierarchical output.
 type lspDocSymbol struct {
-	Name           string         `json:"name"`
-	Kind           int            `json:"kind"`
-	Range          struct {
+	Name  string `json:"name"`
+	Kind  int    `json:"kind"`
+	Range struct {
 		Start struct {
 			Line int `json:"line"`
 		} `json:"start"`
@@ -237,6 +237,89 @@ func formatSymbolTree(sb *strings.Builder, syms []lspDocSymbol, depth int) {
 		if len(s.Children) > 0 {
 			formatSymbolTree(sb, s.Children, depth+1)
 		}
+	}
+}
+
+func (c *lspClient) diagnostics(absPath string) (string, error) {
+	raw, err := c.sendRequest("textDocument/diagnostic", map[string]any{
+		"textDocument":     map[string]string{"uri": pathToURI(absPath)},
+		"identifier":       nil,
+		"previousResultId": nil,
+	})
+	if err != nil {
+		return "", err
+	}
+	if string(raw) == "null" || len(raw) == 0 {
+		return "no diagnostics found", nil
+	}
+
+	diagnostics := unmarshalDiagnostics(raw)
+	if len(diagnostics) == 0 {
+		return "no diagnostics found", nil
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("%d diagnostic(s) found:\n\n", len(diagnostics)))
+	for _, diagnostic := range diagnostics {
+		line := diagnostic.Range.Start.Line + 1
+		character := diagnostic.Range.Start.Character + 1
+		severity := diagnosticSeverityName(diagnostic.Severity)
+		source := diagnostic.Source
+		if source == "" {
+			source = "lsp"
+		}
+		code := diagnosticCodeString(diagnostic.Code)
+		if code != "" {
+			code = " " + code
+		}
+		fmt.Fprintf(&sb, "%s:%d:%d: %s %s%s: %s\n", absPath, line, character, severity, source, code, diagnostic.Message)
+	}
+	return strings.TrimRight(sb.String(), "\n"), nil
+}
+
+func unmarshalDiagnostics(raw json.RawMessage) []lspDiagnostic {
+	var pull struct {
+		Items []lspDiagnostic `json:"items"`
+	}
+	if err := json.Unmarshal(raw, &pull); err == nil && pull.Items != nil {
+		return pull.Items
+	}
+
+	var diagnostics []lspDiagnostic
+	if err := json.Unmarshal(raw, &diagnostics); err == nil {
+		return diagnostics
+	}
+	return nil
+}
+
+func diagnosticSeverityName(severity int) string {
+	switch severity {
+	case 1:
+		return "error"
+	case 2:
+		return "warning"
+	case 3:
+		return "info"
+	case 4:
+		return "hint"
+	default:
+		return "diagnostic"
+	}
+}
+
+func diagnosticCodeString(code any) string {
+	switch v := code.(type) {
+	case nil:
+		return ""
+	case string:
+		return v
+	case float64:
+		if v == float64(int64(v)) {
+			return fmt.Sprintf("%d", int64(v))
+		}
+		return fmt.Sprintf("%g", v)
+	default:
+		return fmt.Sprint(v)
 	}
 }
 

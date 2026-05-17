@@ -143,6 +143,46 @@ func TestLSP_Symbols_FormattedTable(t *testing.T) {
 	}
 }
 
+func TestLSP_Diagnostics_ReturnsItems(t *testing.T) {
+	t.Parallel()
+	e, dir := testEngine(t)
+	writeLSPFile(t, dir, "src.go")
+
+	out, err := e.lspQueryWithLauncher(lspArgs(
+		"action", "diagnostics",
+		"path", "src.go",
+	), newMockLauncher(false))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "1 diagnostic(s) found") {
+		t.Errorf("expected diagnostics header in output, got: %q", out)
+	}
+	if !strings.Contains(out, "error mock-lsp E100: mock diagnostic") {
+		t.Errorf("expected formatted diagnostic in output, got: %q", out)
+	}
+	if !strings.Contains(out, ":3:5:") {
+		t.Errorf("expected 1-based diagnostic position in output, got: %q", out)
+	}
+}
+
+func TestLSP_Diagnostics_NullResponse(t *testing.T) {
+	t.Parallel()
+	e, dir := testEngine(t)
+	writeLSPFile(t, dir, "src.go")
+
+	out, err := e.lspQueryWithLauncher(lspArgs(
+		"action", "diagnostics",
+		"path", "src.go",
+	), newMockLauncherCfg(mockConfig{nullDiagnostics: true}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out != "no diagnostics found" {
+		t.Errorf("expected no diagnostics message, got: %q", out)
+	}
+}
+
 // --- error-path tests ---
 
 func TestLSP_UnknownExtension_ErrWithSuggestion(t *testing.T) {

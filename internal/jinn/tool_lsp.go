@@ -87,7 +87,7 @@ func (e *Engine) lspQueryWithLauncher(args map[string]interface{}, launcher lspL
 	if action == "" {
 		return "", &ErrWithSuggestion{
 			Err:        fmt.Errorf("lsp_query: 'action' is required"),
-			Suggestion: "set action to one of: definition, references, hover, symbols, rename",
+			Suggestion: "set action to one of: definition, references, hover, symbols, diagnostics, rename",
 		}
 	}
 	if path == "" {
@@ -115,8 +115,8 @@ func (e *Engine) lspQueryWithLauncher(args map[string]interface{}, launcher lspL
 		}
 	}
 
-	// position required for all actions except symbols
-	needsPosition := action != "symbols"
+	// position required for all actions except whole-file queries
+	needsPosition := action != "symbols" && action != "diagnostics"
 	if needsPosition && line <= 0 {
 		return "", &ErrWithSuggestion{
 			Err:        fmt.Errorf("lsp_query: 'line' is required for action %q", action),
@@ -188,12 +188,14 @@ func (e *Engine) lspQueryWithLauncher(args map[string]interface{}, launcher lspL
 			out, qErr = client.hover(absPath, line, char)
 		case "symbols":
 			out, qErr = client.symbols(absPath)
+		case "diagnostics":
+			out, qErr = client.diagnostics(absPath)
 		case "rename":
 			out, qErr = client.rename(absPath, line, char, newName, e.workDir)
 		default:
 			qErr = &ErrWithSuggestion{
 				Err:        fmt.Errorf("unknown lsp action: %s", action),
-				Suggestion: "use one of: definition, references, hover, symbols, rename",
+				Suggestion: "use one of: definition, references, hover, symbols, diagnostics, rename",
 			}
 		}
 		done <- result{out: out, err: qErr}

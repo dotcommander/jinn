@@ -13,11 +13,12 @@ type mockConfig struct {
 	slow bool // block forever (timeout test)
 
 	// per-method overrides: when true, the server returns null for that method
-	nullDefinition bool
-	nullReferences bool
-	nullHover      bool
-	nullSymbols    bool
-	nullRename     bool
+	nullDefinition  bool
+	nullReferences  bool
+	nullHover       bool
+	nullSymbols     bool
+	nullDiagnostics bool
+	nullRename      bool
 
 	// manyReferences: if > 0, return this many reference locations
 	manyReferences int
@@ -189,6 +190,26 @@ func runMockServer(r io.Reader, w io.WriteCloser, cfg mockConfig) {
 				},
 			}
 			writeMockFrame(w, mockReply(msg.ID, syms))
+
+		case "textDocument/diagnostic":
+			if cfg.nullDiagnostics {
+				writeMockFrame(w, mockReply(msg.ID, nil))
+				continue
+			}
+			writeMockFrame(w, mockReply(msg.ID, map[string]any{
+				"items": []any{
+					map[string]any{
+						"range": map[string]any{
+							"start": map[string]any{"line": 2, "character": 4},
+							"end":   map[string]any{"line": 2, "character": 7},
+						},
+						"severity": 1,
+						"source":   "mock-lsp",
+						"code":     "E100",
+						"message":  "mock diagnostic",
+					},
+				},
+			}))
 
 		case "textDocument/rename":
 			if cfg.nullRename {

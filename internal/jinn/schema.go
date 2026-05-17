@@ -315,7 +315,7 @@ const Schema = `[
       "parameters": {
         "type": "object",
         "properties": {
-          "action":    {"type": "string", "enum": ["definition", "references", "hover", "symbols", "rename"], "description": "Query type. rename returns a preview of changes (does not apply them)."},
+          "action":    {"type": "string", "enum": ["definition", "references", "hover", "symbols", "diagnostics", "rename"], "description": "Query type. diagnostics returns pull diagnostics; rename returns a preview of changes (does not apply them)."},
           "path":      {"type": "string", "description": "Path to source file, relative to workDir."},
           "line":      {"type": "integer", "description": "1-based line number. Required for definition/references/hover/rename."},
           "character": {"type": "integer", "description": "1-based character offset within the line. Required for definition/references/hover/rename unless symbol is provided."},
@@ -389,7 +389,7 @@ var toolFeatures = map[string][]string{
 	"checksum_tree":  {"baseline_diff"},
 	"diff_files":     {"context_lines"},
 	"search_replace": {"regex", "capture_groups", "multi_file", "glob_patterns", "replace_all", "dry_run", "case_insensitive", "multiline"},
-	"lsp_query":      {"definition", "references", "hover", "symbols", "rename", "symbol_column", "context_lines"},
+	"lsp_query":      {"definition", "references", "hover", "symbols", "diagnostics", "rename", "symbol_column", "context_lines"},
 }
 
 // Request is the one-shot tool invocation envelope.
