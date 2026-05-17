@@ -177,9 +177,12 @@ echo '{"tool":"lsp_query","args":{"action":"definition","path":"main.go","line":
 
 # List all symbols in a file
 echo '{"tool":"lsp_query","args":{"action":"symbols","path":"internal/jinn/engine.go"}}' | jinn
+
+# Pull diagnostics for a file
+echo '{"tool":"lsp_query","args":{"action":"diagnostics","path":"main.go"}}' | jinn
 ```
 
-Supported actions: `definition`, `references`, `hover`, `symbols`, and `rename` preview. Supported extensions include Go, Rust, Python, TypeScript/JavaScript, C/C++, Java, Lua, and Zig. The server binary must be on `PATH`; if missing, the response includes a `suggestion` with the install command.
+Supported actions: `definition`, `references`, `hover`, `symbols`, `diagnostics`, and `rename` preview. Supported extensions include Go, Rust, Python, TypeScript/JavaScript, C/C++, Java, Lua, and Zig. The server binary must be on `PATH`; if missing, the response includes a `suggestion` with the install command.
 
 ## What's Next
 

@@ -620,10 +620,10 @@ echo '{"tool":"lsp_query","args":{"action":"hover","path":"main.go","line":12,"c
 
 | Name | Type | Required | Default | Description |
 |------|------|----------|---------|-------------|
-| `action` | string | Yes | -- | `definition`, `references`, `hover`, or `symbols` |
+| `action` | string | Yes | -- | `definition`, `references`, `hover`, `symbols`, `diagnostics`, or `rename` |
 | `path` | string | Yes | -- | File path relative to working directory |
-| `line` | int | For non-`symbols` | -- | 1-based line number of the symbol |
-| `character` | int | For non-`symbols` | -- | 1-based character offset within the line |
+| `line` | int | For position actions | -- | 1-based line number of the symbol |
+| `character` | int | For position actions | -- | 1-based character offset within the line |
 
 **Supported extensions and servers:**
 
@@ -642,10 +642,12 @@ echo '{"tool":"lsp_query","args":{"action":"hover","path":"main.go","line":12,"c
 | `references` | One `file:line:col` per reference, up to 100. Truncation noted with `[truncated: showing N of M]`. |
 | `hover` | Documentation / type signature string from the server |
 | `symbols` | `Kind   Name   (line:col)` table for every symbol in the file |
+| `diagnostics` | One `file:line:col severity source/code: message` line per diagnostic |
 
 **Notes:**
 
 - The language server is started, queried, and torn down within a single call. There is no persistent daemon.
+- `diagnostics` uses the LSP pull diagnostics request and may depend on server support.
 - `rename` returns a preview of changes; it does not modify files.
 - Hard timeout: 10 seconds per query. Slow server startups may cause timeouts on cold runs.
 - If the server binary is not on `PATH`, `ok: false` is returned with a `suggestion` containing the install command.
