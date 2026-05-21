@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"syscall"
 	"time"
 )
 
@@ -52,10 +51,9 @@ func (e *Engine) runShell(ctx context.Context, args map[string]interface{}) (str
 		timeout = 300
 	}
 
-	// Always use a process group so SIGKILL reaches background processes too.
-	// exec.CommandContext only kills the direct child; our timer kills -pgid.
+	// Configure subprocess cleanup so timeouts also terminate child processes where supported.
 	c := exec.CommandContext(ctx, "bash", "-c", cmd)
-	c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	procTree := configureProcessGroup(c)
 
 	outBuf := &boundedWriter{limit: 1 << 20} // 1 MB capture buffer
 	errBuf := &boundedWriter{limit: 1 << 20} // 1 MB capture buffer
@@ -69,10 +67,10 @@ func (e *Engine) runShell(ctx context.Context, args map[string]interface{}) (str
 	if err := c.Start(); err != nil {
 		exitCode = 1
 	} else {
-		pgid := c.Process.Pid // bash is the group leader (Setpgid=true)
+		procTree.afterStart(c)
+		defer procTree.cleanup()
 		timer := time.AfterFunc(time.Duration(timeout)*time.Second, func() {
-			// Negative pgid targets the whole process group.
-			syscall.Kill(-pgid, syscall.SIGKILL) //nolint:errcheck
+			procTree.kill(c)
 		})
 		if err := c.Wait(); err != nil {
 			var exitErr *exec.ExitError
