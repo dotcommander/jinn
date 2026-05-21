@@ -253,6 +253,44 @@ echo '{"tool":"apply_patch","args":{"patch":"*** Begin Patch\n*** Update File: m
 - Writes are per-file atomic. If a later write fails after validation, earlier successful writes are not rolled back.
 - Update hunks support progressive fuzzy matching when exact context fails.
 
+### undo
+
+Browse and restore file snapshots. jinn captures a snapshot automatically before every `write_file`, `edit_file`, `multi_edit`, and `apply_patch` mutation.
+
+```bash
+echo '{"tool":"undo","args":{"action":"list"}}' | jinn
+```
+
+**Parameters:**
+
+| Name | Type | Required | Default | Description |
+|------|------|----------|---------|-------------|
+| `action` | string | Yes | -- | `list`, `preview`, `restore`, or `clear` |
+| `id` | string | For `preview`, `restore` | -- | Snapshot ID. A unique prefix of the ID also works. |
+| `limit` | int | No | all | Maximum number of snapshots to return for `list` |
+
+**Actions:**
+
+| Action | Required args | Effect |
+|--------|--------------|--------|
+| `list` | -- | List snapshots newest-first with ID, file path, timestamp, and operation |
+| `preview` | `id` | Unified diff between the snapshot and the current file contents |
+| `restore` | `id` | Revert the file to the snapshot contents via an atomic write |
+| `clear` | -- | Delete all snapshot history |
+
+**Notes:**
+
+- Snapshots are recorded automatically -- there is no "save snapshot" action.
+- History is bounded; the oldest snapshots are evicted once the limit is reached.
+- `preview` and `restore` accept any unique prefix of a snapshot ID, so the short form shown by `list` works directly.
+
+List snapshots, then restore one:
+
+```bash
+echo '{"tool":"undo","args":{"action":"list"}}' | jinn
+echo '{"tool":"undo","args":{"action":"restore","id":"a1b2c3"}}' | jinn
+```
+
 ---
 
 ## Search and Discovery
@@ -624,6 +662,8 @@ echo '{"tool":"lsp_query","args":{"action":"hover","path":"main.go","line":12,"c
 | `path` | string | Yes | -- | File path relative to working directory |
 | `line` | int | For position actions | -- | 1-based line number of the symbol |
 | `character` | int | For position actions | -- | 1-based character offset within the line |
+| `symbol` | string | No | -- | Identifier name. Supply instead of `character` and jinn resolves the column on `line` automatically. |
+| `new_name` | string | For `rename` | -- | New identifier name. Required when `action` is `rename`. |
 
 **Supported extensions and servers:**
 
@@ -633,6 +673,10 @@ echo '{"tool":"lsp_query","args":{"action":"hover","path":"main.go","line":12,"c
 | `.rs` | `rust-analyzer` | `rustup component add rust-analyzer` |
 | `.py` | `pylsp` | `pip install python-lsp-server` |
 | `.ts`, `.tsx`, `.js`, `.jsx` | `typescript-language-server` | `npm install -g typescript-language-server typescript` |
+| `.c`, `.h`, `.cpp`, `.cc`, `.cxx`, `.hpp` | `clangd` | bundled with LLVM or via system package manager |
+| `.java` | `jdtls` | install the Eclipse JDT Language Server |
+| `.lua` | `lua-language-server` | https://github.com/LuaLS/lua-language-server |
+| `.zig` | `zls` | https://github.com/zigtools/zls |
 
 **Returns by action:**
 

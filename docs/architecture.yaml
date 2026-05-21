@@ -10,21 +10,23 @@ phases:
       - fork:
           gate: "os.Args[1]"
           branches:
-            - { condition: "--schema", label: "dump OpenAI schema", subtitle: "function-calling JSON to stdout" }
+            - { condition: "--schema", label: "dump OpenAI schema", subtitle: "LeanSchema → function-calling JSON to stdout" }
             - { condition: "--version", label: "resolve version", subtitle: "ldflags → VCS → module" }
             - { condition: "--help / -h", label: "print usage" }
             - { condition: "no args", label: "stdin guard", subtitle: "TTY → help · pipe → execute" }
       - { label: "signal handler", subtitle: "SIGINT + SIGTERM → ctx cancel" }
     files:
       - cmd/jinn/main.go
+      - internal/jinn/schema.go
+      - internal/jinn/schema_compact.go
 
   - name: Bootstrap
     kind: Parse
     description: "resolve sandbox root and decode the single JSON request"
     stages:
       - { label: "resolve workDir", subtitle: "Getwd → EvalSymlinks" }
-      - { label: "probe rg", subtitle: "exec.LookPath for ripgrep", style: io }
-      - { label: "New(workDir)", subtitle: "allocate Engine + fileTracker", style: boot }
+      - { label: "probe rg / fd", subtitle: "exec.LookPath for ripgrep + fd", style: io }
+      - { label: "New(workDir, version)", subtitle: "allocate Engine + fileTracker", style: boot }
       - fork:
           gate: "json.Decode(stdin)"
           branches:
@@ -34,13 +36,14 @@ phases:
     files:
       - internal/jinn/engine.go
       - internal/jinn/tracker.go
+      - internal/jinn/config.go
 
   - name: Security
     kind: Gate
     description: "every filesystem path passes five checks before any I/O"
     stages:
       - { label: "checkPath", subtitle: "synchronous gate · all-or-reject", style: gate, wide: true }
-      - { label: "resolve path", subtitle: "relative → abs · filepath.Clean" }
+      - { label: "resolve path", subtitle: "relative → abs · ~ expand · filepath.Clean" }
       - { label: "eval symlinks", subtitle: "real path for macOS /tmp" }
       - { label: "sensitive check", subtitle: "reject .git .ssh .aws .gnupg .env" }
       - { label: "boundary check", subtitle: "HasPrefix(real, workDir)" }
@@ -49,19 +52,31 @@ phases:
 
   - name: Dispatch
     kind: Execute
-    description: "route to one of eight tool handlers"
+    description: "route to one of twenty tool handlers"
     stages:
       - fork:
           gate: "tool name"
           branches:
-            - { condition: "read_file", label: "readFile", subtitle: "50 MB guard · binary detect · windowed lines" }
+            - { condition: "run_shell", label: "runShell", subtitle: "bash -c · env allow-list · 300s max · risk classify", wide: true }
+            - { condition: "read_file", label: "readFile", subtitle: "50 MB guard · MIME detect · windowed lines · truncate strategy" }
+            - { condition: "multi_read", label: "multiRead", subtitle: "batch ≤20 files · per-file errors", wide: true }
             - { condition: "write_file", label: "writeFile", subtitle: "stale check → atomic write → rename" }
             - { condition: "edit_file", label: "editFile", subtitle: "exact match · fuzzy fallback · atomic write" }
             - { condition: "multi_edit", label: "multiEdit", subtitle: "validate-all-then-apply-all batch", wide: true }
-            - { condition: "search_files", label: "searchFiles", subtitle: "rg preferred · grep fallback" }
-            - { condition: "run_shell", label: "runShell", subtitle: "bash -c · env allow-list · 300s max", wide: true }
+            - { condition: "apply_patch", label: "applyPatch", subtitle: "Codex-style patch · add/delete/update" }
+            - { condition: "diff_files", label: "diffFiles", subtitle: "unified diff between two files" }
+            - { condition: "search_files", label: "searchFiles", subtitle: "rg preferred · grep fallback · 3 formats" }
+            - { condition: "search_replace", label: "searchReplace", subtitle: "regex multi-file replace · ≤50 files", wide: true }
             - { condition: "stat_file", label: "statFile", subtitle: "type + size + lines + mtime" }
             - { condition: "list_dir", label: "listDir", subtitle: "find → sort · hidden excluded" }
+            - { condition: "find_files", label: "findFiles", subtitle: "fd → find · glob pattern" }
+            - { condition: "list_tools", label: "listTools", subtitle: "capability metadata · inline in engine.go" }
+            - { condition: "checksum_tree", label: "checksumTree", subtitle: "SHA-256 file tree · glob filter" }
+            - { condition: "detect_project", label: "detectProject", subtitle: "language · framework · build/test/lint" }
+            - { condition: "memory", label: "memoryTool", subtitle: "save · recall · list · forget" }
+            - { condition: "undo", label: "undoTool", subtitle: "list · preview · restore · clear" }
+            - { condition: "lsp_query", label: "lspQuery", subtitle: "8 language servers · symbol auto-detect", wide: true }
+            - { condition: "related_context", label: "relatedContext", subtitle: "offline KB/skill/agent/command ranking" }
       - fork:
           gate: "edit match count"
           branches:
@@ -69,30 +84,57 @@ phases:
             - { condition: "1 exact", label: "apply edit" }
             - { condition: "> 1", label: "ambiguous error" }
     files:
+      - internal/jinn/tool_shell.go
+      - internal/jinn/command_risk.go
+      - internal/jinn/command_risk_parse.go
+      - internal/jinn/exitcode.go
       - internal/jinn/tool_read.go
+      - internal/jinn/tool_multi_read.go
       - internal/jinn/tool_write.go
       - internal/jinn/tool_edit.go
       - internal/jinn/tool_multi_edit.go
+      - internal/jinn/tool_patch.go
+      - internal/jinn/patch.go
+      - internal/jinn/tool_diff.go
+      - internal/jinn/diff.go
+      - internal/jinn/diff_edit_fast.go
       - internal/jinn/tool_search.go
-      - internal/jinn/tool_shell.go
+      - internal/jinn/tool_search_replace.go
+      - internal/jinn/search_parse.go
       - internal/jinn/tool_stat.go
       - internal/jinn/tool_list.go
+      - internal/jinn/tool_find.go
+      - internal/jinn/tool_checksum.go
+      - internal/jinn/tool_detect.go
+      - internal/jinn/tool_memory.go
+      - internal/jinn/tool_undo.go
+      - internal/jinn/tool_lsp.go
+      - internal/jinn/lsp_client.go
+      - internal/jinn/lsp_actions.go
+      - internal/jinn/tool_related_context.go
+      - internal/jinn/errors.go
 
   - name: Output
     kind: Transform
-    description: "normalize and truncate tool results before encoding"
+    description: "compress, normalize, and truncate tool results before encoding"
     stages:
+      - { label: "compress", subtitle: "strategy chain · run_shell auto · others opt-in", wide: true }
+      - { label: "command-aware", subtitle: "column trim · git log condense (compress_shell)" }
       - { label: "collapseRepeated", subtitle: "3+ identical lines → collapsed" }
       - { label: "boundedWriter", subtitle: "1 MB hard cap · spill to tempfile", wide: true }
       - fork:
           gate: "truncation mode"
           branches:
             - { condition: "shell", label: "truncateTail", subtitle: "keep last 200 lines (errors at end)" }
-            - { condition: "read / list", label: "truncateOutput", subtitle: "head 50% + tail 50% at 200 lines" }
+            - { condition: "read / list", label: "truncateOutput", subtitle: "head/tail/middle per truncate param" }
             - { condition: "search", label: "truncateOutput", subtitle: "100 lines · per-line 200 rune cap" }
+            - { condition: "code file", label: "smartTruncate", subtitle: "brace-depth heuristic for C-syntax" }
       - { label: "normalize", subtitle: "stripBom · detectLineEnding · restore after edit" }
     files:
+      - internal/jinn/compress.go
+      - internal/jinn/compress_shell.go
       - internal/jinn/output.go
+      - internal/jinn/truncate_smart.go
       - internal/jinn/normalize.go
 
   - name: Respond
@@ -123,3 +165,13 @@ stores:
       - { stage: "writeFile", access: "w", note: "write → chmod → sync → rename to target" }
       - { stage: "editFile", access: "w", note: "same atomic pattern" }
       - { stage: "multiEdit", access: "w", note: "one temp per file in apply phase" }
+  - name: "~/.config/jinn/history/ (undo snapshots)"
+    writers:
+      - { stage: "writeFile", access: "w", note: "snapshot before mutation · gzip/raw blob codec" }
+      - { stage: "editFile", access: "w", note: "snapshot before mutation" }
+      - { stage: "multiEdit", access: "w", note: "snapshot before mutation" }
+      - { stage: "applyPatch", access: "w", note: "snapshot before mutation" }
+      - { stage: "undoTool", access: "r/w", note: "list · preview · restore · clear · 50-entry/20 MiB ring" }
+  - name: "~/.config/jinn/memory.json"
+    writers:
+      - { stage: "memoryTool", access: "r/w", note: "persistent key/value store · save/recall/list/forget" }

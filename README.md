@@ -113,6 +113,8 @@ if "Go" in project["languages"]:
     call_jinn("run_shell", {"command": "go mod tidy"})
 ```
 
+For TypeScript, Go, PHP, and shell-script integrations, see [docs/getting-started.md](docs/getting-started.md#integration-patterns).
+
 ---
 
 ## Contributing

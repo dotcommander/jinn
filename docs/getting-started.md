@@ -132,6 +132,79 @@ else:
     print(f"error: {resp['error']}")
 ```
 
+### TypeScript (Bun)
+
+```typescript
+async function jinn(tool: string, args: Record<string, unknown>) {
+  const proc = Bun.spawn(["jinn"], {
+    stdin: new TextEncoder().encode(JSON.stringify({ tool, args })),
+    stdout: "pipe",
+  });
+  return JSON.parse(await new Response(proc.stdout).text());
+}
+
+const resp = await jinn("read_file", { path: "go.mod" });
+console.log(resp.ok ? resp.result : `error: ${resp.error}`);
+```
+
+### Go
+
+```go
+package main
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"os/exec"
+)
+
+func jinn(tool string, args map[string]any) (map[string]any, error) {
+	req, _ := json.Marshal(map[string]any{"tool": tool, "args": args})
+	cmd := exec.Command("jinn")
+	cmd.Stdin = bytes.NewReader(req)
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(out, &resp); err != nil {
+		return nil, err
+	}
+	return resp, nil
+}
+
+func main() {
+	resp, err := jinn("read_file", map[string]any{"path": "go.mod"})
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(resp["result"])
+}
+```
+
+### PHP
+
+```php
+<?php
+function jinn(string $tool, array $args): array {
+    $req = json_encode(['tool' => $tool, 'args' => $args]);
+    $proc = proc_open('jinn', [
+        0 => ['pipe', 'r'],
+        1 => ['pipe', 'w'],
+    ], $pipes);
+    fwrite($pipes[0], $req);
+    fclose($pipes[0]);
+    $out = stream_get_contents($pipes[1]);
+    fclose($pipes[1]);
+    proc_close($proc);
+    return json_decode($out, true);
+}
+
+$resp = jinn('read_file', ['path' => 'go.mod']);
+echo $resp['ok'] ? $resp['result'] : "error: {$resp['error']}";
+```
+
 ### Shell Loop (Sequential)
 
 ```bash

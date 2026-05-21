@@ -96,6 +96,22 @@ Follow the suggestion before retrying. Common suggestions map to these error pat
 
 ---
 
+## read_file — truncation strategy
+
+When a windowed read exceeds the line limit, the `truncate` arg controls what is kept:
+
+| Value | Keeps | Use for |
+|-------|-------|---------|
+| `head` (default) | First N lines | Paginating top-down with `start_line` |
+| `tail` | Last N lines | Logs and command output — the end matters |
+| `middle` | Both ends, center elided | Spotting a file's overall shape |
+| `none` | Everything (byte cap still applies) | Small files you must see whole |
+| `smart` | Cuts at block boundaries | Source files (`.go`/`.rs`/`.ts`/`.js`/`.java`/`.c`/`.cpp`/`.h`/`.hpp`) |
+
+Truncated reads append a hint with the remainder file path so you can continue from where the window ended.
+
+---
+
 ## multi_read — batch file reads
 
 Read multiple files in a single call. Returns JSON with `files` (path→content), `errors` (path→error detail), and `truncation` (path→metadata) maps. Partial success: individual failures go to `errors` without failing the entire call. Use when you need 2+ files at once.
@@ -211,6 +227,10 @@ echo '{"tool":"memory","args":{"action":"forget","key":"last_branch"}}' | jinn
 | `.rs` | `rust-analyzer` |
 | `.py` | `pylsp` |
 | `.ts`, `.tsx`, `.js`, `.jsx` | `typescript-language-server` |
+| `.c`, `.h`, `.cpp`, `.cc`, `.cxx`, `.hpp` | `clangd` |
+| `.java` | `jdtls` |
+| `.lua` | `lua-language-server` |
+| `.zig` | `zls` |
 
 If the binary is not on `PATH`, the response includes a `suggestion` with the install command.
 
@@ -223,8 +243,9 @@ If the binary is not on `PATH`, the response includes a `suggestion` with the in
 | `hover` | `path`, `line`, `character` | Documentation / type info string |
 | `symbols` | `path` | `Kind   Name   (line:col)` table |
 | `diagnostics` | `path` | Pull diagnostics for the file as `file:line:col severity source/code: message` |
+| `rename` | `path`, `line`, `character`, `new_name` | Preview of rename edits across files — does not write |
 
-`line` and `character` are 1-based. `symbols` and `diagnostics` do not require a position.
+`line` and `character` are 1-based. `symbols` and `diagnostics` do not require a position. Pass `symbol` (the identifier name) instead of `character` to let jinn resolve the column automatically.
 
 ```bash
 echo '{"tool":"lsp_query","args":{"action":"hover","path":"main.go","line":12,"character":5}}' | jinn
@@ -257,6 +278,28 @@ old_text matches 3 locations (lines: 12, 47, 89) — must be unique. Add surroun
 ```
 
 To fix: extend `old_text` to include a few surrounding lines that are unique to the target location. No separate `search_files` call is needed — the line numbers tell you where the matches are.
+
+---
+
+## search_replace — regex replace across many files
+
+`search_replace` applies one regex substitution across explicit files, globs, or directories in a single call. Use it for repo-wide renames instead of looping `edit_file`.
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `pattern` | yes | Regex to match |
+| `replacement` | yes | Replacement text; `$1`, `$2`, … expand capture groups. Empty string deletes matches. |
+| `files` | yes | Path, glob, directory, or array of them — resolves to at most 50 files |
+| `include` | no | Glob filter applied after `files` expansion (e.g. `"*.go"`) |
+| `case_insensitive` | no | Case-insensitive matching (default false) |
+| `multiline` | no | `^`/`$` match line boundaries (default true) |
+| `dry_run` | no | Preview per-file diffs and match counts without writing |
+
+Every file is validated before any write; writes are per-file atomic. Binary files are skipped with structured per-file errors. Always run with `dry_run: true` first on a wide pattern to confirm the match count before committing.
+
+```json
+{"tool": "search_replace", "args": {"pattern": "oldName", "replacement": "newName", "files": "**/*.go", "dry_run": true}}
+```
 
 ---
 
