@@ -2,10 +2,9 @@
 default:
     @just --list
 
-# Build jinn (repo root) and the demo binary (examples/demo/demo)
+# Build jinn (repo root)
 build:
     go build -ldflags "-X main.version=$(git describe --tags --always --dirty 2>/dev/null || echo dev)" -o jinn ./cmd/jinn/
-    (cd examples/demo && go build -o demo .)
 
 # Build and symlink into ~/go/bin/jinn
 install: build
@@ -20,9 +19,9 @@ test:
 related-context-test:
     bash scripts/related-context-test.sh
 
-# Remove the local jinn binary and the demo binary
+# Remove the local jinn binary
 clean:
-    rm -f ./jinn ./examples/demo/demo
+    rm -f ./jinn
 
 # Print current version (latest git tag, sans v prefix)
 version:
