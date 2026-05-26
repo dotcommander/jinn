@@ -39,7 +39,7 @@ func TestFindFiles_NoMatch(t *testing.T) {
 	e, dir := testEngine(t)
 	writeTestFile(t, dir, "foo.go", "package main")
 
-	result, err := e.findFiles(args("pattern", "*.xyz"))
+	result, err := e.findFiles(args("pattern", "*.xyz", "limit", float64(7)))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -47,6 +47,9 @@ func TestFindFiles_NoMatch(t *testing.T) {
 	res := parseFindResult(t, result)
 	if len(res.Files) != 0 {
 		t.Errorf("expected 0 files, got %d", len(res.Files))
+	}
+	if res.LimitUsed != 7 {
+		t.Errorf("LimitUsed = %d, want 7", res.LimitUsed)
 	}
 }
 

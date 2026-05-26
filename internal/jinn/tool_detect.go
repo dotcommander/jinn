@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 )
 
 type projectInfo struct {
@@ -37,7 +39,7 @@ var probes = []probe{
 	{"Taskfile.yml", "", "task", "task test", ""},
 }
 
-func (e *Engine) detectProject(args map[string]interface{}) (string, error) {
+func (e *Engine) detectProject(args map[string]any) (string, error) {
 	detectPath := "."
 	if p, ok := args["path"].(string); ok && p != "" {
 		detectPath = p
@@ -99,6 +101,24 @@ func (e *Engine) detectProject(args map[string]interface{}) (string, error) {
 		}
 	}
 
+	// Prefer committed just recipes when present; they are usually the repo's
+	// strongest source of truth for build/test commands.
+	if name, data, ok := readJustfile(resolved); ok {
+		if !slices.Contains(result.ConfigFiles, name) {
+			result.ConfigFiles = append(result.ConfigFiles, name)
+		}
+		recipes := parseJustRecipes(string(data))
+		if recipes["build"] {
+			result.BuildTool = "just build"
+		}
+		if recipes["test"] {
+			result.TestCommand = "just test"
+		}
+		if recipes["lint"] {
+			result.Linter = "just lint"
+		}
+	}
+
 	// Framework detection: accept either config extension, add once.
 	for _, cfg := range []string{"next.config.js", "next.config.mjs"} {
 		if _, err := os.Stat(filepath.Join(resolved, cfg)); err == nil {
@@ -112,4 +132,32 @@ func (e *Engine) detectProject(args map[string]interface{}) (string, error) {
 		return "", err
 	}
 	return string(out), nil
+}
+
+func readJustfile(dir string) (string, []byte, bool) {
+	for _, name := range []string{"justfile", "Justfile"} {
+		data, err := os.ReadFile(filepath.Join(dir, name))
+		if err == nil {
+			return name, data, true
+		}
+	}
+	return "", nil, false
+}
+
+func parseJustRecipes(content string) map[string]bool {
+	recipes := make(map[string]bool)
+	for line := range strings.SplitSeq(content, "\n") {
+		if line == "" || strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t") || strings.HasPrefix(line, "#") {
+			continue
+		}
+		name, _, ok := strings.Cut(line, ":")
+		if !ok {
+			continue
+		}
+		fields := strings.Fields(name)
+		if len(fields) > 0 {
+			recipes[fields[0]] = true
+		}
+	}
+	return recipes
 }

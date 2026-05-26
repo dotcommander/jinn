@@ -32,6 +32,67 @@ func TestDetectProject_Go(t *testing.T) {
 	}
 }
 
+func TestDetectProject_JustfileOverridesCommands(t *testing.T) {
+	t.Parallel()
+	e, dir := testEngine(t)
+	writeTestFile(t, dir, "go.mod", "module example.com/test\n\ngo 1.26\n")
+	writeTestFile(t, dir, "justfile", `default:
+    @just --list
+
+build:
+    go build ./...
+
+test:
+    go test -race ./...
+
+lint:
+    go vet ./...
+`)
+
+	result, err := e.detectProject(args())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var info projectInfo
+	if err := json.Unmarshal([]byte(result), &info); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if info.BuildTool != "just build" {
+		t.Errorf("BuildTool = %q, want just build", info.BuildTool)
+	}
+	if info.TestCommand != "just test" {
+		t.Errorf("TestCommand = %q, want just test", info.TestCommand)
+	}
+	if info.Linter != "just lint" {
+		t.Errorf("Linter = %q, want just lint", info.Linter)
+	}
+	found := false
+	for _, cfg := range info.ConfigFiles {
+		if cfg == "justfile" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("ConfigFiles = %v, want justfile", info.ConfigFiles)
+	}
+}
+
+func TestParseJustRecipesIgnoresIndentedCommands(t *testing.T) {
+	t.Parallel()
+	recipes := parseJustRecipes(`build target:
+    test:
+# lint:
+test:
+`)
+	if !recipes["build"] || !recipes["test"] {
+		t.Fatalf("expected build and test recipes, got %#v", recipes)
+	}
+	if recipes["lint"] {
+		t.Fatalf("commented recipe should be ignored: %#v", recipes)
+	}
+}
+
 func TestDetectProject_NodeJS(t *testing.T) {
 	t.Parallel()
 	e, dir := testEngine(t)

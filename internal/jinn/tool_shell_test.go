@@ -2,6 +2,7 @@ package jinn
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +17,34 @@ func TestRunShell_Echo(t *testing.T) {
 	}
 	if !strings.Contains(result, "[exit: 0]") || !strings.Contains(result, "hello") {
 		t.Errorf("unexpected result: %s", result)
+	}
+}
+
+func TestRunShell_RequiresCommand(t *testing.T) {
+	t.Parallel()
+	e, _ := testEngine(t)
+	_, _, err := e.runShell(context.Background(), args("command", "   "))
+	if err == nil {
+		t.Fatal("expected error for empty command")
+	}
+	var sErr *ErrWithSuggestion
+	if !errors.As(err, &sErr) {
+		t.Fatalf("expected ErrWithSuggestion, got %T", err)
+	}
+	if sErr.Code != ErrCodeInvalidArgs {
+		t.Fatalf("Code = %q, want %q", sErr.Code, ErrCodeInvalidArgs)
+	}
+}
+
+func TestRunShell_NilContextUsesBackground(t *testing.T) {
+	t.Parallel()
+	e, _ := testEngine(t)
+	result, _, err := e.runShell(nil, args("command", "echo ok"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result, "ok") {
+		t.Fatalf("expected command output, got %s", result)
 	}
 }
 

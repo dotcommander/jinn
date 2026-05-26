@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -31,6 +32,13 @@ func shellEnv() []string {
 // Dangerous commands are blocked unless args["force"] is true.
 func (e *Engine) runShell(ctx context.Context, args map[string]interface{}) (string, map[string]string, error) {
 	cmd, _ := args["command"].(string)
+	if strings.TrimSpace(cmd) == "" {
+		return "", nil, &ErrWithSuggestion{
+			Err:        fmt.Errorf("command is required"),
+			Suggestion: "provide a non-empty shell command",
+			Code:       ErrCodeInvalidArgs,
+		}
+	}
 	if dryRun, ok := args["dry_run"].(bool); ok && dryRun {
 		return fmt.Sprintf("[dry-run] would execute: %s", cmd), nil, nil
 	}
@@ -54,6 +62,9 @@ func (e *Engine) runShell(ctx context.Context, args map[string]interface{}) (str
 
 	// Always use a process group so SIGKILL reaches background processes too.
 	// exec.CommandContext only kills the direct child; our timer kills -pgid.
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	c := exec.CommandContext(ctx, "bash", "-c", cmd)
 	c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 

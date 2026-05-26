@@ -1,6 +1,7 @@
 package jinn
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,11 +10,17 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 var grepExcludeDirs = []string{".git", "node_modules", "vendor", "__pycache__", ".cache", "dist", "build"}
 
 const searchDefaultMax = 500
+
+// searchTimeout caps each rg/grep invocation so a slow filesystem scan cannot
+// hang an agent tool call indefinitely. Declared as var so tests may shorten
+// it; not part of the public API.
+var searchTimeout = 60 * time.Second
 
 func (e *Engine) searchFiles(args map[string]interface{}) (string, error) {
 	pattern, _ := args["pattern"].(string)
@@ -94,29 +101,16 @@ func (e *Engine) searchFiles(args map[string]interface{}) (string, error) {
 		}
 		cmdArgs = append(cmdArgs, "-c", "--", pattern, searchPath)
 
-		stdout := &boundedWriter{limit: 1 << 20}
-		stderr := &boundedWriter{limit: 1 << 20}
-		c := exec.Command(cmd, cmdArgs...)
-		c.Dir = e.workDir
-		c.Stdout = stdout
-		c.Stderr = stderr
-		runErr := c.Run()
-
+		stdout, stderr, exitCode, runErr := e.runGrep(cmd, cmdArgs)
 		if runErr != nil {
-			var exitErr *exec.ExitError
-			if errors.As(runErr, &exitErr) {
-				if exitErr.ExitCode() != 1 || stdout.String() != "" {
-					// Exit code 1 with empty stdout = no matches (not an error).
-					// Any other non-zero exit with empty stdout is an error.
-					if stdout.String() == "" {
-						return "", fmt.Errorf("search failed: %s", stderr.String())
-					}
-				}
-			}
+			return "", runErr
 		}
-
-		raw := stdout.String()
-		return parseFilenamesOutput(raw, maxMatches), nil
+		// Exit code 1 with empty stdout = no matches (not an error).
+		// Any other non-zero exit with empty stdout is an error.
+		if stdout == "" && exitCode != 0 && exitCode != 1 {
+			return "", fmt.Errorf("search failed: %s", stderr)
+		}
+		return parseFilenamesOutput(stdout, maxMatches), nil
 	}
 
 	// Pass -m as a safety cap so grep stops scanning extremely large files
@@ -133,30 +127,13 @@ func (e *Engine) searchFiles(args map[string]interface{}) (string, error) {
 	}
 	cmdArgs = append(cmdArgs, "--", pattern, searchPath)
 
-	stdout := &boundedWriter{limit: 1 << 20}
-	stderr := &boundedWriter{limit: 1 << 20}
-	c := exec.Command(cmd, cmdArgs...)
-	c.Dir = e.workDir
-	c.Stdout = stdout
-	c.Stderr = stderr
-	runErr := c.Run()
-	exitCode := 0
+	raw, errOutput, exitCode, runErr := e.runGrep(cmd, cmdArgs)
 	if runErr != nil {
-		var exitErr *exec.ExitError
-		if errors.As(runErr, &exitErr) {
-			exitCode = exitErr.ExitCode()
-		}
-	}
-
-	raw := stdout.String()
-	if stdout.Truncated() {
-		raw += "\n[output truncated at 1 MB]"
+		return "", runErr
 	}
 	if maxResults > 0 {
 		raw += fmt.Sprintf("\n(results capped at max_results=%d, more matches may exist)", maxResults)
 	}
-
-	errOutput := stderr.String()
 
 	if format == "json" {
 		shown, total := parseSearchResults(raw, maxMatches)
@@ -200,6 +177,45 @@ func (e *Engine) searchFiles(args map[string]interface{}) (string, error) {
 		result += "[no matches: " + reason + "]"
 	}
 	return result, nil
+}
+
+// runGrep runs cmd with cmdArgs under searchTimeout, bounded to 1 MB of output.
+// Returns (stdout, stderr, exitCode, error). error is non-nil only on timeout;
+// non-zero exit codes from grep/rg are returned via exitCode, not error.
+func (e *Engine) runGrep(cmd string, cmdArgs []string) (stdout, stderr string, exitCode int, err error) {
+	outBuf := &boundedWriter{limit: 1 << 20}
+	errBuf := &boundedWriter{limit: 1 << 20}
+	ctx, cancel := context.WithTimeout(context.Background(), searchTimeout)
+	defer cancel()
+	c := exec.CommandContext(ctx, cmd, cmdArgs...)
+	c.Dir = e.workDir
+	c.Stdout = outBuf
+	c.Stderr = errBuf
+	c.WaitDelay = 2 * time.Second
+	runErr := c.Run()
+
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return "", "", 0, &ErrWithSuggestion{
+			Err:        fmt.Errorf("search_files timed out after %s", searchTimeout),
+			Suggestion: "narrow 'path' or add a more specific 'include' glob to reduce scan scope",
+			Code:       ErrCodeTimeout,
+		}
+	}
+
+	out := outBuf.String()
+	if outBuf.Truncated() {
+		out += "\n[output truncated at 1 MB]"
+	}
+
+	if runErr != nil {
+		var exitErr *exec.ExitError
+		if errors.As(runErr, &exitErr) {
+			exitCode = exitErr.ExitCode()
+		} else {
+			exitCode = 1
+		}
+	}
+	return out, errBuf.String(), exitCode, nil
 }
 
 // classifyZeroMatch determines why a grep returned zero results.

@@ -1,14 +1,22 @@
 package jinn
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 const findDefaultLimit = 1000
+
+// findTimeout caps each fd/find invocation so a slow filesystem walk cannot
+// hang an agent tool call indefinitely. Declared as var so tests may shorten
+// it; not part of the public API.
+var findTimeout = 60 * time.Second
 
 // Directories excluded from both fd and find backends.
 var findExcludeDirs = []string{".git", "node_modules", "vendor", "__pycache__", ".cache", "dist", "build"}
@@ -47,16 +55,27 @@ func (e *Engine) findFiles(args map[string]interface{}) (string, error) {
 
 	var raw string
 	var backend string
+	var runErr error
 
 	if e.fdPath != "" {
-		raw, backend = e.findViaFd(pattern, searchPath)
+		raw, backend, runErr = e.findViaFd(pattern, searchPath)
 	} else {
-		raw, backend = e.findViaFind(pattern, searchPath)
+		raw, backend, runErr = e.findViaFind(pattern, searchPath)
+	}
+
+	// Distinguish timeout from no-match: a stalled walk must not look like
+	// an empty result set to the caller.
+	if errors.Is(runErr, context.DeadlineExceeded) {
+		return "", &ErrWithSuggestion{
+			Err:        fmt.Errorf("find_files timed out after %s (backend=%s)", findTimeout, backend),
+			Suggestion: "narrow 'path' or use a more specific glob to reduce walk scope",
+			Code:       ErrCodeTimeout,
+		}
 	}
 
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		res := findFilesResult{Files: []string{}, Truncated: false, TotalCount: 0, Backend: backend}
+		res := findFilesResult{Files: []string{}, Truncated: false, TotalCount: 0, LimitUsed: limit, Backend: backend}
 		b, _ := json.Marshal(res)
 		return string(b), nil
 	}
@@ -118,7 +137,8 @@ func (e *Engine) findFiles(args map[string]interface{}) (string, error) {
 
 // findViaFd uses fd (fast, respects .gitignore) to find files.
 // Does not use --max-results so we can count the true total for truncation.
-func (e *Engine) findViaFd(pattern, searchPath string) (string, string) {
+// Returns (output, "fd", err). err is context.DeadlineExceeded on timeout.
+func (e *Engine) findViaFd(pattern, searchPath string) (string, string, error) {
 	// fd --glob matches basenames by default.
 	// If pattern contains /, switch to --full-path and prepend **/ for intuitive matching.
 	args := []string{
@@ -142,16 +162,20 @@ func (e *Engine) findViaFd(pattern, searchPath string) (string, string) {
 	args = append(args, effectivePattern, searchPath)
 
 	out := &boundedWriter{limit: 1 << 20}
-	c := exec.Command(e.fdPath, args...)
+	ctx, cancel := context.WithTimeout(context.Background(), findTimeout)
+	defer cancel()
+	c := exec.CommandContext(ctx, e.fdPath, args...)
 	c.Dir = e.workDir
 	c.Stdout = out
 	c.Stderr = out
-	c.Run()
-	return out.String(), "fd"
+	c.WaitDelay = 2 * time.Second
+	_ = c.Run()
+	return out.String(), "fd", ctx.Err()
 }
 
 // findViaFind uses POSIX find as a fallback when fd is unavailable.
-func (e *Engine) findViaFind(pattern, searchPath string) (string, string) {
+// Returns (output, "find", err). err is context.DeadlineExceeded on timeout.
+func (e *Engine) findViaFind(pattern, searchPath string) (string, string, error) {
 	var findArgs []string
 
 	if strings.Contains(pattern, "/") {
@@ -165,10 +189,13 @@ func (e *Engine) findViaFind(pattern, searchPath string) (string, string) {
 	}
 
 	out := &boundedWriter{limit: 1 << 20}
-	c := exec.Command("find", findArgs...)
+	ctx, cancel := context.WithTimeout(context.Background(), findTimeout)
+	defer cancel()
+	c := exec.CommandContext(ctx, "find", findArgs...)
 	c.Dir = e.workDir
 	c.Stdout = out
 	c.Stderr = out
-	c.Run()
-	return out.String(), "find"
+	c.WaitDelay = 2 * time.Second
+	_ = c.Run()
+	return out.String(), "find", ctx.Err()
 }

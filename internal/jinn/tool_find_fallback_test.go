@@ -17,7 +17,10 @@ func TestFindViaFind_BasicGlob(t *testing.T) {
 	writeTestFile(t, dir, "c.ts", "export {}")
 
 	e := New(dir, "dev") // real engine but we call findViaFind directly
-	raw, backend := e.findViaFind("*.go", ".")
+	raw, backend, err := e.findViaFind("*.go", ".")
+	if err != nil {
+		t.Fatalf("findViaFind: %v", err)
+	}
 	if backend != "find" {
 		t.Errorf("backend = %q, want 'find'", backend)
 	}
@@ -39,7 +42,10 @@ func TestFindViaFind_SlashPatternUsesPathFlag(t *testing.T) {
 
 	e := New(dir, "dev")
 	// "*/cmd/*.go" — a -path pattern that matches files under any "cmd" dir.
-	raw, _ := e.findViaFind("*/cmd/*.go", ".")
+	raw, _, err := e.findViaFind("*/cmd/*.go", ".")
+	if err != nil {
+		t.Fatalf("findViaFind: %v", err)
+	}
 	if !strings.Contains(raw, "main.go") {
 		t.Errorf("expected main.go in output, got: %q", raw)
 	}
@@ -54,7 +60,10 @@ func TestFindViaFind_NoMatch(t *testing.T) {
 	writeTestFile(t, dir, "foo.go", "package main")
 
 	e := New(dir, "dev")
-	raw, backend := e.findViaFind("*.xyz", ".")
+	raw, backend, err := e.findViaFind("*.xyz", ".")
+	if err != nil {
+		t.Fatalf("findViaFind: %v", err)
+	}
 	if backend != "find" {
 		t.Errorf("backend = %q, want 'find'", backend)
 	}
