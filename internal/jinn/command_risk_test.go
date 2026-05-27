@@ -63,6 +63,12 @@ func TestClassifyCommand(t *testing.T) {
 		// --- Env prefix ---
 		{name: "FOO=bar ls safe", cmdline: "FOO=bar ls", wantLevel: RiskSafe},
 		{name: "PATH=/tmp FOO=bar rm dangerous", cmdline: "PATH=/tmp FOO=bar rm file", wantLevel: RiskDangerous},
+		// Regression pins for env-prefix classification (classifySegment skips VAR=val tokens
+		// before identifying the verb). Without these, a future edit could silently make the
+		// classifier mistake an EDITOR=... prefix for the verb, or skip past the real verb.
+		{name: "multi env-prefix dangerous verb", cmdline: "FOO=BAR VAR=baz rm -rf /", wantLevel: RiskDangerous},
+		{name: "env-prefix with dd dangerous", cmdline: "PATH=/tmp dd if=/dev/sda of=/dev/null", wantLevel: RiskDangerous},
+		{name: "EDITOR prefix does not elevate safe-verb", cmdline: "EDITOR=vim git commit", wantLevel: RiskCaution},
 
 		// --- Edge cases ---
 		{name: "empty string", cmdline: "", wantLevel: RiskCaution, wantSub: "empty"},

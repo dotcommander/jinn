@@ -201,10 +201,12 @@ func (e *Engine) lspQueryWithLauncher(args map[string]interface{}, launcher lspL
 		done <- result{out: out, err: qErr}
 	}()
 
+	timer := time.NewTimer(time.Duration(timeout) * time.Second)
+	defer timer.Stop()
 	select {
 	case r := <-done:
 		return r.out, r.err
-	case <-time.After(time.Duration(timeout) * time.Second):
+	case <-timer.C:
 		client.stop()
 		return "", fmt.Errorf("lsp_query: timed out after %ds", timeout)
 	}

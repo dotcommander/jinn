@@ -36,16 +36,20 @@ func TestRunShell_RequiresCommand(t *testing.T) {
 	}
 }
 
-func TestRunShell_NilContextUsesBackground(t *testing.T) {
+func TestRunShell_NilContextPanics(t *testing.T) {
 	t.Parallel()
 	e, _ := testEngine(t)
-	result, _, err := e.runShell(nil, args("command", "echo ok"))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !strings.Contains(result, "ok") {
-		t.Fatalf("expected command output, got %s", result)
-	}
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("expected panic for nil ctx, got none")
+		}
+		msg, ok := r.(string)
+		if !ok || !strings.Contains(msg, "nil ctx") {
+			t.Fatalf("expected panic message containing 'nil ctx', got %v", r)
+		}
+	}()
+	_, _, _ = e.runShell(nil, args("command", "echo ok"))
 }
 
 func TestRunShell_ExitCode(t *testing.T) {

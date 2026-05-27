@@ -62,8 +62,10 @@ func (e *Engine) runShell(ctx context.Context, args map[string]interface{}) (str
 
 	// Always use a process group so SIGKILL reaches background processes too.
 	// exec.CommandContext only kills the direct child; our timer kills -pgid.
+	// nil ctx is a caller bug — guard with panic so it surfaces in tests rather
+	// than masking parent cancellation in production.
 	if ctx == nil {
-		ctx = context.Background()
+		panic("runShell: nil ctx")
 	}
 	c := exec.CommandContext(ctx, "bash", "-c", cmd)
 	c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
