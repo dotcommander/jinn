@@ -150,6 +150,9 @@ func parseJustRecipes(content string) map[string]bool {
 		if line == "" || strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t") || strings.HasPrefix(line, "#") {
 			continue
 		}
+		if strings.Contains(line, ":=") {
+			continue
+		}
 		name, _, ok := strings.Cut(line, ":")
 		if !ok {
 			continue

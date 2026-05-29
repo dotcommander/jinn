@@ -18,6 +18,7 @@ const (
 	ErrCodeStaleFile          = "stale_file"
 	ErrCodeCommandBlocked     = "command_blocked"
 	ErrCodeInvalidArgs        = "invalid_args"
+	ErrCodeCanceled           = "canceled"
 )
 
 // ErrWithSuggestion wraps an error with a user-facing suggestion and an

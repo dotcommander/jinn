@@ -81,7 +81,7 @@ func (e *Engine) Dispatch(ctx context.Context, tool string, args map[string]inte
 		result, err := e.diffFiles(args)
 		return result, nil, err
 	case "search_files":
-		result, err := e.searchFiles(args)
+		result, err := e.searchFilesContext(ctx, args)
 		return textResult(result), nil, err
 	case "stat_file":
 		result, err := e.statFile(args)

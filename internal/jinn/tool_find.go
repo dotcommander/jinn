@@ -31,6 +31,9 @@ type findFilesResult struct {
 }
 
 func (e *Engine) findFiles(ctx context.Context, args map[string]interface{}) (string, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	pattern, _ := args["pattern"].(string)
 	if pattern == "" {
 		return "", &ErrWithSuggestion{
@@ -70,6 +73,13 @@ func (e *Engine) findFiles(ctx context.Context, args map[string]interface{}) (st
 			Err:        fmt.Errorf("find_files timed out after %s (backend=%s)", findTimeout, backend),
 			Suggestion: "narrow 'path' or use a more specific glob to reduce walk scope",
 			Code:       ErrCodeTimeout,
+		}
+	}
+	if errors.Is(runErr, context.Canceled) {
+		return "", &ErrWithSuggestion{
+			Err:        fmt.Errorf("find_files canceled (backend=%s)", backend),
+			Suggestion: "retry the file search if cancellation was unintended",
+			Code:       ErrCodeCanceled,
 		}
 	}
 

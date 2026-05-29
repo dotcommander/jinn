@@ -83,6 +83,8 @@ func TestParseJustRecipesIgnoresIndentedCommands(t *testing.T) {
 	recipes := parseJustRecipes(`build target:
     test:
 # lint:
+test := "go test ./..."
+build := "go build ./..."
 test:
 `)
 	if !recipes["build"] || !recipes["test"] {
@@ -90,6 +92,14 @@ test:
 	}
 	if recipes["lint"] {
 		t.Fatalf("commented recipe should be ignored: %#v", recipes)
+	}
+
+	assignments := parseJustRecipes(`test := "go test ./..."
+build := "go build ./..."
+lint := "go vet ./..."
+`)
+	if assignments["test"] || assignments["build"] || assignments["lint"] {
+		t.Fatalf("assignment lines should not be parsed as recipes: %#v", assignments)
 	}
 }
 

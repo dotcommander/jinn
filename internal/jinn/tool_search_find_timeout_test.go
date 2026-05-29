@@ -85,6 +85,35 @@ func TestSearchFilesNoMatchNotTimeout(t *testing.T) {
 	}
 }
 
+func TestSearchFilesCanceled(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("shim assumes POSIX shell")
+	}
+
+	_, dir := testEngine(t)
+	shimDir := t.TempDir()
+	rgShim := shimSleepBinary(t, shimDir, "rg")
+
+	e := New(dir, "dev")
+	e.rgPath = rgShim
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := e.searchFilesContext(ctx, args("pattern", "anything", "path", "."))
+	if err == nil {
+		t.Fatal("expected cancellation error, got nil")
+	}
+	var sug *ErrWithSuggestion
+	if !errors.As(err, &sug) {
+		t.Fatalf("expected *ErrWithSuggestion, got %T: %v", err, err)
+	}
+	if sug.Code != ErrCodeCanceled {
+		t.Fatalf("expected Code=%q, got %q (err=%v)", ErrCodeCanceled, sug.Code, err)
+	}
+}
+
 // TestFindFilesTimeout verifies that a wedged fd/find subprocess surfaces
 // as ErrCodeTimeout, distinct from a normal no-match result.
 func TestFindFilesTimeout(t *testing.T) {
@@ -141,6 +170,35 @@ func TestFindFilesNoMatchNotTimeout(t *testing.T) {
 	res := parseFindResult(t, result)
 	if len(res.Files) != 0 {
 		t.Fatalf("expected 0 files for no-match, got %d", len(res.Files))
+	}
+}
+
+func TestFindFilesCanceled(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("shim assumes POSIX shell")
+	}
+
+	_, dir := testEngine(t)
+	shimDir := t.TempDir()
+	fdShim := shimSleepBinary(t, shimDir, "fd")
+
+	e := New(dir, "dev")
+	e.fdPath = fdShim
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := e.findFiles(ctx, args("pattern", "*.go"))
+	if err == nil {
+		t.Fatal("expected cancellation error, got nil")
+	}
+	var sug *ErrWithSuggestion
+	if !errors.As(err, &sug) {
+		t.Fatalf("expected *ErrWithSuggestion, got %T: %v", err, err)
+	}
+	if sug.Code != ErrCodeCanceled {
+		t.Fatalf("expected Code=%q, got %q (err=%v)", ErrCodeCanceled, sug.Code, err)
 	}
 }
 

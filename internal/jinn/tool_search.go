@@ -23,6 +23,13 @@ const searchDefaultMax = 500
 var searchTimeout = 60 * time.Second
 
 func (e *Engine) searchFiles(args map[string]interface{}) (string, error) {
+	return e.searchFilesContext(context.Background(), args)
+}
+
+func (e *Engine) searchFilesContext(ctx context.Context, args map[string]interface{}) (string, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	pattern, _ := args["pattern"].(string)
 	searchPath := "."
 	if p, ok := args["path"].(string); ok && p != "" {
@@ -101,7 +108,7 @@ func (e *Engine) searchFiles(args map[string]interface{}) (string, error) {
 		}
 		cmdArgs = append(cmdArgs, "-c", "--", pattern, searchPath)
 
-		stdout, stderr, exitCode, runErr := e.runGrep(cmd, cmdArgs)
+		stdout, stderr, exitCode, runErr := e.runGrep(ctx, cmd, cmdArgs)
 		if runErr != nil {
 			return "", runErr
 		}
@@ -127,7 +134,7 @@ func (e *Engine) searchFiles(args map[string]interface{}) (string, error) {
 	}
 	cmdArgs = append(cmdArgs, "--", pattern, searchPath)
 
-	raw, errOutput, exitCode, runErr := e.runGrep(cmd, cmdArgs)
+	raw, errOutput, exitCode, runErr := e.runGrep(ctx, cmd, cmdArgs)
 	if runErr != nil {
 		return "", runErr
 	}
@@ -180,21 +187,31 @@ func (e *Engine) searchFiles(args map[string]interface{}) (string, error) {
 }
 
 // runGrep runs cmd with cmdArgs under searchTimeout, bounded to 1 MB of output.
-// Returns (stdout, stderr, exitCode, error). error is non-nil only on timeout;
-// non-zero exit codes from grep/rg are returned via exitCode, not error.
-func (e *Engine) runGrep(cmd string, cmdArgs []string) (stdout, stderr string, exitCode int, err error) {
+// Returns (stdout, stderr, exitCode, error). error is non-nil only on
+// cancellation or timeout; non-zero grep/rg exits are returned via exitCode.
+func (e *Engine) runGrep(ctx context.Context, cmd string, cmdArgs []string) (stdout, stderr string, exitCode int, err error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	outBuf := &boundedWriter{limit: 1 << 20}
 	errBuf := &boundedWriter{limit: 1 << 20}
-	ctx, cancel := context.WithTimeout(context.Background(), searchTimeout)
+	cmdCtx, cancel := context.WithTimeout(ctx, searchTimeout)
 	defer cancel()
-	c := exec.CommandContext(ctx, cmd, cmdArgs...)
+	c := exec.CommandContext(cmdCtx, cmd, cmdArgs...)
 	c.Dir = e.workDir
 	c.Stdout = outBuf
 	c.Stderr = errBuf
 	c.WaitDelay = 2 * time.Second
 	runErr := c.Run()
 
-	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+	switch {
+	case errors.Is(cmdCtx.Err(), context.Canceled):
+		return "", "", 0, &ErrWithSuggestion{
+			Err:        fmt.Errorf("search_files canceled"),
+			Suggestion: "retry the search if cancellation was unintended",
+			Code:       ErrCodeCanceled,
+		}
+	case errors.Is(cmdCtx.Err(), context.DeadlineExceeded):
 		return "", "", 0, &ErrWithSuggestion{
 			Err:        fmt.Errorf("search_files timed out after %s", searchTimeout),
 			Suggestion: "narrow 'path' or add a more specific 'include' glob to reduce scan scope",

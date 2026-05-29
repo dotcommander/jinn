@@ -3,6 +3,7 @@ package jinn
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"regexp"
@@ -105,6 +106,10 @@ func (e *Engine) collectSRFiles(ctx context.Context, args map[string]interface{}
 		// Treat as a glob pattern — use findFiles logic.
 		found, err := e.globExpand(ctx, pat)
 		if err != nil {
+			var sErr *ErrWithSuggestion
+			if errors.As(err, &sErr) && (sErr.Code == ErrCodeCanceled || sErr.Code == ErrCodeTimeout) {
+				return nil, err
+			}
 			return nil, &ErrWithSuggestion{
 				Err:        fmt.Errorf("no files matched %q", pat),
 				Suggestion: "check the glob pattern or provide explicit file paths",
