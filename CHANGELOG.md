@@ -7,6 +7,32 @@ and jinn adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.14] - 2026-05-29
+
+### Fixed
+
+- Preserve cancellation semantics for subprocess-backed `search_files`,
+  `find_files`, and `search_replace` glob expansion.
+- Distinguish stalled `find_files` walks from empty no-match results.
+- Reject blank `run_shell` commands with a structured invalid-args error.
+- Ignore Justfile assignment lines when detecting `just build`, `just test`,
+  and `just lint` recipes.
+
+### Changed
+
+- Derive `list_tools` names from the embedded schema to avoid drift.
+- Move the OpenAI tool schema into embedded `schema.json`.
+- Prefer committed Justfile recipes during project detection.
+
+### Documentation
+
+- Sync README, getting-started, tool reference, and architecture docs to the
+  current 20-tool surface.
+
+### Removed
+
+- Remove the obsolete demo module and keep `CLAUDE.md` local-only.
+
 ## [0.8.9] - 2026-05-15
 
 ### Added
@@ -95,7 +121,8 @@ and jinn adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `--schema` flag to emit tool definitions
 - `--version` flag with ldflags and VCS fallback
 
-[Unreleased]: https://github.com/dotcommander/jinn/compare/v0.8.9...HEAD
+[Unreleased]: https://github.com/dotcommander/jinn/compare/v0.8.14...HEAD
+[0.8.14]: https://github.com/dotcommander/jinn/compare/v0.8.13...v0.8.14
 [0.8.9]: https://github.com/dotcommander/jinn/compare/v0.8.8...v0.8.9
 [0.8.8]: https://github.com/dotcommander/jinn/compare/v0.8.7...v0.8.8
 [0.3.2]: https://github.com/dotcommander/jinn/compare/v0.3.1...v0.3.2
