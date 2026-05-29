@@ -105,7 +105,7 @@ func TestFindFilesTimeout(t *testing.T) {
 	t.Cleanup(func() { findTimeout = orig })
 
 	start := time.Now()
-	_, err := e.findFiles(args("pattern", "*.go"))
+	_, err := e.findFiles(context.Background(), args("pattern", "*.go"))
 	elapsed := time.Since(start)
 
 	if err == nil {
@@ -134,7 +134,7 @@ func TestFindFilesNoMatchNotTimeout(t *testing.T) {
 	writeTestFile(t, dir, "main.go", "package main")
 	e := New(dir, "dev")
 
-	result, err := e.findFiles(args("pattern", "*.xyz"))
+	result, err := e.findFiles(context.Background(), args("pattern", "*.xyz"))
 	if err != nil {
 		t.Fatalf("no-match should not error, got: %v", err)
 	}

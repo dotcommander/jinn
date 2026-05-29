@@ -1,6 +1,7 @@
 package jinn
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -357,7 +358,7 @@ func TestTokenEfficiency_FindFiles_Limit(t *testing.T) {
 		writeTestFile(t, dir, fmt.Sprintf("doc%04d.txt", i), "")
 	}
 
-	result, err := e.findFiles(args("pattern", "*.txt"))
+	result, err := e.findFiles(context.Background(), args("pattern", "*.txt"))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -914,7 +915,7 @@ func TestTokenEfficiency_FindFiles_ExactLimitBoundary(t *testing.T) {
 		writeTestFile(t, dir, fmt.Sprintf("lim%04d.txt", i), "")
 	}
 
-	result, err := e.findFiles(args("pattern", "*.txt"))
+	result, err := e.findFiles(context.Background(), args("pattern", "*.txt"))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1084,7 +1085,7 @@ func TestTokenEfficiency_FindFiles_SubdirectoryPaths(t *testing.T) {
 		writeTestFile(t, dir, fmt.Sprintf("%s/main.go", sub), "package main\n")
 	}
 
-	result, err := e.findFiles(args("pattern", "*.go"))
+	result, err := e.findFiles(context.Background(), args("pattern", "*.go"))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

@@ -6,6 +6,28 @@ import (
 	"fmt"
 )
 
+// SchemaToolNames returns the ordered list of tool names declared in Schema.
+// This is the single source of truth — list_tools and other introspection
+// callers derive their tool list from here rather than maintaining a parallel
+// slice that drifts as tools are added or renamed.
+func SchemaToolNames() ([]string, error) {
+	var raw []struct {
+		Function struct {
+			Name string `json:"name"`
+		} `json:"function"`
+	}
+	if err := json.Unmarshal([]byte(Schema), &raw); err != nil {
+		return nil, fmt.Errorf("parse schema for tool names: %w", err)
+	}
+	names := make([]string, 0, len(raw))
+	for _, t := range raw {
+		if t.Function.Name != "" {
+			names = append(names, t.Function.Name)
+		}
+	}
+	return names, nil
+}
+
 // CompactSchema returns Schema without insignificant JSON whitespace.
 func CompactSchema() (string, error) {
 	var out bytes.Buffer

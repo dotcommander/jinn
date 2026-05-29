@@ -30,7 +30,7 @@ type findFilesResult struct {
 	Backend    string   `json:"backend"` // "fd" or "find"
 }
 
-func (e *Engine) findFiles(args map[string]interface{}) (string, error) {
+func (e *Engine) findFiles(ctx context.Context, args map[string]interface{}) (string, error) {
 	pattern, _ := args["pattern"].(string)
 	if pattern == "" {
 		return "", &ErrWithSuggestion{
@@ -58,9 +58,9 @@ func (e *Engine) findFiles(args map[string]interface{}) (string, error) {
 	var runErr error
 
 	if e.fdPath != "" {
-		raw, backend, runErr = e.findViaFd(pattern, searchPath)
+		raw, backend, runErr = e.findViaFd(ctx, pattern, searchPath)
 	} else {
-		raw, backend, runErr = e.findViaFind(pattern, searchPath)
+		raw, backend, runErr = e.findViaFind(ctx, pattern, searchPath)
 	}
 
 	// Distinguish timeout from no-match: a stalled walk must not look like
@@ -138,7 +138,7 @@ func (e *Engine) findFiles(args map[string]interface{}) (string, error) {
 // findViaFd uses fd (fast, respects .gitignore) to find files.
 // Does not use --max-results so we can count the true total for truncation.
 // Returns (output, "fd", err). err is context.DeadlineExceeded on timeout.
-func (e *Engine) findViaFd(pattern, searchPath string) (string, string, error) {
+func (e *Engine) findViaFd(ctx context.Context, pattern, searchPath string) (string, string, error) {
 	// fd --glob matches basenames by default.
 	// If pattern contains /, switch to --full-path and prepend **/ for intuitive matching.
 	args := []string{
@@ -162,7 +162,7 @@ func (e *Engine) findViaFd(pattern, searchPath string) (string, string, error) {
 	args = append(args, effectivePattern, searchPath)
 
 	out := &boundedWriter{limit: 1 << 20}
-	ctx, cancel := context.WithTimeout(context.Background(), findTimeout)
+	ctx, cancel := context.WithTimeout(ctx, findTimeout)
 	defer cancel()
 	c := exec.CommandContext(ctx, e.fdPath, args...)
 	c.Dir = e.workDir
@@ -175,7 +175,7 @@ func (e *Engine) findViaFd(pattern, searchPath string) (string, string, error) {
 
 // findViaFind uses POSIX find as a fallback when fd is unavailable.
 // Returns (output, "find", err). err is context.DeadlineExceeded on timeout.
-func (e *Engine) findViaFind(pattern, searchPath string) (string, string, error) {
+func (e *Engine) findViaFind(ctx context.Context, pattern, searchPath string) (string, string, error) {
 	var findArgs []string
 
 	if strings.Contains(pattern, "/") {
@@ -189,7 +189,7 @@ func (e *Engine) findViaFind(pattern, searchPath string) (string, string, error)
 	}
 
 	out := &boundedWriter{limit: 1 << 20}
-	ctx, cancel := context.WithTimeout(context.Background(), findTimeout)
+	ctx, cancel := context.WithTimeout(ctx, findTimeout)
 	defer cancel()
 	c := exec.CommandContext(ctx, "find", findArgs...)
 	c.Dir = e.workDir

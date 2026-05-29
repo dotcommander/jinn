@@ -1,6 +1,7 @@
 package jinn
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
@@ -17,7 +18,7 @@ func TestFindViaFind_BasicGlob(t *testing.T) {
 	writeTestFile(t, dir, "c.ts", "export {}")
 
 	e := New(dir, "dev") // real engine but we call findViaFind directly
-	raw, backend, err := e.findViaFind("*.go", ".")
+	raw, backend, err := e.findViaFind(context.Background(), "*.go", ".")
 	if err != nil {
 		t.Fatalf("findViaFind: %v", err)
 	}
@@ -42,7 +43,7 @@ func TestFindViaFind_SlashPatternUsesPathFlag(t *testing.T) {
 
 	e := New(dir, "dev")
 	// "*/cmd/*.go" — a -path pattern that matches files under any "cmd" dir.
-	raw, _, err := e.findViaFind("*/cmd/*.go", ".")
+	raw, _, err := e.findViaFind(context.Background(), "*/cmd/*.go", ".")
 	if err != nil {
 		t.Fatalf("findViaFind: %v", err)
 	}
@@ -60,7 +61,7 @@ func TestFindViaFind_NoMatch(t *testing.T) {
 	writeTestFile(t, dir, "foo.go", "package main")
 
 	e := New(dir, "dev")
-	raw, backend, err := e.findViaFind("*.xyz", ".")
+	raw, backend, err := e.findViaFind(context.Background(), "*.xyz", ".")
 	if err != nil {
 		t.Fatalf("findViaFind: %v", err)
 	}
@@ -81,7 +82,7 @@ func TestFindFiles_FallbackToFind(t *testing.T) {
 	e := New(dir, "dev")
 	e.fdPath = ""
 
-	result, err := e.findFiles(args("pattern", "*.go"))
+	result, err := e.findFiles(context.Background(), args("pattern", "*.go"))
 	if err != nil {
 		t.Fatalf("findFiles: %v", err)
 	}
@@ -102,7 +103,7 @@ func TestFindFiles_FallbackToFind_NoMatch(t *testing.T) {
 	e := New(dir, "dev")
 	e.fdPath = ""
 
-	result, err := e.findFiles(args("pattern", "*.xyz"))
+	result, err := e.findFiles(context.Background(), args("pattern", "*.xyz"))
 	if err != nil {
 		t.Fatalf("findFiles: %v", err)
 	}
@@ -126,7 +127,7 @@ func TestFindFiles_FallbackToFind_Truncation(t *testing.T) {
 	e.fdPath = ""
 
 	// limit=3 with 5 matching files → truncated
-	result, err := e.findFiles(args("pattern", "*.txt", "limit", float64(3)))
+	result, err := e.findFiles(context.Background(), args("pattern", "*.txt", "limit", float64(3)))
 	if err != nil {
 		t.Fatalf("findFiles: %v", err)
 	}

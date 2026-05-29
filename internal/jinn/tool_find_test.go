@@ -1,6 +1,7 @@
 package jinn
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"path/filepath"
@@ -15,7 +16,7 @@ func TestFindFiles_BasicGlob(t *testing.T) {
 	writeTestFile(t, dir, "bar.go", "package main")
 	writeTestFile(t, dir, "baz.ts", "export {}")
 
-	result, err := e.findFiles(args("pattern", "*.go"))
+	result, err := e.findFiles(context.Background(), args("pattern", "*.go"))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -39,7 +40,7 @@ func TestFindFiles_NoMatch(t *testing.T) {
 	e, dir := testEngine(t)
 	writeTestFile(t, dir, "foo.go", "package main")
 
-	result, err := e.findFiles(args("pattern", "*.xyz", "limit", float64(7)))
+	result, err := e.findFiles(context.Background(), args("pattern", "*.xyz", "limit", float64(7)))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -56,7 +57,7 @@ func TestFindFiles_NoMatch(t *testing.T) {
 func TestFindFiles_MissingPattern(t *testing.T) {
 	t.Parallel()
 	e, _ := testEngine(t)
-	_, err := e.findFiles(args())
+	_, err := e.findFiles(context.Background(), args())
 	if err == nil {
 		t.Fatal("expected error for missing pattern")
 	}
@@ -72,7 +73,7 @@ func TestFindFiles_PathArg(t *testing.T) {
 	writeTestFile(t, dir, "src/util.ts", "export {}")
 	writeTestFile(t, dir, "other.txt", "hello")
 
-	result, err := e.findFiles(args("pattern", "*.go", "path", "src"))
+	result, err := e.findFiles(context.Background(), args("pattern", "*.go", "path", "src"))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -93,7 +94,7 @@ func TestFindFiles_Truncation(t *testing.T) {
 		writeTestFile(t, dir, filepath.Join("sub", fmt.Sprintf("file%02d.go", i)), "package p")
 	}
 
-	result, err := e.findFiles(args("pattern", "*.go", "path", "sub", "limit", float64(5)))
+	result, err := e.findFiles(context.Background(), args("pattern", "*.go", "path", "sub", "limit", float64(5)))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -117,7 +118,7 @@ func TestFindFiles_Backend(t *testing.T) {
 	t.Parallel()
 	e, _ := testEngine(t)
 
-	result, err := e.findFiles(args("pattern", "*.go"))
+	result, err := e.findFiles(context.Background(), args("pattern", "*.go"))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -135,7 +136,7 @@ func TestFindFiles_ExcludeDirs(t *testing.T) {
 	writeTestFile(t, dir, filepath.Join(".git", "bad.go"), "package git")
 	writeTestFile(t, dir, filepath.Join("node_modules", "also_bad.go"), "package nm")
 
-	result, err := e.findFiles(args("pattern", "*.go"))
+	result, err := e.findFiles(context.Background(), args("pattern", "*.go"))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -156,7 +157,7 @@ func TestFindFiles_SlashPattern(t *testing.T) {
 	writeTestFile(t, dir, filepath.Join("src", "app.ts"), "src")
 	writeTestFile(t, dir, "other.test.ts", "test")
 
-	result, err := e.findFiles(args("pattern", "src/**/*_test.ts"))
+	result, err := e.findFiles(context.Background(), args("pattern", "src/**/*_test.ts"))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -176,7 +177,7 @@ func TestFindFiles_Dispatch(t *testing.T) {
 	e, dir := testEngine(t)
 	writeTestFile(t, dir, "hello.go", "package main")
 
-	result, meta, err := e.Dispatch(nil, "find_files", args("pattern", "*.go"))
+	result, meta, err := e.Dispatch(context.Background(), "find_files", args("pattern", "*.go"))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

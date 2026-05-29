@@ -1,6 +1,7 @@
 package jinn
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,7 +13,7 @@ func TestSearchReplace_BasicSingleFile(t *testing.T) {
 	e, dir := testEngine(t)
 	writeTestFile(t, dir, "a.txt", "hello world\nhello universe\n")
 
-	result, err := e.searchReplace(args(
+	result, err := e.searchReplace(context.Background(), args(
 		"pattern", "hello",
 		"replacement", "hi",
 		"files", "a.txt",
@@ -39,7 +40,7 @@ func TestSearchReplace_CaptureGroups(t *testing.T) {
 	e, dir := testEngine(t)
 	writeTestFile(t, dir, "code.go", "fmt.Sprintf(\"%d\", x)\nfmt.Sprintf(\"%s\", y)\n")
 
-	result, err := e.searchReplace(args(
+	result, err := e.searchReplace(context.Background(), args(
 		"pattern", `fmt\.Sprintf\("(.+?)",\s*(\w+)\)`,
 		"replacement", `format($2, $1)`,
 		"files", "code.go",
@@ -63,7 +64,7 @@ func TestSearchReplace_CaseInsensitive(t *testing.T) {
 	e, dir := testEngine(t)
 	writeTestFile(t, dir, "mixed.txt", "Hello HELLO hello\n")
 
-	result, err := e.searchReplace(args(
+	result, err := e.searchReplace(context.Background(), args(
 		"pattern", "hello",
 		"replacement", "hi",
 		"files", "mixed.txt",
@@ -88,7 +89,7 @@ func TestSearchReplace_DryRun(t *testing.T) {
 	e, dir := testEngine(t)
 	writeTestFile(t, dir, "dry.txt", "foo bar baz\n")
 
-	result, err := e.searchReplace(args(
+	result, err := e.searchReplace(context.Background(), args(
 		"pattern", "bar",
 		"replacement", "qux",
 		"files", "dry.txt",
@@ -116,7 +117,7 @@ func TestSearchReplace_MultiFile(t *testing.T) {
 	writeTestFile(t, dir, "b.txt", "old value\n")
 	writeTestFile(t, dir, "c.txt", "no match here\n")
 
-	result, err := e.searchReplace(args(
+	result, err := e.searchReplace(context.Background(), args(
 		"pattern", "old",
 		"replacement", "new",
 		"files", []interface{}{"a.txt", "b.txt", "c.txt"},
@@ -147,7 +148,7 @@ func TestSearchReplace_Deletion(t *testing.T) {
 	e, dir := testEngine(t)
 	writeTestFile(t, dir, "del.txt", "keep\nremove_me\nkeep\n")
 
-	_, err := e.searchReplace(args(
+	_, err := e.searchReplace(context.Background(), args(
 		"pattern", "remove_me\n",
 		"replacement", "",
 		"files", "del.txt",
@@ -167,7 +168,7 @@ func TestSearchReplace_NoMatch(t *testing.T) {
 	e, dir := testEngine(t)
 	writeTestFile(t, dir, "nomatch.txt", "nothing to see\n")
 
-	result, err := e.searchReplace(args(
+	result, err := e.searchReplace(context.Background(), args(
 		"pattern", "xyzzy",
 		"replacement", "replaced",
 		"files", "nomatch.txt",
@@ -191,7 +192,7 @@ func TestSearchReplace_InvalidRegex(t *testing.T) {
 	e, dir := testEngine(t)
 	writeTestFile(t, dir, "x.txt", "content\n")
 
-	_, err := e.searchReplace(args(
+	_, err := e.searchReplace(context.Background(), args(
 		"pattern", "[invalid(",
 		"replacement", "x",
 		"files", "x.txt",
@@ -208,7 +209,7 @@ func TestSearchReplace_MissingPattern(t *testing.T) {
 	t.Parallel()
 	e, _ := testEngine(t)
 
-	_, err := e.searchReplace(args(
+	_, err := e.searchReplace(context.Background(), args(
 		"replacement", "x",
 		"files", "a.txt",
 	))
@@ -221,7 +222,7 @@ func TestSearchReplace_MissingFiles(t *testing.T) {
 	t.Parallel()
 	e, _ := testEngine(t)
 
-	_, err := e.searchReplace(args(
+	_, err := e.searchReplace(context.Background(), args(
 		"pattern", "x",
 		"replacement", "y",
 	))
@@ -234,7 +235,7 @@ func TestSearchReplace_FileNotFound(t *testing.T) {
 	t.Parallel()
 	e, _ := testEngine(t)
 
-	_, err := e.searchReplace(args(
+	_, err := e.searchReplace(context.Background(), args(
 		"pattern", "x",
 		"replacement", "y",
 		"files", "nonexistent.txt",
@@ -248,7 +249,7 @@ func TestSearchReplace_SensitivePath(t *testing.T) {
 	t.Parallel()
 	e, _ := testEngine(t)
 
-	_, err := e.searchReplace(args(
+	_, err := e.searchReplace(context.Background(), args(
 		"pattern", "x",
 		"replacement", "y",
 		"files", ".env",
@@ -267,7 +268,7 @@ func TestSearchReplace_BinaryFileSkipped(t *testing.T) {
 	os.MkdirAll(dir, 0o755)
 	os.WriteFile(filepath.Join(dir, "binary.bin"), binary, 0o644)
 
-	_, err := e.searchReplace(args(
+	_, err := e.searchReplace(context.Background(), args(
 		"pattern", "hello",
 		"replacement", "hi",
 		"files", "binary.bin",
@@ -283,7 +284,7 @@ func TestSearchReplace_Multiline(t *testing.T) {
 	e, dir := testEngine(t)
 	writeTestFile(t, dir, "ml.txt", "first line\nsecond line\nthird line\n")
 
-	_, err := e.searchReplace(args(
+	_, err := e.searchReplace(context.Background(), args(
 		"pattern", `^second`,
 		"replacement", "REPLACED",
 		"files", "ml.txt",
@@ -304,7 +305,7 @@ func TestSearchReplace_LineRangeInMeta(t *testing.T) {
 	e, dir := testEngine(t)
 	writeTestFile(t, dir, "meta.txt", "line1\nline2\nline3\nline4\nline5\n")
 
-	result, err := e.searchReplace(args(
+	result, err := e.searchReplace(context.Background(), args(
 		"pattern", "line3",
 		"replacement", "CHANGED",
 		"files", "meta.txt",
@@ -336,7 +337,7 @@ func TestSearchReplace_GlobPattern(t *testing.T) {
 	writeTestFile(t, dir, "b.go", "oldFunc()\n")
 	writeTestFile(t, dir, "c.ts", "oldFunc()\n")
 
-	result, err := e.searchReplace(args(
+	result, err := e.searchReplace(context.Background(), args(
 		"pattern", "oldFunc",
 		"replacement", "newFunc",
 		"files", []interface{}{"a.go", "b.go", "c.ts"},
@@ -363,7 +364,7 @@ func TestSearchReplace_FilesGlobPattern(t *testing.T) {
 	writeTestFile(t, dir, "b.go", "oldFunc()\n")
 	writeTestFile(t, dir, "c.ts", "oldFunc()\n")
 
-	result, err := e.searchReplace(args(
+	result, err := e.searchReplace(context.Background(), args(
 		"pattern", "oldFunc",
 		"replacement", "newFunc",
 		"files", "*.go",
@@ -396,7 +397,7 @@ func TestSearchReplace_DirectoryExpandsFiles(t *testing.T) {
 	writeTestFile(t, dir, "sub/a.txt", "old\n")
 	writeTestFile(t, dir, "sub/b.txt", "old\n")
 
-	result, err := e.searchReplace(args(
+	result, err := e.searchReplace(context.Background(), args(
 		"pattern", "old",
 		"replacement", "new",
 		"files", "sub",
@@ -413,7 +414,7 @@ func TestSearchReplace_GlobNoMatch(t *testing.T) {
 	t.Parallel()
 	e, _ := testEngine(t)
 
-	_, err := e.searchReplace(args(
+	_, err := e.searchReplace(context.Background(), args(
 		"pattern", "old",
 		"replacement", "new",
 		"files", "*.missing",
@@ -432,7 +433,7 @@ func TestSearchReplace_FilesGlobWithInclude(t *testing.T) {
 	writeTestFile(t, dir, "a.go", "old\n")
 	writeTestFile(t, dir, "b.txt", "old\n")
 
-	result, err := e.searchReplace(args(
+	result, err := e.searchReplace(context.Background(), args(
 		"pattern", "old",
 		"replacement", "new",
 		"files", "*.*",
@@ -456,7 +457,7 @@ func TestSearchReplace_CRLFPreserved(t *testing.T) {
 	e, dir := testEngine(t)
 	writeTestFile(t, dir, "crlf.txt", "hello\r\nworld\r\n")
 
-	_, err := e.searchReplace(args(
+	_, err := e.searchReplace(context.Background(), args(
 		"pattern", "hello",
 		"replacement", "hi",
 		"files", "crlf.txt",
@@ -481,7 +482,7 @@ func TestSearchReplace_ReplaceAllOccurrences(t *testing.T) {
 	// Write a file with many occurrences.
 	writeTestFile(t, dir, "many.txt", "x x x x x x x x x x\n")
 
-	result, err := e.searchReplace(args(
+	result, err := e.searchReplace(context.Background(), args(
 		"pattern", "x",
 		"replacement", "y",
 		"files", "many.txt",
@@ -505,7 +506,7 @@ func TestSearchReplace_NoChangeDetection(t *testing.T) {
 	e, dir := testEngine(t)
 	writeTestFile(t, dir, "nochange.txt", "hello world\n")
 
-	_, err := e.searchReplace(args(
+	_, err := e.searchReplace(context.Background(), args(
 		"pattern", "hello",
 		"replacement", "hello", // same as match
 		"files", "nochange.txt",
@@ -520,7 +521,7 @@ func TestSearchReplace_EmptyReplacement(t *testing.T) {
 	e, dir := testEngine(t)
 	writeTestFile(t, dir, "empty.txt", "keep REMOVE keep\n")
 
-	_, err := e.searchReplace(args(
+	_, err := e.searchReplace(context.Background(), args(
 		"pattern", ` REMOVE `,
 		"replacement", " ",
 		"files", "empty.txt",

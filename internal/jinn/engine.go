@@ -90,14 +90,12 @@ func (e *Engine) Dispatch(ctx context.Context, tool string, args map[string]inte
 		result, err := e.listDir(args)
 		return textResult(result), nil, err
 	case "find_files":
-		result, err := e.findFiles(args)
+		result, err := e.findFiles(ctx, args)
 		return textResult(result), nil, err
 	case "list_tools":
-		tools := []string{
-			"run_shell", "read_file", "multi_read", "write_file", "edit_file", "multi_edit",
-			"apply_patch", "diff_files", "search_files", "stat_file", "list_dir",
-			"find_files", "list_tools", "checksum_tree", "detect_project",
-			"memory", "undo", "lsp_query", "search_replace", "related_context",
+		tools, err := SchemaToolNames()
+		if err != nil {
+			return nil, nil, fmt.Errorf("list tool names: %w", err)
 		}
 		caps := ToolCapabilities{
 			JinnVersion: ResolveVersion(e.version),
@@ -133,7 +131,7 @@ func (e *Engine) Dispatch(ctx context.Context, tool string, args map[string]inte
 		result, err := e.lspQuery(args)
 		return textResult(result), nil, err
 	case "search_replace":
-		result, err := e.searchReplace(args)
+		result, err := e.searchReplace(ctx, args)
 		return result, nil, err
 	case "related_context":
 		result, err := e.relatedContext(ctx, args)

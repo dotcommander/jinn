@@ -1,6 +1,7 @@
 package jinn
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -48,7 +49,7 @@ type srPending struct {
 
 // collectSRFiles resolves the files argument into a list of candidates.
 // Supports: single path, glob pattern, or array of paths/globs.
-func (e *Engine) collectSRFiles(args map[string]interface{}) ([]srCandidate, error) {
+func (e *Engine) collectSRFiles(ctx context.Context, args map[string]interface{}) ([]srCandidate, error) {
 	// "files" can be a single string (path or glob) or an array of strings.
 	var patterns []string
 	switch v := args["files"].(type) {
@@ -102,7 +103,7 @@ func (e *Engine) collectSRFiles(args map[string]interface{}) ([]srCandidate, err
 		}
 
 		// Treat as a glob pattern — use findFiles logic.
-		found, err := e.globExpand(pat)
+		found, err := e.globExpand(ctx, pat)
 		if err != nil {
 			return nil, &ErrWithSuggestion{
 				Err:        fmt.Errorf("no files matched %q", pat),
@@ -146,9 +147,9 @@ func (e *Engine) collectSRFiles(args map[string]interface{}) ([]srCandidate, err
 }
 
 // globExpand expands a glob pattern into matching file paths.
-func (e *Engine) globExpand(pattern string) ([]string, error) {
+func (e *Engine) globExpand(ctx context.Context, pattern string) ([]string, error) {
 	// Delegate to the existing findFiles infrastructure.
-	res, err := e.findFiles(map[string]interface{}{
+	res, err := e.findFiles(ctx, map[string]interface{}{
 		"pattern": pattern,
 		"limit":   float64(srMaxFiles + 1),
 	})
@@ -209,7 +210,7 @@ func srApplyOne(content []byte, re *regexp.Regexp, replacement string, multiline
 }
 
 // searchReplace is the tool handler for search_replace.
-func (e *Engine) searchReplace(args map[string]interface{}) (*ToolResult, error) {
+func (e *Engine) searchReplace(ctx context.Context, args map[string]interface{}) (*ToolResult, error) {
 	// --- Required arguments ---
 	pattern, _ := args["pattern"].(string)
 	if pattern == "" {
@@ -253,7 +254,7 @@ func (e *Engine) searchReplace(args map[string]interface{}) (*ToolResult, error)
 	// but we still enforce a file size limit.
 
 	// --- Collect target files ---
-	candidates, err := e.collectSRFiles(args)
+	candidates, err := e.collectSRFiles(ctx, args)
 	if err != nil {
 		return nil, err
 	}
