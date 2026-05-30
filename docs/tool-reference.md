@@ -594,7 +594,7 @@ echo '{"tool":"related_context","args":{"query":"fix goroutine data race","types
 
 ### memory
 
-Persist key/value pairs across jinn invocations.
+Persist key/value pairs across jinn invocations, scoped per project.
 
 ```bash
 echo '{"tool":"memory","args":{"action":"save","key":"project.notes","value":"auth service uses JWT RS256"}}' | jinn
@@ -607,6 +607,7 @@ echo '{"tool":"memory","args":{"action":"save","key":"project.notes","value":"au
 | `action` | string | Yes | -- | `save`, `recall`, `list`, or `forget` |
 | `key` | string | Depends | -- | Key name. Required for `save`, `recall`, `forget`. Charset: `[a-zA-Z0-9_.-]`, max 128 chars. |
 | `value` | string | For `save` | -- | Value to store. Max 16 KiB. |
+| `scope` | string | No | current project | Omit for the auto-detected current project (nearest `.git` ancestor). Use `"global"` for the cross-project bucket, or an absolute path for an explicit project. |
 
 **Returns by action:**
 
@@ -619,9 +620,10 @@ echo '{"tool":"memory","args":{"action":"save","key":"project.notes","value":"au
 
 **Notes:**
 
-- Stored at `~/.config/jinn/memory.json`. Override base dir with `JINN_CONFIG_DIR` env var.
-- Total store is capped at 1 MiB. When saving would exceed this, `ok: false` is returned with `suggestion: "use action=\"forget\" on old keys to free space"`.
-- Writes are atomic via temp+rename with mode `0600`. Directory created with `0700`.
+- Stored in a SQLite database at `~/.config/jinn/memory.db`. Override the base dir with `JINN_CONFIG_DIR` (the DB lives at `$JINN_CONFIG_DIR/jinn/memory.db`).
+- Keys are scoped per project. With no `scope` argument, jinn auto-detects the project from the nearest `.git` ancestor of its working directory (falling back to the working directory itself). Pass `scope: "global"` for a cross-project bucket, or an absolute path for a specific project.
+- The DB directory is created with mode `0700`. Writes use WAL journaling with a 5s busy timeout for cross-process safety.
+- A legacy `memory.json` from older jinn versions is imported once into the `"global"` scope on first run, then renamed to `memory.json.migrated`.
 - `recall` on a missing key returns `ok: false` with `suggestion: "use action=\"list\" to see available keys"`.
 
 Save a value:

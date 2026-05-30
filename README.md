@@ -76,7 +76,7 @@ echo '{"tool":"run_shell","args":{"command":"go test ./..."}}' | jinn
 | `detect_project` | Auto-detect language, frameworks, and build/test/lint commands. |
 | `checksum_tree` | Compute SHA-256 hashes for a tree to verify workspace integrity. |
 | `list_tools` | Programmatic tool capability metadata; can include the compact schema on request. |
-| `memory` | Persistent key/value store across sessions. Actions: `save`, `recall`, `list`, `forget`. |
+| `memory` | Persistent, project-scoped key/value store across sessions. Actions: `save`, `recall`, `list`, `forget`. |
 | `undo` | Browse, preview, and restore file snapshots captured automatically before every mutation. |
 | `lsp_query` | Query a language server for `definition`, `references`, `hover`, `symbols`, `diagnostics`, or `rename`. |
 | `related_context` | Rank local KB entries, skills, agents, and commands for a prompt or tool failure. |

@@ -471,7 +471,7 @@ func TestTokenEfficiency_Memory_OutputSize(t *testing.T) {
 	e, _ := testEngine(t)
 
 	// Save
-	saveOut, err := e.memoryTool(args("action", "save", "key", "test-key", "value", "test-value"))
+	saveOut, err := e.memoryTool(context.Background(), args("action", "save", "key", "test-key", "value", "test-value"))
 	if err != nil {
 		t.Fatalf("save: %v", err)
 	}
@@ -480,7 +480,7 @@ func TestTokenEfficiency_Memory_OutputSize(t *testing.T) {
 	}
 
 	// Recall
-	recallOut, err := e.memoryTool(args("action", "recall", "key", "test-key"))
+	recallOut, err := e.memoryTool(context.Background(), args("action", "recall", "key", "test-key"))
 	if err != nil {
 		t.Fatalf("recall: %v", err)
 	}
@@ -489,7 +489,7 @@ func TestTokenEfficiency_Memory_OutputSize(t *testing.T) {
 	}
 
 	// List
-	listOut, err := e.memoryTool(args("action", "list"))
+	listOut, err := e.memoryTool(context.Background(), args("action", "list"))
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}

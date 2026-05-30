@@ -184,7 +184,7 @@ Both backends automatically exclude: `.git`, `node_modules`, `vendor`, `__pycach
 
 ## memory — persistent key/value store
 
-`memory` persists values across jinn invocations. The store lives at `~/.config/jinn/memory.json` (override: `JINN_CONFIG_DIR` env var). Writes are atomic (temp+rename).
+`memory` persists values across jinn invocations. The store is a SQLite database at `~/.config/jinn/memory.db` (override base dir: `JINN_CONFIG_DIR`). Keys are scoped per project (auto-detected from the nearest `.git` ancestor; falls back to the working dir). Writes use WAL journaling with a 5s busy_timeout. A legacy `memory.json` is migrated once into the `"global"` scope then renamed `memory.json.migrated`.
 
 ### Actions
 
@@ -195,6 +195,8 @@ Both backends automatically exclude: `.git`, `node_modules`, `vendor`, `__pycach
 | `list` | — | `{"keys": [...], "count": N}` |
 | `forget` | `key` | `"forgotten: <key>"` (idempotent — not-found is success) |
 
+All actions accept an optional `scope` arg: omit for the current project, `"global"` for the cross-project bucket, or an absolute path for a specific project.
+
 ### Constraints
 
 | Limit | Value |
@@ -202,7 +204,6 @@ Both backends automatically exclude: `.git`, `node_modules`, `vendor`, `__pycach
 | Key charset | `[a-zA-Z0-9_.-]` |
 | Key max length | 128 characters |
 | Value max size | 16 KiB |
-| Total file size | 1 MiB |
 
 When a key is not found, `recall` returns `ok: false` with `suggestion: "use action=\"list\" to see available keys"`.
 

@@ -2,6 +2,7 @@ package jinn
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os/exec"
@@ -18,7 +19,9 @@ type Engine struct {
 	rgPath        string     // path to rg binary, empty if unavailable
 	fdPath        string     // path to fd binary, empty if unavailable
 	LSPTimeoutSec int        // per-query LSP timeout; 0 uses default (10s)
-	memMu         sync.Mutex // guards memory file reads and writes
+	memMu         sync.Mutex // guards lazy memDB open + scope cache init
+	memDB         *sql.DB    // lazily opened on first memory tool call; nil until then
+	curScope      string     // cached auto-detected scope; "" until first resolveScope
 }
 
 // New creates an Engine rooted at the given working directory.
@@ -31,6 +34,19 @@ func New(workDir string, version string) *Engine {
 	rgPath, _ := exec.LookPath("rg")
 	fdPath, _ := exec.LookPath("fd")
 	return &Engine{workDir: workDir, version: version, tracker: newFileTracker(), rgPath: rgPath, fdPath: fdPath, LSPTimeoutSec: 10}
+}
+
+// Close releases the engine's resources, closing the lazily-opened memory DB if
+// it was ever opened. Safe to call when memDB is nil.
+func (e *Engine) Close() error {
+	e.memMu.Lock()
+	defer e.memMu.Unlock()
+	if e.memDB != nil {
+		db := e.memDB
+		e.memDB = nil
+		return db.Close()
+	}
+	return nil
 }
 
 // ToolResult is the structured output of a tool handler.
@@ -122,7 +138,7 @@ func (e *Engine) Dispatch(ctx context.Context, tool string, args map[string]inte
 		result, err := e.detectProject(args)
 		return textResult(result), nil, err
 	case "memory":
-		result, err := e.memoryTool(args)
+		result, err := e.memoryTool(ctx, args)
 		return textResult(result), nil, err
 	case "undo":
 		result, err := e.undoTool(args)

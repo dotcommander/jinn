@@ -225,7 +225,7 @@ Each line in `requests.jsonl` is a complete JSON request object. jinn processes 
 
 ## Persistent Memory
 
-The `memory` tool stores key/value pairs across jinn invocations at `~/.config/jinn/memory.json`:
+The `memory` tool stores key/value pairs across jinn invocations in a SQLite database at `~/.config/jinn/memory.db`, scoped per project:
 
 ```bash
 # Save a value
@@ -236,9 +236,14 @@ echo '{"tool":"memory","args":{"action":"recall","key":"db_url"}}' | jinn
 
 # List all keys
 echo '{"tool":"memory","args":{"action":"list"}}' | jinn
+
+# Save to the cross-project "global" scope
+echo '{"tool":"memory","args":{"action":"save","key":"editor","value":"nvim","scope":"global"}}' | jinn
 ```
 
-Keys must match `[a-zA-Z0-9_.-]` (max 128 chars). Values are capped at 16 KiB; the total store at 1 MiB.
+By default, keys are scoped to the current project (auto-detected from the nearest `.git` ancestor). Pass `scope: "global"` for a cross-project bucket, or an absolute path for a specific project.
+
+Keys must match `[a-zA-Z0-9_.-]` (max 128 chars). Values are capped at 16 KiB.
 
 ## Language Server Queries
 

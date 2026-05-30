@@ -258,13 +258,14 @@
     "type": "function",
     "function": {
       "name": "memory",
-      "description": "Persistent key/value memory for the agent. Save, recall, list, or forget keys across sessions. Stored at ~/.config/jinn/memory.json (or $JINN_CONFIG_DIR/memory.json).",
+      "description": "Persistent key/value memory for the agent, scoped per project. Save, recall, list, or forget keys across sessions. Stored in a SQLite DB at ~/.config/jinn/memory.db (or $JINN_CONFIG_DIR/jinn/memory.db). Keys are isolated per project (auto-detected from the nearest .git ancestor); use scope=\"global\" for a cross-project bucket.",
       "parameters": {
         "type": "object",
         "properties": {
           "action": {"type": "string", "enum": ["save", "recall", "list", "forget"], "description": "Operation to perform."},
           "key":    {"type": "string", "description": "Key name (1-128 chars, [a-zA-Z0-9_.-]). Required for save, recall, forget."},
-          "value":  {"type": "string", "description": "Value to store (max 16 KiB). Required for save."}
+          "value":  {"type": "string", "description": "Value to store (max 16 KiB). Required for save."},
+          "scope":  {"type": "string", "description": "Optional. Omit for the current project (auto-detected). Use \"global\" for the cross-project bucket, or an absolute path for an explicit project. Junk (relative) values are rejected."}
         },
         "required": ["action"]
       }

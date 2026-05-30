@@ -73,7 +73,7 @@ phases:
             - { condition: "list_tools", label: "listTools", subtitle: "capability metadata · inline in engine.go" }
             - { condition: "checksum_tree", label: "checksumTree", subtitle: "SHA-256 file tree · glob filter" }
             - { condition: "detect_project", label: "detectProject", subtitle: "language · framework · build/test/lint" }
-            - { condition: "memory", label: "memoryTool", subtitle: "save · recall · list · forget" }
+            - { condition: "memory", label: "memoryTool", subtitle: "save · recall · list · forget · per-project scope" }
             - { condition: "undo", label: "undoTool", subtitle: "list · preview · restore · clear" }
             - { condition: "lsp_query", label: "lspQuery", subtitle: "8 language servers · symbol auto-detect", wide: true }
             - { condition: "related_context", label: "relatedContext", subtitle: "offline KB/skill/agent/command ranking" }
@@ -172,6 +172,6 @@ stores:
       - { stage: "multiEdit", access: "w", note: "snapshot before mutation" }
       - { stage: "applyPatch", access: "w", note: "snapshot before mutation" }
       - { stage: "undoTool", access: "r/w", note: "list · preview · restore · clear · 50-entry/20 MiB ring" }
-  - name: "~/.config/jinn/memory.json"
+  - name: "~/.config/jinn/memory.db"
     writers:
-      - { stage: "memoryTool", access: "r/w", note: "persistent key/value store · save/recall/list/forget" }
+      - { stage: "memoryTool", access: "r/w", note: "scoped SQLite key/value store · save/recall/list/forget · per-project + global" }

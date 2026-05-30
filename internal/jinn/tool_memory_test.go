@@ -1,6 +1,7 @@
 package jinn
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -21,7 +22,7 @@ func TestMemory_SaveRecallRoundtrip(t *testing.T) {
 	memCfgDir(t)
 	e, _ := testEngine(t)
 
-	out, err := e.memoryTool(args("action", "save", "key", "greeting", "value", "hello world"))
+	out, err := e.memoryTool(context.Background(), args("action", "save", "key", "greeting", "value", "hello world"))
 	if err != nil {
 		t.Fatalf("save: %v", err)
 	}
@@ -29,7 +30,7 @@ func TestMemory_SaveRecallRoundtrip(t *testing.T) {
 		t.Errorf("save output: %q", out)
 	}
 
-	out, err = e.memoryTool(args("action", "recall", "key", "greeting"))
+	out, err = e.memoryTool(context.Background(), args("action", "recall", "key", "greeting"))
 	if err != nil {
 		t.Fatalf("recall: %v", err)
 	}
@@ -42,7 +43,7 @@ func TestMemory_RecallMissing_ErrWithSuggestion(t *testing.T) {
 	memCfgDir(t)
 	e, _ := testEngine(t)
 
-	_, err := e.memoryTool(args("action", "recall", "key", "no-such-key"))
+	_, err := e.memoryTool(context.Background(), args("action", "recall", "key", "no-such-key"))
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -63,12 +64,12 @@ func TestMemory_ListSortedAlphabetically(t *testing.T) {
 	e, _ := testEngine(t)
 
 	for _, k := range []string{"zebra", "apple", "mango"} {
-		if _, err := e.memoryTool(args("action", "save", "key", k, "value", k+"-val")); err != nil {
+		if _, err := e.memoryTool(context.Background(), args("action", "save", "key", k, "value", k+"-val")); err != nil {
 			t.Fatalf("save %s: %v", k, err)
 		}
 	}
 
-	out, err := e.memoryTool(args("action", "list"))
+	out, err := e.memoryTool(context.Background(), args("action", "list"))
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -94,7 +95,7 @@ func TestMemory_ListEmpty(t *testing.T) {
 	memCfgDir(t)
 	e, _ := testEngine(t)
 
-	out, err := e.memoryTool(args("action", "list"))
+	out, err := e.memoryTool(context.Background(), args("action", "list"))
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -115,10 +116,10 @@ func TestMemory_ForgetIdempotent(t *testing.T) {
 	e, _ := testEngine(t)
 
 	// Save then forget.
-	if _, err := e.memoryTool(args("action", "save", "key", "temp", "value", "x")); err != nil {
+	if _, err := e.memoryTool(context.Background(), args("action", "save", "key", "temp", "value", "x")); err != nil {
 		t.Fatalf("save: %v", err)
 	}
-	out, err := e.memoryTool(args("action", "forget", "key", "temp"))
+	out, err := e.memoryTool(context.Background(), args("action", "forget", "key", "temp"))
 	if err != nil {
 		t.Fatalf("forget existing: %v", err)
 	}
@@ -127,7 +128,7 @@ func TestMemory_ForgetIdempotent(t *testing.T) {
 	}
 
 	// Forget again — idempotent, no error.
-	out, err = e.memoryTool(args("action", "forget", "key", "temp"))
+	out, err = e.memoryTool(context.Background(), args("action", "forget", "key", "temp"))
 	if err != nil {
 		t.Fatalf("forget missing: %v", err)
 	}
@@ -136,7 +137,7 @@ func TestMemory_ForgetIdempotent(t *testing.T) {
 	}
 
 	// Confirm gone from list.
-	listOut, err := e.memoryTool(args("action", "list"))
+	listOut, err := e.memoryTool(context.Background(), args("action", "list"))
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -149,7 +150,7 @@ func TestMemory_UnknownAction(t *testing.T) {
 	memCfgDir(t)
 	e, _ := testEngine(t)
 
-	_, err := e.memoryTool(args("action", "explode"))
+	_, err := e.memoryTool(context.Background(), args("action", "explode"))
 	if err == nil {
 		t.Fatal("expected error for unknown action")
 	}
@@ -168,7 +169,7 @@ func TestMemory_InvalidKey(t *testing.T) {
 
 	cases := []string{"", "has space", "has/slash", strings.Repeat("x", 129)}
 	for _, k := range cases {
-		_, err := e.memoryTool(args("action", "save", "key", k, "value", "v"))
+		_, err := e.memoryTool(context.Background(), args("action", "save", "key", k, "value", "v"))
 		if err == nil {
 			t.Errorf("expected error for key %q", k)
 			continue
@@ -185,7 +186,7 @@ func TestMemory_OversizeValue(t *testing.T) {
 	e, _ := testEngine(t)
 
 	bigVal := strings.Repeat("x", memoryMaxValueBytes+1)
-	_, err := e.memoryTool(args("action", "save", "key", "big", "value", bigVal))
+	_, err := e.memoryTool(context.Background(), args("action", "save", "key", "big", "value", bigVal))
 	if err == nil {
 		t.Fatal("expected error for oversize value")
 	}
@@ -202,17 +203,17 @@ func TestMemory_AtomicWriteMultipleEntries(t *testing.T) {
 	memCfgDir(t)
 	e, _ := testEngine(t)
 
-	// Write N entries and verify all survive a full reload (loadMemory reads
-	// the file on every call, so each recall exercises the full persist path).
+	// Write N entries and verify all survive (each recall queries the SQLite
+	// backend, so the loop exercises the full persist path).
 	keys := []string{"alpha", "beta", "gamma", "delta", "epsilon"}
 	for _, k := range keys {
-		if _, err := e.memoryTool(args("action", "save", "key", k, "value", "val-"+k)); err != nil {
+		if _, err := e.memoryTool(context.Background(), args("action", "save", "key", k, "value", "val-"+k)); err != nil {
 			t.Fatalf("save %s: %v", k, err)
 		}
 	}
 
 	for _, k := range keys {
-		out, err := e.memoryTool(args("action", "recall", "key", k))
+		out, err := e.memoryTool(context.Background(), args("action", "recall", "key", k))
 		if err != nil {
 			t.Fatalf("recall %s: %v", k, err)
 		}
@@ -221,7 +222,7 @@ func TestMemory_AtomicWriteMultipleEntries(t *testing.T) {
 		}
 	}
 
-	listOut, err := e.memoryTool(args("action", "list"))
+	listOut, err := e.memoryTool(context.Background(), args("action", "list"))
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -240,13 +241,13 @@ func TestMemory_UpsertOverwrites(t *testing.T) {
 	memCfgDir(t)
 	e, _ := testEngine(t)
 
-	if _, err := e.memoryTool(args("action", "save", "key", "k", "value", "first")); err != nil {
+	if _, err := e.memoryTool(context.Background(), args("action", "save", "key", "k", "value", "first")); err != nil {
 		t.Fatalf("first save: %v", err)
 	}
-	if _, err := e.memoryTool(args("action", "save", "key", "k", "value", "second")); err != nil {
+	if _, err := e.memoryTool(context.Background(), args("action", "save", "key", "k", "value", "second")); err != nil {
 		t.Fatalf("second save: %v", err)
 	}
-	out, err := e.memoryTool(args("action", "recall", "key", "k"))
+	out, err := e.memoryTool(context.Background(), args("action", "recall", "key", "k"))
 	if err != nil {
 		t.Fatalf("recall: %v", err)
 	}

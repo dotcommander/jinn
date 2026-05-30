@@ -155,7 +155,7 @@ The repeated line collapse replaces 3 or more identical consecutive output lines
 
 ## Memory Persistence
 
-The `memory` tool stores its file at `~/.config/jinn/memory.json` (or `$JINN_CONFIG_DIR/jinn/memory.json` when the env var is set). The directory is created with mode `0700`. The file is written with mode `0600` via atomic temp+rename, so partial writes cannot corrupt the store.
+The `memory` tool stores its data in a SQLite database at `~/.config/jinn/memory.db` (or `$JINN_CONFIG_DIR/jinn/memory.db` when the env var is set). The directory is created with mode `0700`. Writes use WAL journaling with a 5s busy_timeout, providing cross-process safety so concurrent jinn invocations cannot corrupt the store. Keys are isolated per project scope.
 
 ---
 
@@ -170,6 +170,6 @@ The `memory` tool stores its file at `~/.config/jinn/memory.json` (or `$JINN_CON
 | Environment scrubbing | `run_shell` | No |
 | Risk classifier | `run_shell` | `force: true` overrides dangerous block |
 | Output bounds | All tools | No |
-| Memory file permissions | `memory` | `$JINN_CONFIG_DIR` relocates storage |
+| Memory DB directory permissions | `memory` | `$JINN_CONFIG_DIR` relocates storage |
 
 Security in jinn is enforced at the engine level. Path confinement, sensitive path blocking, TOCTOU tracking, and environment scrubbing have no bypass. The risk classifier has one intentional override (`force: true`) for callers that have verified the command is safe for their context.

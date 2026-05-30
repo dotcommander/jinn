@@ -65,6 +65,7 @@ func main() {
 	}
 
 	e := jinn.New(wd, version)
+	defer func() { _ = e.Close() }()
 
 	var req jinn.Request
 	if err := json.NewDecoder(os.Stdin).Decode(&req); err != nil {
