@@ -7,6 +7,19 @@ and jinn adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-05-30
+
+### Fixed
+
+- Block symlink escape writes when the path crosses a symlink before a missing
+  child directory.
+- Preserve the actual `run_shell` response tail and full spill file for output
+  larger than the in-memory capture limit.
+- Initialize LSP sessions with explicit workspace folders so `gopls`
+  diagnostics load the full package context.
+- Include `risk` and `classification` metadata on `run_shell` dry-run
+  responses.
+
 ## [0.9.0] - 2026-05-29
 
 ### Changed
@@ -144,7 +157,8 @@ and jinn adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `--schema` flag to emit tool definitions
 - `--version` flag with ldflags and VCS fallback
 
-[Unreleased]: https://github.com/dotcommander/jinn/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/dotcommander/jinn/compare/v0.9.1...HEAD
+[0.9.1]: https://github.com/dotcommander/jinn/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/dotcommander/jinn/compare/v0.8.14...v0.9.0
 [0.8.14]: https://github.com/dotcommander/jinn/compare/v0.8.13...v0.8.14
 [0.8.9]: https://github.com/dotcommander/jinn/compare/v0.8.8...v0.8.9
