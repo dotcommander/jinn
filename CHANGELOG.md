@@ -7,6 +7,29 @@ and jinn adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-05-29
+
+### Changed
+
+- Migrate the `memory` tool from a single flat `memory.json` file to a
+  per-project scoped SQLite store (WAL mode, `0700` directory permissions),
+  enabling safe cross-process concurrent access.
+- Memories are now namespaced by scope: omit `scope` to target the current
+  project (resolved by walking up to the nearest `.git` ancestor, falling back
+  to the working directory), or pass `scope: "global"` for cross-project
+  memories.
+
+### Added
+
+- Optional `scope` parameter on `memory` actions.
+- Automatic one-time migration of legacy `memory.json` entries into the
+  reserved `global` scope on first run.
+
+### Removed
+
+- The 1 MiB total-store cap on the `memory` tool (no longer needed with the
+  SQLite-backed store).
+
 ## [0.8.14] - 2026-05-29
 
 ### Fixed
@@ -121,7 +144,8 @@ and jinn adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `--schema` flag to emit tool definitions
 - `--version` flag with ldflags and VCS fallback
 
-[Unreleased]: https://github.com/dotcommander/jinn/compare/v0.8.14...HEAD
+[Unreleased]: https://github.com/dotcommander/jinn/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/dotcommander/jinn/compare/v0.8.14...v0.9.0
 [0.8.14]: https://github.com/dotcommander/jinn/compare/v0.8.13...v0.8.14
 [0.8.9]: https://github.com/dotcommander/jinn/compare/v0.8.8...v0.8.9
 [0.8.8]: https://github.com/dotcommander/jinn/compare/v0.8.7...v0.8.8
