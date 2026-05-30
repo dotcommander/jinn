@@ -228,15 +228,27 @@ func (c *lspClient) handshake(workDir string) error {
 		Name    string `json:"name"`
 		Version string `json:"version"`
 	}
-	type initParams struct {
-		ProcessID    int            `json:"processId"`
-		RootURI      string         `json:"rootUri"`
-		Capabilities map[string]any `json:"capabilities"`
-		ClientInfo   clientInfo     `json:"clientInfo"`
+	type workspaceFolder struct {
+		URI  string `json:"uri"`
+		Name string `json:"name"`
 	}
+	type initParams struct {
+		ProcessID        int               `json:"processId"`
+		RootPath         string            `json:"rootPath,omitempty"`
+		RootURI          string            `json:"rootUri"`
+		WorkspaceFolders []workspaceFolder `json:"workspaceFolders,omitempty"`
+		Capabilities     map[string]any    `json:"capabilities"`
+		ClientInfo       clientInfo        `json:"clientInfo"`
+	}
+	rootURI := pathToURI(workDir)
 	_, err := c.sendRequest("initialize", initParams{
 		ProcessID: os.Getpid(),
-		RootURI:   pathToURI(workDir),
+		RootPath:  workDir,
+		RootURI:   rootURI,
+		WorkspaceFolders: []workspaceFolder{{
+			URI:  rootURI,
+			Name: filepath.Base(workDir),
+		}},
 		Capabilities: map[string]any{
 			"textDocument": map[string]any{
 				"diagnostic":         map[string]any{"dynamicRegistration": false},

@@ -12,6 +12,10 @@ import (
 type mockConfig struct {
 	slow bool // block forever (timeout test)
 
+	// initializeParams receives the initialize params when a test needs to
+	// assert the workspace shape sent to the language server.
+	initializeParams chan<- map[string]any
+
 	// per-method overrides: when true, the server returns null for that method
 	nullDefinition  bool
 	nullReferences  bool
@@ -85,6 +89,13 @@ func runMockServer(r io.Reader, w io.WriteCloser, cfg mockConfig) {
 
 		switch msg.Method {
 		case "initialize":
+			if cfg.initializeParams != nil {
+				var params map[string]any
+				data, err := json.Marshal(msg.Params)
+				if err == nil && json.Unmarshal(data, &params) == nil {
+					cfg.initializeParams <- params
+				}
+			}
 			writeMockFrame(w, mockReply(msg.ID, map[string]any{"capabilities": map[string]any{}}))
 
 		case "initialized", "textDocument/didOpen", "textDocument/didClose", "exit":

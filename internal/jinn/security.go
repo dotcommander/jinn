@@ -55,25 +55,11 @@ func (e *Engine) checkPath(p string) (string, error) {
 		return "", err
 	}
 
-	// Resolve symlinks to detect escape attempts.
-	// If the file doesn't exist, try the parent directory.
-	real, err := filepath.EvalSymlinks(resolved)
+	real, err := resolveExistingPrefix(resolved)
 	if err != nil {
-		if os.IsNotExist(err) {
-			parentReal, err2 := filepath.EvalSymlinks(filepath.Dir(resolved))
-			if err2 == nil {
-				real = filepath.Join(parentReal, filepath.Base(resolved))
-			} else {
-				// Parent doesn't exist either; use the cleaned path.
-				real = resolved
-			}
-		} else {
-			// Symlink resolution failed for a non-existence reason — likely a
-			// symlink whose target is outside the sandbox.
-			return "", &ErrWithSuggestion{
-				Err:        fmt.Errorf("symlink target is outside the sandbox: %s", p),
-				Suggestion: "symlink target is outside the sandbox; follow the symlink manually via its absolute path if authorized",
-			}
+		return "", &ErrWithSuggestion{
+			Err:        fmt.Errorf("symlink target is outside the sandbox: %s", p),
+			Suggestion: "symlink target is outside the sandbox; follow the symlink manually via its absolute path if authorized",
 		}
 	}
 
@@ -90,4 +76,33 @@ func (e *Engine) checkPath(p string) (string, error) {
 		}
 	}
 	return real, nil
+}
+
+func resolveExistingPrefix(path string) (string, error) {
+	if real, err := filepath.EvalSymlinks(path); err == nil {
+		return real, nil
+	} else if !os.IsNotExist(err) {
+		return "", err
+	}
+
+	var missing []string
+	current := path
+	for {
+		parent := filepath.Dir(current)
+		if parent == current {
+			return filepath.Clean(path), nil
+		}
+		missing = append(missing, filepath.Base(current))
+		current = parent
+		real, err := filepath.EvalSymlinks(current)
+		if err == nil {
+			for i := len(missing) - 1; i >= 0; i-- {
+				real = filepath.Join(real, missing[i])
+			}
+			return real, nil
+		}
+		if !os.IsNotExist(err) {
+			return "", err
+		}
+	}
 }

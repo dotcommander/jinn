@@ -90,6 +90,23 @@ func TestCheckPath_SymlinkEscape(t *testing.T) {
 	}
 }
 
+func TestCheckPath_SymlinkEscapeWithMissingChild(t *testing.T) {
+	t.Parallel()
+	e, dir := testEngine(t)
+	target := t.TempDir()
+	if err := os.Symlink(target, filepath.Join(dir, "escape")); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := e.checkPath("escape/newdir/file.txt")
+	if err == nil {
+		t.Fatal("symlink escape through missing child should be blocked")
+	}
+	if !strings.Contains(err.Error(), "outside working directory") {
+		t.Fatalf("expected outside-workdir error, got: %v", err)
+	}
+}
+
 // Change 6: resolvePath expands leading ~ to home directory.
 func TestResolvePath_ExpandsTilde(t *testing.T) {
 	t.Parallel()

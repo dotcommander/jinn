@@ -39,6 +39,50 @@ func writeLSPFile(t *testing.T, dir, name string) string {
 
 // --- happy-path tests (all parallel — they inject a launcher, no global state) ---
 
+func TestLSP_InitializeIncludesWorkspaceFolder(t *testing.T) {
+	t.Parallel()
+	e, dir := testEngine(t)
+	writeLSPFile(t, dir, "src.go")
+
+	initParams := make(chan map[string]any, 1)
+	_, err := e.lspQueryWithLauncher(lspArgs(
+		"action", "diagnostics",
+		"path", "src.go",
+	), newMockLauncherCfg(mockConfig{initializeParams: initParams}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var params map[string]any
+	select {
+	case params = <-initParams:
+	case <-time.After(time.Second):
+		t.Fatal("mock server did not capture initialize params")
+	}
+
+	rootURI := pathToURI(dir)
+	if got, _ := params["rootPath"].(string); got != dir {
+		t.Fatalf("rootPath = %q, want %q", got, dir)
+	}
+	if got, _ := params["rootUri"].(string); got != rootURI {
+		t.Fatalf("rootUri = %q, want %q", got, rootURI)
+	}
+	folders, ok := params["workspaceFolders"].([]any)
+	if !ok || len(folders) != 1 {
+		t.Fatalf("workspaceFolders = %#v, want one folder", params["workspaceFolders"])
+	}
+	folder, ok := folders[0].(map[string]any)
+	if !ok {
+		t.Fatalf("workspaceFolders[0] = %#v, want object", folders[0])
+	}
+	if got, _ := folder["uri"].(string); got != rootURI {
+		t.Fatalf("workspaceFolders[0].uri = %q, want %q", got, rootURI)
+	}
+	if got, _ := folder["name"].(string); got != filepath.Base(dir) {
+		t.Fatalf("workspaceFolders[0].name = %q, want %q", got, filepath.Base(dir))
+	}
+}
+
 func TestLSP_Definition_Succeeds(t *testing.T) {
 	t.Parallel()
 	e, dir := testEngine(t)

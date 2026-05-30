@@ -3,6 +3,7 @@ package jinn
 import (
 	"context"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -79,7 +80,7 @@ func TestRunShell_TimeoutClamp(t *testing.T) {
 func TestRunShell_DryRun(t *testing.T) {
 	t.Parallel()
 	e, _ := testEngine(t)
-	result, _, err := e.runShell(context.Background(), args("command", "rm -rf /", "dry_run", true))
+	result, meta, err := e.runShell(context.Background(), args("command", "rm -rf /", "dry_run", true))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -88,6 +89,12 @@ func TestRunShell_DryRun(t *testing.T) {
 	}
 	if !strings.Contains(result, "rm -rf /") {
 		t.Errorf("expected command in output, got: %s", result)
+	}
+	if meta["risk"] != RiskDangerous.String() {
+		t.Errorf("risk = %q, want %q", meta["risk"], RiskDangerous)
+	}
+	if meta["classification"] != string(ClassSuccess) {
+		t.Errorf("classification = %q, want %q", meta["classification"], ClassSuccess)
 	}
 }
 
@@ -234,6 +241,30 @@ func TestRunShell_LargeBytes_Truncation(t *testing.T) {
 	}
 }
 
+func TestRunShell_OverflowSpillKeepsFullOutputAndResponseTail(t *testing.T) {
+	t.Parallel()
+	e, _ := testEngine(t)
+	cmd := `i=0; while [ $i -lt 18000 ]; do printf 'line%05d padding padding padding padding padding padding padding padding padding padding\n' "$i"; i=$((i+1)); done; echo SENTINEL_END`
+	result, _, err := e.runShell(context.Background(), args("command", cmd, "timeout", float64(20)))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result, "SENTINEL_END") {
+		t.Fatalf("response tail lost final output: %s", result[len(result)-300:])
+	}
+	path := shellSpillPath(result)
+	if path == "" {
+		t.Fatalf("expected Full output path, got: %s", result[len(result)-300:])
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read spill: %v", err)
+	}
+	if !strings.Contains(string(data), "line00000") || !strings.Contains(string(data), "SENTINEL_END") {
+		t.Fatalf("spill should contain first and last output, got len=%d", len(data))
+	}
+}
+
 func TestRunShell_TimeoutEnforcedWithoutTimeoutBinary(t *testing.T) {
 	t.Parallel()
 	e, _ := testEngine(t)
@@ -287,4 +318,17 @@ func TestRunShell_SmallOutput_NoTruncation(t *testing.T) {
 	if strings.Contains(result, "Full output:") {
 		t.Errorf("small output should NOT have temp file reference")
 	}
+}
+
+func shellSpillPath(result string) string {
+	const marker = "Full output: "
+	idx := strings.LastIndex(result, marker)
+	if idx < 0 {
+		return ""
+	}
+	rest := result[idx+len(marker):]
+	if end := strings.Index(rest, "]"); end >= 0 {
+		rest = rest[:end]
+	}
+	return strings.TrimSpace(rest)
 }

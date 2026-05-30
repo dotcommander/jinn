@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -39,12 +40,16 @@ func (e *Engine) runShell(ctx context.Context, args map[string]interface{}) (str
 			Code:       ErrCodeInvalidArgs,
 		}
 	}
+	// Classify before dry-run so the response envelope always includes risk metadata.
+	riskLevel, riskReason := ClassifyCommand(cmd)
 	if dryRun, ok := args["dry_run"].(bool); ok && dryRun {
-		return fmt.Sprintf("[dry-run] would execute: %s", cmd), nil, nil
+		return fmt.Sprintf("[dry-run] would execute: %s", cmd), map[string]string{
+			"risk":           riskLevel.String(),
+			"classification": string(ClassSuccess),
+		}, nil
 	}
 
-	// Risk classification — block dangerous commands unless force=true.
-	riskLevel, riskReason := ClassifyCommand(cmd)
+	// Block dangerous commands unless force=true.
 	if riskLevel == RiskDangerous {
 		if force, _ := args["force"].(bool); !force {
 			return "", map[string]string{"risk": riskLevel.String()}, &ErrWithSuggestion{
@@ -70,11 +75,13 @@ func (e *Engine) runShell(ctx context.Context, args map[string]interface{}) (str
 	c := exec.CommandContext(ctx, "bash", "-c", cmd)
 	c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
-	outBuf := &boundedWriter{limit: 1 << 20} // 1 MB capture buffer
-	errBuf := &boundedWriter{limit: 1 << 20} // 1 MB capture buffer
+	capture := newShellOutputCapture(1 << 20) // 1 MB response tail + full spill on overflow
+	defer capture.Close()
+	outBuf := &boundedWriter{limit: 1 << 20} // 1 MB stdout meta buffer
+	errBuf := &boundedWriter{limit: 1 << 20} // 1 MB stderr meta buffer
 	c.Env = shellEnv()
-	c.Stdout = outBuf
-	c.Stderr = errBuf
+	c.Stdout = io.MultiWriter(capture, outBuf)
+	c.Stderr = io.MultiWriter(capture, errBuf)
 
 	exitCode := 0
 	timedOut := false
@@ -104,7 +111,7 @@ func (e *Engine) runShell(ctx context.Context, args map[string]interface{}) (str
 	if timedOut {
 		exitCode = 124 // preserves "timed out after N seconds" message below
 	}
-	raw := collapseRepeatedLines(outBuf.String() + errBuf.String())
+	raw := collapseRepeatedLines(capture.String())
 	raw = collapseBlankLines(raw, 3)
 	// Apply command-aware compression before framing (compress_shell.go dispatches on
 	// the last pipeline segment's verb, then falls through to the generic strategy chain).
@@ -112,17 +119,19 @@ func (e *Engine) runShell(ctx context.Context, args map[string]interface{}) (str
 
 	// Apply tail truncation with line + byte limits (matching pi conventions).
 	content, trunc := truncateTailDetailed(raw, DefaultMaxLines, DefaultMaxBytes)
+	if capture.Truncated() {
+		trunc.TotalBytes = capture.TotalBytes()
+		trunc.TotalLines = capture.TotalLines()
+	}
 
-	if outBuf.Truncated() || errBuf.Truncated() || trunc.Truncated {
-		if tmp, err := os.CreateTemp("", "jinn-shell-*.log"); err == nil {
-			tmp.WriteString(raw)
+	if capture.Truncated() || trunc.Truncated {
+		if tmpPath := capture.EnsureSpill(); tmpPath != "" {
 			content += fmt.Sprintf(
 				"\n\n[Showing %d of %d lines (%s of %s). Full output: %s]",
 				trunc.OutputLines, trunc.TotalLines,
 				formatSize(trunc.OutputBytes), formatSize(trunc.TotalBytes),
-				tmp.Name(),
+				tmpPath,
 			)
-			tmp.Close()
 		} else {
 			content += fmt.Sprintf(
 				"\n\n[Showing %d of %d lines (%s of %s)]",
