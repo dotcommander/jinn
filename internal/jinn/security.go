@@ -49,6 +49,24 @@ func (e *Engine) resolvePath(p string) (string, error) {
 	return filepath.Clean(p), nil
 }
 
+// checkPathForRead is like checkPath but also allows reading jinn's own
+// shell spill files. Spill files live in os.TempDir() and are named with
+// spillFilePrefix — they are jinn's own output, equivalent to what run_shell
+// can already return inline. Write and exec paths must use checkPath directly.
+func (e *Engine) checkPathForRead(p string) (string, error) {
+	resolved, err := e.resolvePath(p)
+	if err != nil {
+		return "", err
+	}
+	// Spill-file exemption: read-only access to jinn's own tmp output.
+	// Both sides are cleaned to prevent symlink/.. escape.
+	if filepath.Dir(resolved) == filepath.Clean(os.TempDir()) &&
+		strings.HasPrefix(filepath.Base(resolved), spillFilePrefix) {
+		return resolved, nil
+	}
+	return e.checkPath(p)
+}
+
 func (e *Engine) checkPath(p string) (string, error) {
 	resolved, err := e.resolvePath(p)
 	if err != nil {

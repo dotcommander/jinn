@@ -30,7 +30,8 @@
           "tail": {"type": "integer", "description": "Read the last N lines of the file. Takes precedence over start_line/end_line. 0 = disabled.", "default": 0},
           "line_numbers": {"type": "boolean", "description": "Include cat-n style line-number prefixes in output (default: true). Set false to receive raw file content with no numbering.", "default": true},
           "truncate": {"type": "string", "enum": ["head", "tail", "middle", "none", "smart"], "description": "Strategy when output exceeds line limit. head=keep first N (default, paginates with start_line). tail=keep last N (logs). middle=keep both ends, elide middle. none=defer to byte cap only. smart=brace-depth heuristic for C-syntax files, falls back to head for others.", "default": "head"},
-          "include_checksum": {"type": "boolean", "description": "When true, response meta includes sha256 hex digest of the full file content. Zero extra I/O cost (computed during read).", "default": false}
+          "include_checksum": {"type": "boolean", "description": "When true, response meta includes sha256 hex digest of the full file content. Zero extra I/O cost (computed during read).", "default": false},
+          "if_checksum": {"type": "string", "description": "SHA-256 hex digest from a previous read_file response (meta.sha256). When set and the file's current checksum matches, returns {\"unchanged\":true,\"path\":\"...\",\"checksum\":\"...\"} instead of file content — saves tokens in build→fix→build loops. Mismatched or absent checksum falls through to a normal full read."}
         },
         "required": ["path"]
       }
@@ -265,7 +266,8 @@
           "action": {"type": "string", "enum": ["save", "recall", "list", "forget"], "description": "Operation to perform."},
           "key":    {"type": "string", "description": "Key name (1-128 chars, [a-zA-Z0-9_.-]). Required for save, recall, forget."},
           "value":  {"type": "string", "description": "Value to store (max 16 KiB). Required for save."},
-          "scope":  {"type": "string", "description": "Optional. Omit for the current project (auto-detected). Use \"global\" for the cross-project bucket, or an absolute path for an explicit project. Junk (relative) values are rejected."}
+          "scope":          {"type": "string",  "description": "Optional. Omit for the current project (auto-detected). Use \"global\" for the cross-project bucket, or an absolute path for an explicit project. Junk (relative) values are rejected."},
+          "include_values": {"type": "boolean", "description": "list only. When true, returns {entries:[{key,value,updated}],count:N} instead of {keys:[...],count:N}. Default false."}
         },
         "required": ["action"]
       }

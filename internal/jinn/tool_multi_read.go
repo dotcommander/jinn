@@ -12,11 +12,16 @@ import (
 // multiReadMaxFiles is the maximum number of files accepted in a single call.
 const multiReadMaxFiles = 20
 
+// multiReadGlobalCapBytes is the aggregate byte budget across all files in one call.
+// Per-file cap (~50 KB) from readFileContent is a separate, independent guard.
+const multiReadGlobalCapBytes = 512 * 1024 // 512 KB total
+
 // multiReadResult is the top-level JSON structure returned by multi_read.
 type multiReadResult struct {
-	Files      map[string]string         `json:"files"`
-	Errors     map[string]multiReadError `json:"errors,omitempty"`
-	Truncation map[string]truncationInfo `json:"truncation,omitempty"`
+	Files           map[string]string         `json:"files"`
+	Errors          map[string]multiReadError `json:"errors,omitempty"`
+	Truncation      map[string]truncationInfo `json:"truncation,omitempty"`
+	TruncatedGlobal bool                      `json:"truncated_global,omitempty"`
 }
 
 // multiReadError describes a per-file failure within a multi_read call.
@@ -25,9 +30,6 @@ type multiReadError struct {
 	Suggestion string `json:"suggestion,omitempty"`
 	ErrorCode  string `json:"error_code,omitempty"`
 }
-
-// TODO: global byte cap across all files (per-file 50KB cap from readFileContent is
-// sufficient for v1; 20×50KB = 1MB max, within jinn's output capabilities).
 
 func (e *Engine) multiRead(args map[string]interface{}) (*ToolResult, error) {
 	// 1. Parse files array.
@@ -53,6 +55,7 @@ func (e *Engine) multiRead(args map[string]interface{}) (*ToolResult, error) {
 		Truncation: make(map[string]truncationInfo),
 	}
 
+	var totalBytes int
 	for _, raw := range rawFiles {
 		entry, ok := raw.(map[string]interface{})
 		if !ok {
@@ -99,11 +102,21 @@ func (e *Engine) multiRead(args map[string]interface{}) (*ToolResult, error) {
 			continue
 		}
 
-		// Success: add content to files map.
+		// Success: check global byte budget before adding to result.
 		content := cr.Content
 		if cr.ByteHint != "" {
 			content += cr.ByteHint
 		}
+		if totalBytes+len(content) > multiReadGlobalCapBytes {
+			result.Errors[path] = multiReadError{
+				Error:      fmt.Sprintf("global cap exceeded: aggregate output reached %d bytes (limit %d)", totalBytes, multiReadGlobalCapBytes),
+				Suggestion: "request fewer files per call or use start_line/end_line to read smaller slices",
+				ErrorCode:  "global_cap_exceeded",
+			}
+			result.TruncatedGlobal = true
+			break
+		}
+		totalBytes += len(content)
 		result.Files[path] = content
 
 		if cr.Truncated {

@@ -99,6 +99,25 @@ func (e *Engine) memoryList(ctx context.Context, args map[string]interface{}) (s
 	if err != nil {
 		return "", err
 	}
+	includeValues, _ := args["include_values"].(bool)
+	if includeValues {
+		entries, err := e.memoryListScopedWithValues(ctx, scope)
+		if err != nil {
+			return "", err
+		}
+		if entries == nil {
+			entries = []memoryEntry{}
+		}
+		result := struct {
+			Entries []memoryEntry `json:"entries"`
+			Count   int           `json:"count"`
+		}{entries, len(entries)}
+		data, err := json.Marshal(result)
+		if err != nil {
+			return "", fmt.Errorf("memory: list marshal: %w", err)
+		}
+		return string(data), nil
+	}
 	keys, err := e.memoryListScoped(ctx, scope)
 	if err != nil {
 		return "", err

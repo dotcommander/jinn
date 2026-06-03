@@ -5,6 +5,11 @@ import (
 	"sync"
 )
 
+// spillFilePrefix is the single source of truth for the spill-file naming
+// convention. security.go uses it to recognise jinn's own tmp files for the
+// read-only sandbox exemption; shell_capture.go uses it when creating them.
+const spillFilePrefix = "jinn-shell-"
+
 // shellOutputCapture keeps a bounded response tail while preserving complete
 // command output in a spill file once the in-memory tail limit is crossed.
 type shellOutputCapture struct {
@@ -108,7 +113,7 @@ func (c *shellOutputCapture) ensureSpillLocked() {
 	if c.spill != nil || c.spillErr != nil {
 		return
 	}
-	tmp, err := os.CreateTemp("", "jinn-shell-*.log")
+	tmp, err := os.CreateTemp("", spillFilePrefix+"*.log")
 	if err != nil {
 		c.spillErr = err
 		return

@@ -335,7 +335,7 @@ func (e *Engine) readFileContent(resolved string, args map[string]interface{}) (
 
 func (e *Engine) readFile(args map[string]interface{}) (*ToolResult, error) {
 	path, _ := args["path"].(string)
-	resolved, err := e.checkPath(path)
+	resolved, err := e.checkPathForRead(path)
 	if err != nil {
 		// Wrap with "blocked:" prefix for backward compat, preserving any
 		// ErrWithSuggestion so callers can surface the suggestion field.
@@ -413,6 +413,29 @@ func (e *Engine) readFile(args map[string]interface{}) (*ToolResult, error) {
 				MimeType: mime,
 			}},
 		}, checksum), nil
+	}
+
+	// Conditional read: if the caller supplies if_checksum and it matches the
+	// current file's SHA-256, return a compact unchanged response (no content).
+	if ifCS, _ := args["if_checksum"].(string); ifCS != "" {
+		d, rerr := os.ReadFile(resolved)
+		if rerr != nil {
+			if os.IsPermission(rerr) {
+				return nil, &ErrWithSuggestion{
+					Err:        fmt.Errorf("permission denied: %s", path),
+					Suggestion: "file is not readable by the sandbox; check ownership or choose a different file",
+					Code:       ErrCodePermissionDenied,
+				}
+			}
+			return nil, rerr
+		}
+		h := sha256.Sum256(d)
+		current := hex.EncodeToString(h[:])
+		if ifCS == current {
+			return &ToolResult{
+				Text: fmt.Sprintf(`{"unchanged":true,"path":%q,"checksum":%q}`, resolved, current),
+			}, nil
+		}
 	}
 
 	// Delegate to the shared content reader.

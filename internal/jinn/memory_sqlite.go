@@ -130,6 +130,40 @@ func (e *Engine) memoryListScoped(ctx context.Context, scope string) ([]string, 
 	return keys, nil
 }
 
+// memoryEntry holds a key/value/updated triple returned by memoryListScopedWithValues.
+type memoryEntry struct {
+	Key     string `json:"key"`
+	Value   string `json:"value"`
+	Updated string `json:"updated"`
+}
+
+// memoryListScopedWithValues returns all entries in a scope with their values,
+// sorted by key. Mirrors the ordering of memoryListScoped.
+func (e *Engine) memoryListScopedWithValues(ctx context.Context, scope string) ([]memoryEntry, error) {
+	db, err := e.memDBConn(ctx)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.QueryContext(ctx, "SELECT key, value, updated FROM memory WHERE scope=? ORDER BY key", scope)
+	if err != nil {
+		return nil, fmt.Errorf("memory: list: %w", err)
+	}
+	defer rows.Close()
+
+	entries := []memoryEntry{}
+	for rows.Next() {
+		var entry memoryEntry
+		if err := rows.Scan(&entry.Key, &entry.Value, &entry.Updated); err != nil {
+			return nil, fmt.Errorf("memory: list scan: %w", err)
+		}
+		entries = append(entries, entry)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("memory: list rows: %w", err)
+	}
+	return entries, nil
+}
+
 // memoryForgetScoped deletes (scope, key). Zero rows affected is not an error.
 func (e *Engine) memoryForgetScoped(ctx context.Context, scope, key string) error {
 	db, err := e.memDBConn(ctx)
