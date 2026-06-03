@@ -44,30 +44,32 @@ func (e *Engine) taskCreate(ctx context.Context, args map[string]interface{}) (s
 	}
 	agent := resolveAgent(args)
 	projectID := e.resolveProjectID(args)
+	requestID := strArg(args, "request_id")
 
 	db, err := e.memDBConn(ctx)
 	if err != nil {
 		return "", err
 	}
 
-	var task *Task
-	err = transact(ctx, db, func(tx *sql.Tx) error {
+	result, err := runIdempotent(ctx, db, agent, requestID, "task.create", func(tx *sql.Tx) (any, error) {
 		if projErr := ensureProject(ctx, tx, projectID); projErr != nil {
-			return projErr
+			return nil, projErr
 		}
 		t, insertErr := insertTaskTx(ctx, tx, title, description, projectID, priority)
 		if insertErr != nil {
-			return insertErr
+			return nil, insertErr
 		}
-		task = t
 		_, evtErr := insertEventTx(ctx, tx, "task_created", agent, projectID, t.ID,
 			fmt.Sprintf("Task created: %s", title), "")
-		return evtErr
+		if evtErr != nil {
+			return nil, evtErr
+		}
+		return t, nil
 	})
 	if err != nil {
 		return "", err
 	}
-	return marshalJSON(task)
+	return result.(string), nil
 }
 
 func (e *Engine) taskBegin(ctx context.Context, args map[string]interface{}) (string, error) {
@@ -76,25 +78,20 @@ func (e *Engine) taskBegin(ctx context.Context, args map[string]interface{}) (st
 		return "", errInvalidArgs("task_id is required", "provide the task id to begin")
 	}
 	agent := resolveAgent(args)
+	requestID := strArg(args, "request_id")
 
 	db, err := e.memDBConn(ctx)
 	if err != nil {
 		return "", err
 	}
 
-	var task *Task
-	err = transact(ctx, db, func(tx *sql.Tx) error {
-		t, txErr := updateTaskStatusTx(ctx, tx, taskID, "in_progress", agent, "task_started")
-		if txErr != nil {
-			return txErr
-		}
-		task = t
-		return nil
+	result, err := runIdempotent(ctx, db, agent, requestID, "task.begin", func(tx *sql.Tx) (any, error) {
+		return updateTaskStatusTx(ctx, tx, taskID, "in_progress", agent, "task_started")
 	})
 	if err != nil {
 		return "", err
 	}
-	return marshalJSON(task)
+	return result.(string), nil
 }
 
 func (e *Engine) taskSetStatus(ctx context.Context, args map[string]interface{}) (string, error) {
@@ -113,31 +110,30 @@ func (e *Engine) taskSetStatus(ctx context.Context, args map[string]interface{})
 	}
 	blockedReason := strArg(args, "blocked_reason")
 	agent := resolveAgent(args)
+	requestID := strArg(args, "request_id")
 
 	db, err := e.memDBConn(ctx)
 	if err != nil {
 		return "", err
 	}
 
-	var task *Task
-	err = transact(ctx, db, func(tx *sql.Tx) error {
+	result, err := runIdempotent(ctx, db, agent, requestID, "task.set_status", func(tx *sql.Tx) (any, error) {
 		t, txErr := updateTaskStatusTx(ctx, tx, taskID, status, agent, "task_status")
 		if txErr != nil {
-			return txErr
+			return nil, txErr
 		}
 		if status == "blocked" && blockedReason != "" {
 			if brErr := setBlockedReasonTx(ctx, tx, taskID, blockedReason); brErr != nil {
-				return brErr
+				return nil, brErr
 			}
 			t.BlockedReason = blockedReason
 		}
-		task = t
-		return nil
+		return t, nil
 	})
 	if err != nil {
 		return "", err
 	}
-	return marshalJSON(task)
+	return result.(string), nil
 }
 
 func (e *Engine) taskGet(ctx context.Context, args map[string]interface{}) (string, error) {

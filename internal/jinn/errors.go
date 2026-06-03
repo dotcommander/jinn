@@ -19,6 +19,7 @@ const (
 	ErrCodeCommandBlocked     = "command_blocked"
 	ErrCodeInvalidArgs        = "invalid_args"
 	ErrCodeCanceled           = "canceled"
+	ErrCodeConflict           = "conflict"
 )
 
 // ErrWithSuggestion wraps an error with a user-facing suggestion and an

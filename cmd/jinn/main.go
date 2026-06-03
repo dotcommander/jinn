@@ -87,6 +87,14 @@ func main() {
 			req.Args["client"] = req.Client
 		}
 	}
+	if req.RequestID != "" {
+		if req.Args == nil {
+			req.Args = make(map[string]interface{})
+		}
+		if _, ok := req.Args["request_id"]; !ok {
+			req.Args["request_id"] = req.RequestID
+		}
+	}
 
 	result, meta, err := e.Dispatch(ctx, req.Tool, req.Args)
 	if err != nil {
