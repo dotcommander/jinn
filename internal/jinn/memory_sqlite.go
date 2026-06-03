@@ -64,6 +64,11 @@ func (e *Engine) memDBConn(ctx context.Context) (*sql.DB, error) {
 		return nil, fmt.Errorf("memory: schema index: %w", err)
 	}
 
+	if err := e.continuityTables(ctx, db); err != nil {
+		db.Close()
+		return nil, err
+	}
+
 	if err := e.migrateLegacyMemory(ctx, db); err != nil {
 		db.Close()
 		return nil, err
@@ -71,6 +76,100 @@ func (e *Engine) memDBConn(ctx context.Context) (*sql.DB, error) {
 
 	e.memDB = db
 	return db, nil
+}
+
+// continuityTables creates the flattened vybe continuity schema (events, tasks,
+// agent_state, artifacts, projects, idempotency) on the shared memory.db handle.
+// Idempotent via CREATE TABLE/INDEX IF NOT EXISTS; no migration framework (Beta,
+// no back-compat). Schema is the FINAL collapsed state of vybe's 30+ migrations.
+//
+// COLLISION NOTE: vybe also defines a `memory` table (id-PK, UNIQUE(scope,scope_id,key),
+// value_type NOT NULL, pinned/kind/source_* columns). jinn already owns a 4-column
+// `memory(scope,key,value,updated)` table with PK(scope,key) that the memory tool
+// depends on via ON CONFLICT(scope,key). The two are structurally incompatible, and
+// Phase 1 ports no tool that needs vybe's memory columns, so the vybe `memory`
+// superset is DELIBERATELY NOT created here — widening is deferred to the phase that
+// ports the memory tool wrappers. Do not add a `CREATE TABLE IF NOT EXISTS memory(...superset...)`
+// here: it would silently no-op against jinn's existing table and mislead future readers.
+func (e *Engine) continuityTables(ctx context.Context, db *sql.DB) error {
+	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS events (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			kind TEXT NOT NULL,
+			agent_name TEXT NOT NULL,
+			task_id TEXT,
+			message TEXT NOT NULL,
+			metadata TEXT,
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			project_id TEXT
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_events_agent_name ON events(agent_name)`,
+		`CREATE INDEX IF NOT EXISTS idx_events_task_id ON events(task_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_events_project_cursor ON events(project_id, id)`,
+		`CREATE INDEX IF NOT EXISTS idx_events_kind_id ON events(kind, id)`,
+
+		`CREATE TABLE IF NOT EXISTS tasks (
+			id TEXT PRIMARY KEY,
+			title TEXT NOT NULL,
+			description TEXT,
+			status TEXT NOT NULL,
+			version INTEGER NOT NULL DEFAULT 1,
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			project_id TEXT,
+			priority INTEGER NOT NULL DEFAULT 0,
+			blocked_reason TEXT
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)`,
+		`CREATE INDEX IF NOT EXISTS idx_tasks_project_id ON tasks(project_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_tasks_priority ON tasks(priority DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_tasks_focus_selection ON tasks(status, project_id, priority DESC, created_at ASC)`,
+
+		`CREATE TABLE IF NOT EXISTS agent_state (
+			agent_name TEXT PRIMARY KEY,
+			last_seen_event_id INTEGER NOT NULL DEFAULT 0,
+			focus_task_id TEXT,
+			version INTEGER NOT NULL DEFAULT 1,
+			last_active_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			focus_project_id TEXT
+		)`,
+
+		`CREATE TABLE IF NOT EXISTS artifacts (
+			id TEXT PRIMARY KEY,
+			task_id TEXT NOT NULL,
+			event_id INTEGER NOT NULL,
+			file_path TEXT NOT NULL,
+			content_type TEXT,
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			project_id TEXT,
+			FOREIGN KEY (task_id) REFERENCES tasks(id),
+			FOREIGN KEY (event_id) REFERENCES events(id)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_artifacts_project_id ON artifacts(project_id)`,
+
+		`CREATE TABLE IF NOT EXISTS projects (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			metadata TEXT,
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`,
+
+		`CREATE TABLE IF NOT EXISTS idempotency (
+			agent_name TEXT NOT NULL,
+			request_id TEXT NOT NULL,
+			command TEXT NOT NULL,
+			result_json TEXT NOT NULL,
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (agent_name, request_id)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_idempotency_agent ON idempotency(agent_name)`,
+	}
+	for _, s := range stmts {
+		if _, err := db.ExecContext(ctx, s); err != nil {
+			return fmt.Errorf("memory: continuity schema: %w", err)
+		}
+	}
+	return nil
 }
 
 // memorySaveScoped upserts a value for (scope, key).
