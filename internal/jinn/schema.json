@@ -421,5 +421,88 @@
         "required": []
       }
     }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "artifact",
+      "description": "Add or list file artifacts linked to a task. add emits an artifact_added event and inserts the artifact row atomically. list returns artifacts ordered by created_at ASC.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "action":       {"type": "string", "enum": ["add", "list"], "description": "Sub-action to perform."},
+          "task_id":      {"type": "string", "description": "Task ID to link or list artifacts for. Required for both actions."},
+          "file_path":    {"type": "string", "description": "Absolute or relative file path of the artifact. Required for add."},
+          "content_type": {"type": "string", "description": "MIME type of the artifact (e.g. 'text/plain', 'application/json'). Optional for add."},
+          "agent":        {"type": "string", "description": "Agent identity. Defaults to JINN_CLIENT env var or 'agent'."},
+          "project_id":   {"type": "string", "description": "Project ID. Defaults to auto-detected repo root."}
+        },
+        "required": ["action", "task_id"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "push",
+      "description": "Atomic multi-op batch: insert an event, upsert memories, add artifacts, and/or change task status — all in one transaction. Any failure rolls back the entire batch.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "task_id":     {"type": "string", "description": "Task the batch is about. Required when artifacts or task_status are provided."},
+          "agent":       {"type": "string", "description": "Agent identity. Defaults to JINN_CLIENT env var or 'agent'."},
+          "project_id":  {"type": "string", "description": "Project ID. Defaults to auto-detected repo root."},
+          "event": {
+            "type": "object",
+            "description": "Optional event to append first. Its id links all artifacts in the batch.",
+            "properties": {
+              "kind":     {"type": "string", "description": "Event kind (max 128 chars)."},
+              "message":  {"type": "string", "description": "Event message (max 4096 chars)."},
+              "metadata": {"description": "Optional JSON object or JSON string (max 16384 bytes).", "oneOf": [{"type": "object"}, {"type": "string"}]}
+            },
+            "required": ["kind", "message"]
+          },
+          "memories": {
+            "type": "array",
+            "description": "Memory upserts (max 50). Each entry is upserted atomically with the batch.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key":        {"type": "string", "description": "Memory key (1-128 chars, [a-zA-Z0-9_.-])."},
+                "value":      {"type": "string", "description": "Memory value (max 16 KiB)."},
+                "scope":      {"type": "string", "description": "Scope: global|project|task|agent. Defaults to project."},
+                "scope_id":   {"type": "string", "description": "Scope ID. Required for task/agent scopes."},
+                "kind":       {"type": "string", "enum": ["fact", "directive", "lesson"], "description": "Memory kind. Defaults to fact."},
+                "pin":        {"type": "boolean", "description": "Pin this memory (pin-stickiness: once pinned, only explicit unpin clears it)."},
+                "expires_in": {"type": "string", "description": "TTL string (e.g. '30d', '2w', '12h')."}
+              },
+              "required": ["key", "value"]
+            }
+          },
+          "artifacts": {
+            "type": "array",
+            "description": "Artifacts to link to task_id (max 50). All share the event_id from the batch event.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "file_path":    {"type": "string", "description": "File path of the artifact."},
+                "content_type": {"type": "string", "description": "MIME type. Optional."}
+              },
+              "required": ["file_path"]
+            }
+          },
+          "task_status": {
+            "type": "object",
+            "description": "Optional task status change. Emits a task_status event in the same transaction.",
+            "properties": {
+              "status":         {"type": "string", "enum": ["pending", "in_progress", "completed", "blocked"], "description": "New task status."},
+              "blocked_reason": {"type": "string", "description": "Required context when status=blocked."}
+            },
+            "required": ["status"]
+          }
+        },
+        "required": []
+      }
+    }
   }
 ]

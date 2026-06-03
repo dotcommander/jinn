@@ -62,14 +62,10 @@ func (e *Engine) memDBConn(ctx context.Context) (*sql.DB, error) {
 	return db, nil
 }
 
-// memorySaveScoped upserts a value for (scope, scope_id, key).
+// memoryUpsertTx upserts a value for (scope, scope_id, key) inside a transaction.
 // pin-stickiness: CASE WHEN excluded.pinned=1 THEN 1 ELSE pinned END ensures
 // a plain save (pin=false) cannot clear an existing pin.
-func (e *Engine) memorySaveScoped(ctx context.Context, scope, scopeID, key, value, kind string, pin bool, expiresAt *time.Time) error {
-	db, err := e.memDBConn(ctx)
-	if err != nil {
-		return err
-	}
+func memoryUpsertTx(ctx context.Context, tx *sql.Tx, scope, scopeID, key, value, kind string, pin bool, expiresAt *time.Time) error {
 	valueType := inferValueType(value)
 	now := time.Now().UTC().Format(time.RFC3339)
 
@@ -79,7 +75,7 @@ func (e *Engine) memorySaveScoped(ctx context.Context, scope, scopeID, key, valu
 		expiresStr = expiresAt.UTC().Format("2006-01-02 15:04:05")
 	}
 
-	_, err = db.ExecContext(ctx, `
+	_, err := tx.ExecContext(ctx, `
 		INSERT INTO memory(scope, scope_id, key, value, value_type, kind, pinned, expires_at, updated_at)
 		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(scope, scope_id, key) DO UPDATE SET
@@ -91,9 +87,21 @@ func (e *Engine) memorySaveScoped(ctx context.Context, scope, scopeID, key, valu
 			updated_at = excluded.updated_at
 	`, scope, scopeID, key, value, valueType, kind, boolToInt(pin), expiresStr, now)
 	if err != nil {
-		return fmt.Errorf("memory: save: %w", err)
+		return fmt.Errorf("memory: upsert: %w", err)
 	}
 	return nil
+}
+
+// memorySaveScoped upserts a value for (scope, scope_id, key) against the DB
+// directly. Wraps memoryUpsertTx in a one-statement transaction.
+func (e *Engine) memorySaveScoped(ctx context.Context, scope, scopeID, key, value, kind string, pin bool, expiresAt *time.Time) error {
+	db, err := e.memDBConn(ctx)
+	if err != nil {
+		return err
+	}
+	return transact(ctx, db, func(tx *sql.Tx) error {
+		return memoryUpsertTx(ctx, tx, scope, scopeID, key, value, kind, pin, expiresAt)
+	})
 }
 
 // memoryRecallScoped fetches the value for (scope, scope_id, key). The bool is

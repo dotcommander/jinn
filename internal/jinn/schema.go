@@ -36,6 +36,8 @@ var toolFeatures = map[string][]string{
 	"task":           {"create", "begin", "set_status", "get", "list"},
 	"event":          {"append", "list"},
 	"resume":         {"peek", "focus_selection", "brief"},
+	"artifact":       {"add", "list"},
+	"push":           {"atomic_batch", "event", "memories", "artifacts", "task_status"},
 }
 
 // Request is the one-shot tool invocation envelope.
