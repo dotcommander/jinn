@@ -13,6 +13,7 @@ func (e *Engine) resumeTool(ctx context.Context, args map[string]interface{}) (s
 	agent := resolveAgent(args)
 	projectID := e.resolveProjectID(args)
 	peek := boolArg(args, "peek")
+	requestID := strArg(args, "request_id")
 	limit := intArg(args, "limit", 20) // intArg caps nothing; clamp below
 	if limit > 100 {
 		limit = 100
@@ -27,7 +28,7 @@ func (e *Engine) resumeTool(ctx context.Context, args map[string]interface{}) (s
 	if peek {
 		return e.resumePeek(ctx, db, agent, projectID, limit, asOf)
 	}
-	return e.resumeAdvance(ctx, db, agent, projectID, limit, asOf)
+	return e.resumeAdvance(ctx, db, agent, requestID, projectID, limit, asOf)
 }
 
 // resumePeek: read-only. No agent_state row creation. Empty-state cursor when
@@ -70,12 +71,12 @@ func (e *Engine) resumePeek(ctx context.Context, db *sql.DB, agent, projectID st
 }
 
 // resumeAdvance: create row if absent, determine focus, persist atomically.
-func (e *Engine) resumeAdvance(ctx context.Context, db *sql.DB, agent, projectID string, limit int, asOf time.Time) (string, error) {
-	var packet *BriefPacket
-	err := transact(ctx, db, func(tx *sql.Tx) error {
+// Wrapped with runIdempotent — same (agent, requestID) replays the cached packet.
+func (e *Engine) resumeAdvance(ctx context.Context, db *sql.DB, agent, requestID, projectID string, limit int, asOf time.Time) (string, error) {
+	out, err := runIdempotent(ctx, db, agent, requestID, "resume", func(tx *sql.Tx) (any, error) {
 		state, lErr := loadOrCreateAgentStateTx(ctx, tx, agent)
 		if lErr != nil {
-			return lErr
+			return nil, lErr
 		}
 		focusProj := state.ProjectID
 		if focusProj == "" {
@@ -83,29 +84,28 @@ func (e *Engine) resumeAdvance(ctx context.Context, db *sql.DB, agent, projectID
 		}
 		deltas, newCursor, dErr := fetchDeltasTx(ctx, tx, state.Cursor, focusProj, limit)
 		if dErr != nil {
-			return dErr
+			return nil, dErr
 		}
 		focus, fErr := determineFocusTx(ctx, tx, state.TaskID, deltas, focusProj)
 		if fErr != nil {
-			return fErr
+			return nil, fErr
 		}
 		b, bErr := buildBriefTx(ctx, tx, focus.TaskID, focusProj, asOf)
 		if bErr != nil {
-			return bErr
+			return nil, bErr
 		}
 		if pErr := persistAgentStateTx(ctx, tx, agent, newCursor, focus.TaskID, focusProj); pErr != nil {
-			return pErr
+			return nil, pErr
 		}
 		b.FocusRule = focus.Rule
 		b.Cursor = CursorWindow{Old: state.Cursor, New: maxInt64(state.Cursor, newCursor)}
 		b.Deltas = deltas
-		packet = b
-		return nil
+		return finalizePacket(b)
 	})
 	if err != nil {
 		return "", err
 	}
-	return finalizePacket(packet)
+	return out.(string), nil
 }
 
 // finalizePacket marshals once for approx_tokens, sets it, then marshals final.

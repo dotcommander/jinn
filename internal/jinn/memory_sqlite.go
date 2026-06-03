@@ -206,19 +206,18 @@ func (e *Engine) memoryForgetScoped(ctx context.Context, scope, scopeID, key str
 	return nil
 }
 
-// memoryGC deletes expired, non-pinned memory rows. When scope is non-empty
-// only that scope is swept; otherwise all scopes are swept.
-func (e *Engine) memoryGC(ctx context.Context, scope string) (int, error) {
-	db, err := e.memDBConn(ctx)
-	if err != nil {
-		return 0, err
-	}
-	var res sql.Result
+// memoryGCTx deletes expired, non-pinned memory rows within an existing transaction.
+// When scope is non-empty only that scope is swept; otherwise all scopes are swept.
+func (e *Engine) memoryGCTx(ctx context.Context, tx *sql.Tx, scope string) (int, error) {
+	var (
+		res sql.Result
+		err error
+	)
 	if scope == "" {
-		res, err = db.ExecContext(ctx,
+		res, err = tx.ExecContext(ctx,
 			`DELETE FROM memory WHERE pinned=0 AND expires_at IS NOT NULL AND expires_at <= datetime('now')`)
 	} else {
-		res, err = db.ExecContext(ctx,
+		res, err = tx.ExecContext(ctx,
 			`DELETE FROM memory WHERE pinned=0 AND expires_at IS NOT NULL AND expires_at <= datetime('now') AND scope=?`,
 			scope)
 	}
@@ -230,4 +229,20 @@ func (e *Engine) memoryGC(ctx context.Context, scope string) (int, error) {
 		return 0, fmt.Errorf("memory: gc rows: %w", err)
 	}
 	return int(n), nil
+}
+
+// memoryGC deletes expired, non-pinned memory rows. When scope is non-empty
+// only that scope is swept; otherwise all scopes are swept.
+func (e *Engine) memoryGC(ctx context.Context, scope string) (int, error) {
+	db, err := e.memDBConn(ctx)
+	if err != nil {
+		return 0, err
+	}
+	var n int
+	txErr := transact(ctx, db, func(tx *sql.Tx) error {
+		var gcErr error
+		n, gcErr = e.memoryGCTx(ctx, tx, scope)
+		return gcErr
+	})
+	return n, txErr
 }

@@ -2,6 +2,7 @@ package jinn
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"regexp"
@@ -100,10 +101,25 @@ func (e *Engine) memorySave(ctx context.Context, args map[string]interface{}) (s
 		return "", err
 	}
 
-	if err := e.memorySaveScoped(ctx, rs.scope, rs.scopeID, key, value, kind, boolArg(args, "pin"), expiresAt); err != nil {
+	pin := boolArg(args, "pin")
+	agent := resolveAgent(args)
+	requestID := strArg(args, "request_id")
+
+	db, err := e.memDBConn(ctx)
+	if err != nil {
 		return "", err
 	}
-	return "saved: " + key, nil
+
+	result, err := runIdempotent(ctx, db, agent, requestID, "memory.save", func(tx *sql.Tx) (any, error) {
+		if uErr := memoryUpsertTx(ctx, tx, rs.scope, rs.scopeID, key, value, kind, pin, expiresAt); uErr != nil {
+			return nil, uErr
+		}
+		return "saved: " + key, nil
+	})
+	if err != nil {
+		return "", err
+	}
+	return result.(string), nil
 }
 
 func (e *Engine) memoryRecall(ctx context.Context, args map[string]interface{}) (string, error) {
@@ -178,10 +194,27 @@ func (e *Engine) memoryForget(ctx context.Context, args map[string]interface{}) 
 	if err != nil {
 		return "", err
 	}
-	if err := e.memoryForgetScoped(ctx, rs.scope, rs.scopeID, key); err != nil {
+	agent := resolveAgent(args)
+	requestID := strArg(args, "request_id")
+
+	db, err := e.memDBConn(ctx)
+	if err != nil {
 		return "", err
 	}
-	return "forgotten: " + key, nil
+
+	result, err := runIdempotent(ctx, db, agent, requestID, "memory.forget", func(tx *sql.Tx) (any, error) {
+		if _, delErr := tx.ExecContext(ctx,
+			"DELETE FROM memory WHERE scope=? AND scope_id=? AND key=?",
+			rs.scope, rs.scopeID, key,
+		); delErr != nil {
+			return nil, fmt.Errorf("memory: forget: %w", delErr)
+		}
+		return "forgotten: " + key, nil
+	})
+	if err != nil {
+		return "", err
+	}
+	return result.(string), nil
 }
 
 func (e *Engine) memoryGCAction(ctx context.Context, args map[string]interface{}) (string, error) {
@@ -195,17 +228,32 @@ func (e *Engine) memoryGCAction(ctx context.Context, args map[string]interface{}
 		}
 		gcScope = rs.scope
 	}
-	n, err := e.memoryGC(ctx, gcScope)
+
+	agent := resolveAgent(args)
+	requestID := strArg(args, "request_id")
+
+	db, err := e.memDBConn(ctx)
 	if err != nil {
 		return "", err
 	}
-	result := struct {
-		Deleted int    `json:"deleted"`
-		Scope   string `json:"scope,omitempty"`
-	}{n, gcScope}
-	data, err := json.Marshal(result)
+
+	out, err := runIdempotent(ctx, db, agent, requestID, "memory.gc", func(tx *sql.Tx) (any, error) {
+		n, gcErr := e.memoryGCTx(ctx, tx, gcScope)
+		if gcErr != nil {
+			return nil, gcErr
+		}
+		result := struct {
+			Deleted int    `json:"deleted"`
+			Scope   string `json:"scope,omitempty"`
+		}{n, gcScope}
+		data, mErr := json.Marshal(result)
+		if mErr != nil {
+			return nil, fmt.Errorf("memory: gc marshal: %w", mErr)
+		}
+		return string(data), nil
+	})
 	if err != nil {
-		return "", fmt.Errorf("memory: gc marshal: %w", err)
+		return "", err
 	}
-	return string(data), nil
+	return out.(string), nil
 }

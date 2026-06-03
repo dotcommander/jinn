@@ -130,6 +130,8 @@ func (e *Engine) pushTool(ctx context.Context, args map[string]interface{}) (str
 		return "", errInvalidArgs(fmt.Sprintf("push exceeds maximum artifacts (%d > %d)", len(artifacts), maxPushArtifacts), "reduce artifacts batch size")
 	}
 
+	requestID := strArg(args, "request_id")
+
 	db, err := e.memDBConn(ctx)
 	if err != nil {
 		return "", err
@@ -142,12 +144,12 @@ func (e *Engine) pushTool(ctx context.Context, args map[string]interface{}) (str
 		Task        *Task    `json:"task"`
 	}
 
-	var result pushResult
-	result.ArtifactIDs = []string{}
+	out, err := runIdempotent(ctx, db, agent, requestID, "push", func(tx *sql.Tx) (any, error) {
+		var result pushResult
+		result.ArtifactIDs = []string{}
 
-	err = transact(ctx, db, func(tx *sql.Tx) error {
 		if projErr := ensureProject(ctx, tx, projectID); projErr != nil {
-			return projErr
+			return nil, projErr
 		}
 
 		// Step 1: event (or synthesize one when artifacts need an event_id).
@@ -155,7 +157,7 @@ func (e *Engine) pushTool(ctx context.Context, args map[string]interface{}) (str
 		if pushEvent != nil {
 			id, evErr := insertEventTx(ctx, tx, pushEvent.Kind, agent, projectID, taskID, pushEvent.Message, pushEvent.Metadata)
 			if evErr != nil {
-				return fmt.Errorf("push: insert event: %w", evErr)
+				return nil, fmt.Errorf("push: insert event: %w", evErr)
 			}
 			eventID = id
 			result.EventID = id
@@ -163,7 +165,7 @@ func (e *Engine) pushTool(ctx context.Context, args map[string]interface{}) (str
 			// Synthesize a minimal push event so artifacts.event_id is never NULL.
 			id, evErr := insertEventTx(ctx, tx, "push", agent, projectID, taskID, "artifact batch", "")
 			if evErr != nil {
-				return fmt.Errorf("push: synthesize event: %w", evErr)
+				return nil, fmt.Errorf("push: synthesize event: %w", evErr)
 			}
 			eventID = id
 			result.EventID = id
@@ -181,7 +183,7 @@ func (e *Engine) pushTool(ctx context.Context, args map[string]interface{}) (str
 				VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 			`, artifactID, taskID, projectID, eventID, art.FilePath, ctVal)
 			if insErr != nil {
-				return fmt.Errorf("push: insert artifact %q: %w", art.FilePath, insErr)
+				return nil, fmt.Errorf("push: insert artifact %q: %w", art.FilePath, insErr)
 			}
 			result.ArtifactIDs = append(result.ArtifactIDs, artifactID)
 		}
@@ -190,13 +192,13 @@ func (e *Engine) pushTool(ctx context.Context, args map[string]interface{}) (str
 		for i, mem := range memories {
 			rs, rsErr := e.resolveMemoryScope(mem.Scope, mem.ScopeID)
 			if rsErr != nil {
-				return fmt.Errorf("push: memories[%d] scope: %w", i, rsErr)
+				return nil, fmt.Errorf("push: memories[%d] scope: %w", i, rsErr)
 			}
 			if err := validateKey(mem.Key); err != nil {
-				return fmt.Errorf("push: memories[%d]: %w", i, err)
+				return nil, fmt.Errorf("push: memories[%d]: %w", i, err)
 			}
 			if uErr := memoryUpsertTx(ctx, tx, rs.scope, rs.scopeID, mem.Key, mem.Value, mem.Kind, mem.Pin, mem.ExpiresAt); uErr != nil {
-				return fmt.Errorf("push: memories[%d] upsert: %w", i, uErr)
+				return nil, fmt.Errorf("push: memories[%d] upsert: %w", i, uErr)
 			}
 			result.MemoryCount++
 		}
@@ -205,24 +207,23 @@ func (e *Engine) pushTool(ctx context.Context, args map[string]interface{}) (str
 		if taskStatus != nil {
 			t, tsErr := updateTaskStatusTx(ctx, tx, taskID, taskStatus.Status, agent, "task_status")
 			if tsErr != nil {
-				return fmt.Errorf("push: task_status: %w", tsErr)
+				return nil, fmt.Errorf("push: task_status: %w", tsErr)
 			}
 			if taskStatus.Status == "blocked" && taskStatus.BlockedReason != "" {
 				if brErr := setBlockedReasonTx(ctx, tx, taskID, taskStatus.BlockedReason); brErr != nil {
-					return fmt.Errorf("push: set blocked_reason: %w", brErr)
+					return nil, fmt.Errorf("push: set blocked_reason: %w", brErr)
 				}
 				t.BlockedReason = taskStatus.BlockedReason
 			}
 			result.Task = t
 		}
 
-		return nil
+		return marshalJSON(result)
 	})
 	if err != nil {
 		return "", err
 	}
-
-	return marshalJSON(result)
+	return out.(string), nil
 }
 
 // pushEventInput holds parsed event fields from the push args.

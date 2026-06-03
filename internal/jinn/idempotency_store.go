@@ -22,8 +22,8 @@ import (
 // Replay returns the exact JSON string from the first call, byte-identical.
 func runIdempotent(ctx context.Context, db *sql.DB, agent, requestID, command string, fn func(tx *sql.Tx) (any, error)) (any, error) {
 	if requestID == "" {
-		// No idempotency — plain transact. Marshal result to JSON string so
-		// callers can assert result.(string) uniformly regardless of path.
+		// No idempotency — plain transact. Return the core's result as-is when
+		// it is already a string (already serialized); otherwise marshal to JSON.
 		var result any
 		err := transact(ctx, db, func(tx *sql.Tx) error {
 			r, e := fn(tx)
@@ -32,6 +32,9 @@ func runIdempotent(ctx context.Context, db *sql.DB, agent, requestID, command st
 		})
 		if err != nil {
 			return nil, err
+		}
+		if s, ok := result.(string); ok {
+			return s, nil
 		}
 		b, marshalErr := json.Marshal(result)
 		if marshalErr != nil {
@@ -83,13 +86,19 @@ func runIdempotent(ctx context.Context, db *sql.DB, agent, requestID, command st
 		return nil, fnErr
 	}
 
-	// Marshal result for storage.
-	b, marshalErr := json.Marshal(result)
-	if marshalErr != nil {
-		_ = tx.Rollback()
-		return nil, fmt.Errorf("marshal idempotency result: %w", marshalErr)
+	// Serialize result for storage. String results are already serialized;
+	// non-string results (maps, structs) are marshaled to JSON.
+	var resultJSON string
+	if s, ok := result.(string); ok {
+		resultJSON = s
+	} else {
+		b, marshalErr := json.Marshal(result)
+		if marshalErr != nil {
+			_ = tx.Rollback()
+			return nil, fmt.Errorf("marshal idempotency result: %w", marshalErr)
+		}
+		resultJSON = string(b)
 	}
-	resultJSON := string(b)
 
 	if _, updErr := tx.ExecContext(ctx,
 		`UPDATE idempotency SET result_json=? WHERE agent_name=? AND request_id=?`,

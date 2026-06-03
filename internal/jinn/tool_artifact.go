@@ -34,28 +34,27 @@ func (e *Engine) artifactAdd(ctx context.Context, args map[string]interface{}) (
 	contentType := strArg(args, "content_type")
 	agent := resolveAgent(args)
 	projectID := e.resolveProjectID(args)
+	requestID := strArg(args, "request_id")
 
 	db, err := e.memDBConn(ctx)
 	if err != nil {
 		return "", err
 	}
 
-	var artifact *Artifact
-	err = transact(ctx, db, func(tx *sql.Tx) error {
+	result, err := runIdempotent(ctx, db, agent, requestID, "artifact.add", func(tx *sql.Tx) (any, error) {
 		if projErr := ensureProject(ctx, tx, projectID); projErr != nil {
-			return projErr
+			return nil, projErr
 		}
 		a, insErr := insertArtifactTx(ctx, tx, agent, taskID, projectID, filePath, contentType)
 		if insErr != nil {
-			return insErr
+			return nil, insErr
 		}
-		artifact = a
-		return nil
+		return marshalJSON(a)
 	})
 	if err != nil {
 		return "", err
 	}
-	return marshalJSON(artifact)
+	return result.(string), nil
 }
 
 func (e *Engine) artifactList(ctx context.Context, args map[string]interface{}) (string, error) {

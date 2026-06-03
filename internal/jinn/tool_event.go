@@ -29,6 +29,7 @@ func (e *Engine) eventAppend(ctx context.Context, args map[string]interface{}) (
 	agent := resolveAgent(args)
 	taskID := strArg(args, "task_id")
 	projectID := e.resolveProjectID(args)
+	requestID := strArg(args, "request_id")
 
 	// metadata: accept a JSON object arg or a JSON string; store as TEXT.
 	metadata, err := resolveMetadata(args)
@@ -41,38 +42,31 @@ func (e *Engine) eventAppend(ctx context.Context, args map[string]interface{}) (
 		return "", err
 	}
 
-	var eventID int64
-	txErr := transact(ctx, db, func(tx *sql.Tx) error {
+	result, err := runIdempotent(ctx, db, agent, requestID, "event.append", func(tx *sql.Tx) (any, error) {
 		if projErr := ensureProject(ctx, tx, projectID); projErr != nil {
-			return projErr
+			return nil, projErr
 		}
-		id, insErr := insertEventTx(ctx, tx, kind, agent, projectID, taskID, message, metadata)
+		eventID, insErr := insertEventTx(ctx, tx, kind, agent, projectID, taskID, message, metadata)
 		if insErr != nil {
-			return insErr
+			return nil, insErr
 		}
-		eventID = id
-		return nil
+		r := map[string]any{
+			"id":         eventID,
+			"kind":       kind,
+			"agent_name": agent,
+			"project_id": projectID,
+			"task_id":    taskID,
+			"message":    message,
+		}
+		if metadata != "" {
+			r["metadata"] = metadata
+		}
+		return r, nil
 	})
-	if txErr != nil {
-		return "", txErr
-	}
-
-	result := map[string]any{
-		"id":         eventID,
-		"kind":       kind,
-		"agent_name": agent,
-		"project_id": projectID,
-		"task_id":    taskID,
-		"message":    message,
-	}
-	if metadata != "" {
-		result["metadata"] = metadata
-	}
-	b, err := json.Marshal(result)
 	if err != nil {
-		return "", fmt.Errorf("marshal event result: %w", err)
+		return "", err
 	}
-	return string(b), nil
+	return result.(string), nil
 }
 
 func (e *Engine) eventList(ctx context.Context, args map[string]interface{}) (string, error) {
