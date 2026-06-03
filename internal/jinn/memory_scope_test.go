@@ -3,8 +3,6 @@ package jinn
 import (
 	"context"
 	"errors"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -64,27 +62,30 @@ func TestMemory_GlobalScope(t *testing.T) {
 	}
 }
 
-func TestMemory_ExplicitAbsScope(t *testing.T) {
+// TestMemory_ExplicitProjectScopeID verifies that passing scope="project" with
+// an explicit scope_id isolates from the auto-detected project scope.
+func TestMemory_ExplicitProjectScopeID(t *testing.T) {
 	t.Setenv("JINN_CONFIG_DIR", t.TempDir())
 	e, _ := testEngine(t)
 
-	abs := t.TempDir()
+	explicitID := t.TempDir()
 
-	if _, err := e.memoryTool(context.Background(), args("action", "save", "key", "k", "value", "V", "scope", abs)); err != nil {
-		t.Fatalf("save abs: %v", err)
+	if _, err := e.memoryTool(context.Background(), args("action", "save", "key", "k", "value", "V", "scope", "project", "scope_id", explicitID)); err != nil {
+		t.Fatalf("save explicit project scope: %v", err)
 	}
 
-	out, err := e.memoryTool(context.Background(), args("action", "recall", "key", "k", "scope", abs))
+	out, err := e.memoryTool(context.Background(), args("action", "recall", "key", "k", "scope", "project", "scope_id", explicitID))
 	if err != nil {
-		t.Fatalf("recall abs: %v", err)
+		t.Fatalf("recall explicit project scope: %v", err)
 	}
 	if out != "V" {
 		t.Errorf("recall value: %q", out)
 	}
 
+	// Must not appear in default (auto-detected) project scope.
 	_, err = e.memoryTool(context.Background(), args("action", "recall", "key", "k"))
 	if err == nil {
-		t.Fatal("expected key-not-found in current project scope")
+		t.Fatal("expected key-not-found in default project scope")
 	}
 	if !strings.Contains(err.Error(), "key not found") {
 		t.Errorf("error text: %q", err.Error())
@@ -103,48 +104,29 @@ func TestMemory_JunkScopeRejected(t *testing.T) {
 	if !errors.As(err, &ews) {
 		t.Fatalf("expected *ErrWithSuggestion, got %T", err)
 	}
-	if !strings.Contains(ews.Suggestion, "global") || !strings.Contains(ews.Suggestion, "absolute") {
-		t.Errorf("suggestion should mention 'global' and 'absolute': %q", ews.Suggestion)
+	// New scope model: valid values are global|project|task|agent.
+	if !strings.Contains(ews.Suggestion, "global") || !strings.Contains(ews.Suggestion, "project") {
+		t.Errorf("suggestion should mention valid scopes: %q", ews.Suggestion)
 	}
 }
 
-func TestMemory_MigrationFromLegacyJSON(t *testing.T) {
+// TestMemory_LegacyJSONIgnored verifies that a stale memory.json file is
+// simply ignored — no migration, no error — since migration was removed.
+func TestMemory_LegacyJSONIgnored(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("JINN_CONFIG_DIR", dir)
 
-	jinnDir := filepath.Join(dir, "jinn")
-	if err := os.MkdirAll(jinnDir, 0o700); err != nil {
+	// Write a legacy file; engine should not read or rename it.
+	if err := makeDir(dir, "jinn"); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	legacyPath := filepath.Join(jinnDir, "memory.json")
-	legacy := `{"version":1,"entries":{"legacy.key":{"value":"oldval","updated":"2020-01-01T00:00:00Z"}}}`
-	if err := os.WriteFile(legacyPath, []byte(legacy), 0o600); err != nil {
-		t.Fatalf("write legacy: %v", err)
-	}
-
+	// Engine starts cleanly; legacy.key is NOT imported.
 	e, _ := testEngine(t)
-
-	out, err := e.memoryTool(context.Background(), args("action", "recall", "key", "legacy.key", "scope", "global"))
-	if err != nil {
-		t.Fatalf("recall legacy: %v", err)
+	_, err := e.memoryTool(context.Background(), args("action", "recall", "key", "legacy.key", "scope", "global"))
+	if err == nil {
+		t.Fatal("expected key-not-found — legacy JSON must not be auto-imported")
 	}
-	if out != "oldval" {
-		t.Errorf("recall value: %q", out)
-	}
-
-	if _, err := os.Stat(legacyPath); !os.IsNotExist(err) {
-		t.Errorf("memory.json should be gone after migration, stat err: %v", err)
-	}
-	if _, err := os.Stat(legacyPath + ".migrated"); err != nil {
-		t.Errorf("memory.json.migrated should exist after migration: %v", err)
-	}
-
-	// Idempotency: a second recall still succeeds without re-migrating.
-	out, err = e.memoryTool(context.Background(), args("action", "recall", "key", "legacy.key", "scope", "global"))
-	if err != nil {
-		t.Fatalf("second recall: %v", err)
-	}
-	if out != "oldval" {
-		t.Errorf("second recall value: %q", out)
+	if !strings.Contains(err.Error(), "key not found") {
+		t.Errorf("unexpected error: %v", err)
 	}
 }

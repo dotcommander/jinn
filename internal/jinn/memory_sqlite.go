@@ -26,8 +26,8 @@ func memoryDBPath() (string, error) {
 	return filepath.Join(base, "jinn", "memory.db"), nil
 }
 
-// memDBConn lazily opens the singleton SQLite handle, creating the schema and
-// running the legacy JSON migration on first open. Guarded by e.memMu.
+// memDBConn lazily opens the singleton SQLite handle, creating the unified schema
+// on first open. Guarded by e.memMu.
 func (e *Engine) memDBConn(ctx context.Context) (*sql.DB, error) {
 	e.memMu.Lock()
 	defer e.memMu.Unlock()
@@ -47,29 +47,13 @@ func (e *Engine) memDBConn(ctx context.Context) (*sql.DB, error) {
 	// (verified against v1.51.0). SetMaxOpenConns(1) serializes writes; the
 	// _txlock+busy_timeout pragmas harden the single connection further.
 	dsn := "file:" + path + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_txlock=immediate"
-	// Driver name is exactly "sqlite" — that is what modernc registers (not the
-	// CGO mattn driver's alternate spelling).
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("memory: open: %w", err)
 	}
 	db.SetMaxOpenConns(1)
 
-	if _, err := db.ExecContext(ctx, "CREATE TABLE IF NOT EXISTS memory (scope TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, updated TEXT NOT NULL, PRIMARY KEY (scope, key))"); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("memory: schema table: %w", err)
-	}
-	if _, err := db.ExecContext(ctx, "CREATE INDEX IF NOT EXISTS idx_memory_scope ON memory(scope)"); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("memory: schema index: %w", err)
-	}
-
-	if err := e.continuityTables(ctx, db); err != nil {
-		db.Close()
-		return nil, err
-	}
-
-	if err := e.migrateLegacyMemory(ctx, db); err != nil {
+	if err := ensureSchema(ctx, db); err != nil {
 		db.Close()
 		return nil, err
 	}
@@ -78,121 +62,52 @@ func (e *Engine) memDBConn(ctx context.Context) (*sql.DB, error) {
 	return db, nil
 }
 
-// continuityTables creates the flattened vybe continuity schema (events, tasks,
-// agent_state, artifacts, projects, idempotency) on the shared memory.db handle.
-// Idempotent via CREATE TABLE/INDEX IF NOT EXISTS; no migration framework (Beta,
-// no back-compat). Schema is the FINAL collapsed state of vybe's 30+ migrations.
-//
-// COLLISION NOTE: vybe also defines a `memory` table (id-PK, UNIQUE(scope,scope_id,key),
-// value_type NOT NULL, pinned/kind/source_* columns). jinn already owns a 4-column
-// `memory(scope,key,value,updated)` table with PK(scope,key) that the memory tool
-// depends on via ON CONFLICT(scope,key). The two are structurally incompatible, and
-// Phase 1 ports no tool that needs vybe's memory columns, so the vybe `memory`
-// superset is DELIBERATELY NOT created here — widening is deferred to the phase that
-// ports the memory tool wrappers. Do not add a `CREATE TABLE IF NOT EXISTS memory(...superset...)`
-// here: it would silently no-op against jinn's existing table and mislead future readers.
-func (e *Engine) continuityTables(ctx context.Context, db *sql.DB) error {
-	stmts := []string{
-		`CREATE TABLE IF NOT EXISTS events (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			kind TEXT NOT NULL,
-			agent_name TEXT NOT NULL,
-			task_id TEXT,
-			message TEXT NOT NULL,
-			metadata TEXT,
-			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			project_id TEXT
-		)`,
-		`CREATE INDEX IF NOT EXISTS idx_events_agent_name ON events(agent_name)`,
-		`CREATE INDEX IF NOT EXISTS idx_events_task_id ON events(task_id)`,
-		`CREATE INDEX IF NOT EXISTS idx_events_project_cursor ON events(project_id, id)`,
-		`CREATE INDEX IF NOT EXISTS idx_events_kind_id ON events(kind, id)`,
-
-		`CREATE TABLE IF NOT EXISTS tasks (
-			id TEXT PRIMARY KEY,
-			title TEXT NOT NULL,
-			description TEXT,
-			status TEXT NOT NULL,
-			version INTEGER NOT NULL DEFAULT 1,
-			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			project_id TEXT,
-			priority INTEGER NOT NULL DEFAULT 0,
-			blocked_reason TEXT
-		)`,
-		`CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)`,
-		`CREATE INDEX IF NOT EXISTS idx_tasks_project_id ON tasks(project_id)`,
-		`CREATE INDEX IF NOT EXISTS idx_tasks_priority ON tasks(priority DESC)`,
-		`CREATE INDEX IF NOT EXISTS idx_tasks_focus_selection ON tasks(status, project_id, priority DESC, created_at ASC)`,
-
-		`CREATE TABLE IF NOT EXISTS agent_state (
-			agent_name TEXT PRIMARY KEY,
-			last_seen_event_id INTEGER NOT NULL DEFAULT 0,
-			focus_task_id TEXT,
-			version INTEGER NOT NULL DEFAULT 1,
-			last_active_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			focus_project_id TEXT
-		)`,
-
-		`CREATE TABLE IF NOT EXISTS artifacts (
-			id TEXT PRIMARY KEY,
-			task_id TEXT NOT NULL,
-			event_id INTEGER NOT NULL,
-			file_path TEXT NOT NULL,
-			content_type TEXT,
-			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			project_id TEXT,
-			FOREIGN KEY (task_id) REFERENCES tasks(id),
-			FOREIGN KEY (event_id) REFERENCES events(id)
-		)`,
-		`CREATE INDEX IF NOT EXISTS idx_artifacts_project_id ON artifacts(project_id)`,
-
-		`CREATE TABLE IF NOT EXISTS projects (
-			id TEXT PRIMARY KEY,
-			name TEXT NOT NULL,
-			metadata TEXT,
-			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-		)`,
-
-		`CREATE TABLE IF NOT EXISTS idempotency (
-			agent_name TEXT NOT NULL,
-			request_id TEXT NOT NULL,
-			command TEXT NOT NULL,
-			result_json TEXT NOT NULL,
-			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			PRIMARY KEY (agent_name, request_id)
-		)`,
-		`CREATE INDEX IF NOT EXISTS idx_idempotency_agent ON idempotency(agent_name)`,
-	}
-	for _, s := range stmts {
-		if _, err := db.ExecContext(ctx, s); err != nil {
-			return fmt.Errorf("memory: continuity schema: %w", err)
-		}
-	}
-	return nil
-}
-
-// memorySaveScoped upserts a value for (scope, key).
-func (e *Engine) memorySaveScoped(ctx context.Context, scope, key, value string) error {
+// memorySaveScoped upserts a value for (scope, scope_id, key).
+// pin-stickiness: CASE WHEN excluded.pinned=1 THEN 1 ELSE pinned END ensures
+// a plain save (pin=false) cannot clear an existing pin.
+func (e *Engine) memorySaveScoped(ctx context.Context, scope, scopeID, key, value, kind string, pin bool, expiresAt *time.Time) error {
 	db, err := e.memDBConn(ctx)
 	if err != nil {
 		return err
 	}
-	if _, err := db.ExecContext(ctx, "INSERT INTO memory(scope,key,value,updated) VALUES(?,?,?,?) ON CONFLICT(scope,key) DO UPDATE SET value=excluded.value, updated=excluded.updated", scope, key, value, time.Now().UTC().Format(time.RFC3339)); err != nil {
+	valueType := inferValueType(value)
+	now := time.Now().UTC().Format(time.RFC3339)
+
+	var expiresStr interface{}
+	if expiresAt != nil {
+		// SQLite datetime comparison requires "YYYY-MM-DD HH:MM:SS" format.
+		expiresStr = expiresAt.UTC().Format("2006-01-02 15:04:05")
+	}
+
+	_, err = db.ExecContext(ctx, `
+		INSERT INTO memory(scope, scope_id, key, value, value_type, kind, pinned, expires_at, updated_at)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(scope, scope_id, key) DO UPDATE SET
+			value      = excluded.value,
+			value_type = excluded.value_type,
+			kind       = excluded.kind,
+			pinned     = CASE WHEN excluded.pinned = 1 THEN 1 ELSE pinned END,
+			expires_at = excluded.expires_at,
+			updated_at = excluded.updated_at
+	`, scope, scopeID, key, value, valueType, kind, boolToInt(pin), expiresStr, now)
+	if err != nil {
 		return fmt.Errorf("memory: save: %w", err)
 	}
 	return nil
 }
 
-// memoryRecallScoped fetches the value for (scope, key). The bool is false when
-// no row exists; err is non-nil only on a real query failure.
-func (e *Engine) memoryRecallScoped(ctx context.Context, scope, key string) (string, bool, error) {
+// memoryRecallScoped fetches the value for (scope, scope_id, key). The bool is
+// false when no row exists; err is non-nil only on a real query failure.
+func (e *Engine) memoryRecallScoped(ctx context.Context, scope, scopeID, key string) (string, bool, error) {
 	db, err := e.memDBConn(ctx)
 	if err != nil {
 		return "", false, err
 	}
 	var v string
-	err = db.QueryRowContext(ctx, "SELECT value FROM memory WHERE scope=? AND key=?", scope, key).Scan(&v)
+	err = db.QueryRowContext(ctx,
+		"SELECT value FROM memory WHERE scope=? AND scope_id=? AND key=?",
+		scope, scopeID, key,
+	).Scan(&v)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", false, nil
 	}
@@ -202,14 +117,17 @@ func (e *Engine) memoryRecallScoped(ctx context.Context, scope, key string) (str
 	return v, true, nil
 }
 
-// memoryListScoped returns the keys in a scope, sorted. The slice is non-nil so
-// it serializes as [] rather than null.
-func (e *Engine) memoryListScoped(ctx context.Context, scope string) ([]string, error) {
+// memoryListScoped returns the keys in a scope+scope_id, sorted.
+// Slice is non-nil so it serializes as [] rather than null.
+func (e *Engine) memoryListScoped(ctx context.Context, scope, scopeID string) ([]string, error) {
 	db, err := e.memDBConn(ctx)
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.QueryContext(ctx, "SELECT key FROM memory WHERE scope=? ORDER BY key", scope)
+	rows, err := db.QueryContext(ctx,
+		"SELECT key FROM memory WHERE scope=? AND scope_id=? ORDER BY key",
+		scope, scopeID,
+	)
 	if err != nil {
 		return nil, fmt.Errorf("memory: list: %w", err)
 	}
@@ -223,27 +141,29 @@ func (e *Engine) memoryListScoped(ctx context.Context, scope string) ([]string, 
 		}
 		keys = append(keys, k)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("memory: list rows: %w", err)
-	}
-	return keys, nil
+	return keys, rows.Err()
 }
 
-// memoryEntry holds a key/value/updated triple returned by memoryListScopedWithValues.
+// memoryEntry holds a full row returned by memoryListScopedWithValues.
 type memoryEntry struct {
-	Key     string `json:"key"`
-	Value   string `json:"value"`
-	Updated string `json:"updated"`
+	Key       string `json:"key"`
+	Value     string `json:"value"`
+	ValueType string `json:"value_type"`
+	Kind      string `json:"kind"`
+	Pinned    bool   `json:"pinned"`
+	UpdatedAt string `json:"updated_at"`
 }
 
-// memoryListScopedWithValues returns all entries in a scope with their values,
-// sorted by key. Mirrors the ordering of memoryListScoped.
-func (e *Engine) memoryListScopedWithValues(ctx context.Context, scope string) ([]memoryEntry, error) {
+// memoryListScopedWithValues returns all entries in a scope+scope_id with values.
+func (e *Engine) memoryListScopedWithValues(ctx context.Context, scope, scopeID string) ([]memoryEntry, error) {
 	db, err := e.memDBConn(ctx)
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.QueryContext(ctx, "SELECT key, value, updated FROM memory WHERE scope=? ORDER BY key", scope)
+	rows, err := db.QueryContext(ctx,
+		"SELECT key, value, value_type, kind, pinned, updated_at FROM memory WHERE scope=? AND scope_id=? ORDER BY key",
+		scope, scopeID,
+	)
 	if err != nil {
 		return nil, fmt.Errorf("memory: list: %w", err)
 	}
@@ -251,26 +171,55 @@ func (e *Engine) memoryListScopedWithValues(ctx context.Context, scope string) (
 
 	entries := []memoryEntry{}
 	for rows.Next() {
-		var entry memoryEntry
-		if err := rows.Scan(&entry.Key, &entry.Value, &entry.Updated); err != nil {
+		var e memoryEntry
+		var pinnedInt int
+		if err := rows.Scan(&e.Key, &e.Value, &e.ValueType, &e.Kind, &pinnedInt, &e.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("memory: list scan: %w", err)
 		}
-		entries = append(entries, entry)
+		e.Pinned = pinnedInt == 1
+		entries = append(entries, e)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("memory: list rows: %w", err)
-	}
-	return entries, nil
+	return entries, rows.Err()
 }
 
-// memoryForgetScoped deletes (scope, key). Zero rows affected is not an error.
-func (e *Engine) memoryForgetScoped(ctx context.Context, scope, key string) error {
+// memoryForgetScoped deletes (scope, scope_id, key). Zero rows affected is not an error.
+func (e *Engine) memoryForgetScoped(ctx context.Context, scope, scopeID, key string) error {
 	db, err := e.memDBConn(ctx)
 	if err != nil {
 		return err
 	}
-	if _, err := db.ExecContext(ctx, "DELETE FROM memory WHERE scope=? AND key=?", scope, key); err != nil {
+	_, err = db.ExecContext(ctx,
+		"DELETE FROM memory WHERE scope=? AND scope_id=? AND key=?",
+		scope, scopeID, key,
+	)
+	if err != nil {
 		return fmt.Errorf("memory: forget: %w", err)
 	}
 	return nil
+}
+
+// memoryGC deletes expired, non-pinned memory rows. When scope is non-empty
+// only that scope is swept; otherwise all scopes are swept.
+func (e *Engine) memoryGC(ctx context.Context, scope string) (int, error) {
+	db, err := e.memDBConn(ctx)
+	if err != nil {
+		return 0, err
+	}
+	var res sql.Result
+	if scope == "" {
+		res, err = db.ExecContext(ctx,
+			`DELETE FROM memory WHERE pinned=0 AND expires_at IS NOT NULL AND expires_at <= datetime('now')`)
+	} else {
+		res, err = db.ExecContext(ctx,
+			`DELETE FROM memory WHERE pinned=0 AND expires_at IS NOT NULL AND expires_at <= datetime('now') AND scope=?`,
+			scope)
+	}
+	if err != nil {
+		return 0, fmt.Errorf("memory: gc: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("memory: gc rows: %w", err)
+	}
+	return int(n), nil
 }

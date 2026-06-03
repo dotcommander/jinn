@@ -21,7 +21,7 @@ type Engine struct {
 	LSPTimeoutSec int        // per-query LSP timeout; 0 uses default (10s)
 	memMu         sync.Mutex // guards lazy memDB open + scope cache init
 	memDB         *sql.DB    // lazily opened on first memory tool call; nil until then
-	curScope      string     // cached auto-detected scope; "" until first resolveScope
+	curScope      string     // cached auto-detected scope; "" until first currentProjectID call
 }
 
 // New creates an Engine rooted at the given working directory.

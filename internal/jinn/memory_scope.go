@@ -42,10 +42,9 @@ func detectScope(workDir string) string {
 	return normalizeScopePath(workDir)
 }
 
-// currentScope returns the auto-detected scope for the engine's working
-// directory, computing it once and caching under memMu. normalizeScopePath
-// always returns non-empty, so "" reliably means "not yet computed".
-func (e *Engine) currentScope() string {
+// currentProjectID returns the auto-detected project scope_id (repo root path)
+// for the engine's working directory, computing it once and caching under memMu.
+func (e *Engine) currentProjectID() string {
 	e.memMu.Lock()
 	defer e.memMu.Unlock()
 	if e.curScope == "" {
@@ -54,24 +53,68 @@ func (e *Engine) currentScope() string {
 	return e.curScope
 }
 
-// resolveScope maps a caller-supplied scope argument to a canonical scope:
-// empty → the current project, "global" → the cross-project bucket, an
-// absolute path → its normalized form. Anything else is an error.
+// resolvedScope holds the (scope, scope_id) pair for a memory operation.
+type resolvedScope struct {
+	scope   string // global|project|task|agent
+	scopeID string // ""=global, repo-path=project, task-id=task, agent-name=agent
+}
+
+// resolveMemoryScope maps caller-supplied scope+scopeID args to a canonical
+// (scope, scope_id) pair per the design doc resolution table:
 //
-// Locking contract: resolveScope (via currentScope) acquires e.memMu itself.
-// Callers must NOT hold e.memMu when calling it.
-func (e *Engine) resolveScope(arg string) (string, error) {
-	switch {
-	case arg == "":
-		return e.currentScope(), nil
-	case arg == globalScope:
-		return globalScope, nil
-	case filepath.IsAbs(arg):
-		return normalizeScopePath(arg), nil
+//	scope=""         → project, auto-detected repo root
+//	scope="global"   → global, ""
+//	scope="project"  → project, scopeID (or auto-detected if scopeID=="")
+//	scope="task"     → task,    scopeID (caller-supplied; required)
+//	scope="agent"    → agent,   scopeID (caller-supplied; required)
+//
+// Locking contract: acquires e.memMu via currentProjectID. Callers must NOT
+// hold e.memMu when calling this function.
+func (e *Engine) resolveMemoryScope(scope, scopeID string) (resolvedScope, error) {
+	switch scope {
+	case "", "project":
+		id := scopeID
+		if id == "" {
+			id = e.currentProjectID()
+		} else {
+			id = normalizeScopePath(id)
+		}
+		return resolvedScope{"project", id}, nil
+
+	case "global":
+		if scopeID != "" {
+			return resolvedScope{}, &ErrWithSuggestion{
+				Err:        fmt.Errorf("global scope cannot have a scope_id"),
+				Suggestion: `omit scope_id when using scope="global"`,
+				Code:       ErrCodeInvalidArgs,
+			}
+		}
+		return resolvedScope{"global", ""}, nil
+
+	case "task":
+		if scopeID == "" {
+			return resolvedScope{}, &ErrWithSuggestion{
+				Err:        fmt.Errorf("task scope requires a scope_id (task id)"),
+				Suggestion: `pass scope_id="<task-id>" when using scope="task"`,
+				Code:       ErrCodeInvalidArgs,
+			}
+		}
+		return resolvedScope{"task", scopeID}, nil
+
+	case "agent":
+		if scopeID == "" {
+			return resolvedScope{}, &ErrWithSuggestion{
+				Err:        fmt.Errorf("agent scope requires a scope_id (agent name)"),
+				Suggestion: `pass scope_id="<agent-name>" when using scope="agent"`,
+				Code:       ErrCodeInvalidArgs,
+			}
+		}
+		return resolvedScope{"agent", scopeID}, nil
+
 	default:
-		return "", &ErrWithSuggestion{
-			Err:        fmt.Errorf("invalid scope: %q — must be empty, %q, or an absolute path", arg, globalScope),
-			Suggestion: `omit "scope" to use the current project, use "global" for the cross-project bucket, or pass an absolute path`,
+		return resolvedScope{}, &ErrWithSuggestion{
+			Err:        fmt.Errorf("invalid scope: %q — must be one of: global, project, task, agent", scope),
+			Suggestion: `omit scope for project (default), or use "global", "task", or "agent"`,
 			Code:       ErrCodeInvalidArgs,
 		}
 	}

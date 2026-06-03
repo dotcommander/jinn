@@ -77,7 +77,7 @@ func TestShellRisk_MetaClassification(t *testing.T) {
 }
 
 func TestDispatch_MemoryRoute(t *testing.T) {
-	t.Parallel()
+	t.Setenv("JINN_CONFIG_DIR", t.TempDir())
 	e, _ := testEngine(t)
 	// list action requires no key — just verify the route reaches memoryTool.
 	result, _, err := e.Dispatch(context.Background(), "memory", args("action", "list"))
