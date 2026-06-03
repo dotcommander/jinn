@@ -140,6 +140,12 @@ func (e *Engine) Dispatch(ctx context.Context, tool string, args map[string]inte
 	case "memory":
 		result, err := e.memoryTool(ctx, args)
 		return textResult(result), nil, err
+	case "task":
+		result, err := e.taskTool(ctx, args)
+		return textResult(result), nil, err
+	case "event":
+		result, err := e.eventTool(ctx, args)
+		return textResult(result), nil, err
 	case "undo":
 		result, err := e.undoTool(args)
 		return textResult(result), nil, err

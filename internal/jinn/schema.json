@@ -360,5 +360,49 @@
         "required": ["pattern", "replacement", "files"]
       }
     }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "task",
+      "description": "Manage continuity tasks (create, begin, update status, get, list). Tasks are persisted in the local jinn DB and survive across sessions.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "action":         {"type": "string", "enum": ["create", "begin", "set_status", "get", "list"], "description": "Sub-action to perform."},
+          "task_id":        {"type": "string", "description": "Task ID. Required for begin, set_status, get."},
+          "title":          {"type": "string", "description": "Task title. Required for create."},
+          "description":    {"type": "string", "description": "Optional task description. Used with create."},
+          "priority":       {"type": "integer", "description": "Priority (default 0, higher = more important). Used with create."},
+          "status":         {"type": "string", "enum": ["pending", "in_progress", "completed", "blocked"], "description": "Target status. Required for set_status. Used with list as a filter."},
+          "blocked_reason": {"type": "string", "description": "Free-form reason why the task is blocked. Used with set_status when status=blocked."},
+          "project_id":     {"type": "string", "description": "Project ID (repo path). Defaults to auto-detected repo root. Used with create and list."},
+          "agent":          {"type": "string", "description": "Agent identity. Defaults to JINN_CLIENT env var or 'agent'."}
+        },
+        "required": ["action"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "event",
+      "description": "Append to or list the continuity event log. Events are the append-only activity stream for tasks and projects.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "action":     {"type": "string", "enum": ["append", "list"], "description": "Sub-action to perform."},
+          "kind":       {"type": "string", "description": "Event kind (max 128 chars). Required for append. E.g. 'progress', 'error', 'tool_call'."},
+          "message":    {"type": "string", "description": "Event message (max 4096 chars). Required for append."},
+          "task_id":    {"type": "string", "description": "Associate event with this task ID. Optional for append; filter for list."},
+          "project_id": {"type": "string", "description": "Project ID. Defaults to auto-detected repo root for append; filter for list."},
+          "metadata":   {"description": "Optional JSON object or JSON string (max 16384 bytes). Used with append.", "oneOf": [{"type": "object"}, {"type": "string"}]},
+          "agent":      {"type": "string", "description": "Agent identity for append. Defaults to JINN_CLIENT env var or 'agent'."},
+          "limit":      {"type": "integer", "description": "Max events to return (default 20, cap 100). Used with list."},
+          "since_id":   {"type": "integer", "description": "Return only events with id > since_id (pagination). Used with list."}
+        },
+        "required": ["action"]
+      }
+    }
   }
 ]

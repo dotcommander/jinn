@@ -33,6 +33,8 @@ var toolFeatures = map[string][]string{
 	"diff_files":     {"context_lines"},
 	"search_replace": {"regex", "capture_groups", "multi_file", "glob_patterns", "replace_all", "dry_run", "case_insensitive", "multiline"},
 	"lsp_query":      {"definition", "references", "hover", "symbols", "diagnostics", "rename", "symbol_column", "context_lines"},
+	"task":           {"create", "begin", "set_status", "get", "list"},
+	"event":          {"append", "list"},
 }
 
 // Request is the one-shot tool invocation envelope.
