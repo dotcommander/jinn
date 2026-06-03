@@ -146,6 +146,9 @@ func (e *Engine) Dispatch(ctx context.Context, tool string, args map[string]inte
 	case "event":
 		result, err := e.eventTool(ctx, args)
 		return textResult(result), nil, err
+	case "resume":
+		result, err := e.resumeTool(ctx, args)
+		return textResult(result), nil, err
 	case "undo":
 		result, err := e.undoTool(args)
 		return textResult(result), nil, err

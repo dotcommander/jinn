@@ -35,6 +35,7 @@ var toolFeatures = map[string][]string{
 	"lsp_query":      {"definition", "references", "hover", "symbols", "diagnostics", "rename", "symbol_column", "context_lines"},
 	"task":           {"create", "begin", "set_status", "get", "list"},
 	"event":          {"append", "list"},
+	"resume":         {"peek", "focus_selection", "brief"},
 }
 
 // Request is the one-shot tool invocation envelope.

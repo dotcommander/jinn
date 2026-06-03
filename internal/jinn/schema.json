@@ -404,5 +404,22 @@
         "required": ["action"]
       }
     }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "resume",
+      "description": "Resume work: select a focus task via deterministic 5-rule selection and return a brief packet (task, project, relevant memory, recent events, artifacts, task counts, pipeline, deltas). Advances the agent cursor and persists focus atomically unless peek=true.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "agent":      {"type": "string", "description": "Agent identity. Defaults to JINN_CLIENT env var or 'agent'."},
+          "project_id": {"type": "string", "description": "Project ID (repo path) to scope focus selection and counts. Defaults to auto-detected repo root."},
+          "peek":       {"type": "boolean", "description": "If true, build the brief WITHOUT advancing the cursor or persisting focus (idempotent read). Default false.", "default": false},
+          "limit":      {"type": "integer", "description": "Max deltas returned (default 20, cap 100)."}
+        },
+        "required": []
+      }
+    }
   }
 ]
