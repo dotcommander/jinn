@@ -32,16 +32,15 @@ func TestMemorySchema_TablesExist(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query sqlite_master: %v", err)
 	}
+	defer func() { _ = rows.Close() }()
 	got := map[string]bool{}
 	for rows.Next() {
 		var n string
 		if err := rows.Scan(&n); err != nil {
-			_ = rows.Close()
 			t.Fatalf("scan: %v", err)
 		}
 		got[n] = true
 	}
-	_ = rows.Close()
 	if err := rows.Err(); err != nil {
 		t.Fatalf("rows err: %v", err)
 	}

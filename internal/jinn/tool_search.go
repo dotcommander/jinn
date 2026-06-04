@@ -22,6 +22,9 @@ const searchDefaultMax = 500
 // it; not part of the public API.
 var searchTimeout = 60 * time.Second
 
+// searchFiles is a context-less convenience shim used ONLY by tests; production
+// Dispatch calls searchFilesContext(ctx, args) directly (engine.go). Do not add
+// production callers — that would violate the Context Propagation rule.
 func (e *Engine) searchFiles(args map[string]interface{}) (string, error) {
 	return e.searchFilesContext(context.Background(), args)
 }

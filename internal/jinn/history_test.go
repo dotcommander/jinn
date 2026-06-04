@@ -28,9 +28,10 @@ func TestHistoryDir_PerWorkdir(t *testing.T) {
 
 func TestHistoryDir_SameWorkdirSameHash(t *testing.T) {
 	t.Setenv("JINN_CONFIG_DIR", t.TempDir())
-	e, _ := testEngine(t)
-	if e.historyDir() != e.historyDir() {
-		t.Error("same engine must return same history dir each call")
+	e1, workDir := testEngine(t)
+	e2 := New(workDir, "dev")
+	if e1.historyDir() != e2.historyDir() {
+		t.Error("same workDir must map to same history dir across engines")
 	}
 }
 
