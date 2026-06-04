@@ -28,6 +28,7 @@ func (e *Engine) undoTool(args map[string]interface{}) (string, error) {
 		return "", &ErrWithSuggestion{
 			Err:        fmt.Errorf("unknown action: %q", action),
 			Suggestion: `use action="list", "preview", "restore", or "clear"`,
+			Code:       ErrCodeInvalidArgs,
 		}
 	}
 }
@@ -84,6 +85,7 @@ func (e *Engine) undoPreview(args map[string]interface{}) (string, error) {
 		return "", &ErrWithSuggestion{
 			Err:        errors.New("id is required for preview"),
 			Suggestion: `use action="list" to see available snapshot IDs`,
+			Code:       ErrCodeInvalidArgs,
 		}
 	}
 
@@ -119,6 +121,7 @@ func (e *Engine) undoRestore(args map[string]interface{}) (string, error) {
 		return "", &ErrWithSuggestion{
 			Err:        errors.New("id is required for restore"),
 			Suggestion: `use action="list" to see available snapshot IDs`,
+			Code:       ErrCodeInvalidArgs,
 		}
 	}
 

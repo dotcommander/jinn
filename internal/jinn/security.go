@@ -16,6 +16,7 @@ func sensitivePathErr(p string) error {
 	return &ErrWithSuggestion{
 		Err:        fmt.Errorf("sensitive path: %s", p),
 		Suggestion: "this path is blocked for security; request the specific field or artifact from the user instead",
+		Code:       ErrCodePathOutsideSandbox,
 	}
 }
 
@@ -91,6 +92,7 @@ func (e *Engine) checkPath(p string) (string, error) {
 		return "", &ErrWithSuggestion{
 			Err:        fmt.Errorf("%s is outside working directory", p),
 			Suggestion: "path resolves outside the sandbox root; supply a path inside the workdir",
+			Code:       ErrCodePathOutsideSandbox,
 		}
 	}
 	return real, nil

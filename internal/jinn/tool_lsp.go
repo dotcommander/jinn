@@ -48,12 +48,14 @@ func lspServerForExt(ext string) ([]string, error) {
 		return nil, &ErrWithSuggestion{
 			Err:        fmt.Errorf("no LSP server known for extension %s", ext),
 			Suggestion: "supported extensions: .go, .rs, .py, .ts, .tsx, .js, .jsx, .c, .h, .cpp, .cc, .cxx, .hpp, .java, .lua, .zig",
+			Code:       ErrCodeLspUnavailable,
 		}
 	}
 	if _, err := exec.LookPath(e.argv[0]); err != nil {
 		return nil, &ErrWithSuggestion{
 			Err:        fmt.Errorf("LSP server %q not found on PATH", e.argv[0]),
 			Suggestion: fmt.Sprintf("install with: %s", e.install),
+			Code:       ErrCodeLspUnavailable,
 		}
 	}
 	return e.argv, nil
@@ -103,12 +105,14 @@ func (e *Engine) parseLSPArgs(args map[string]interface{}) (lspRequest, error) {
 		return lspRequest{}, &ErrWithSuggestion{
 			Err:        errors.New("lsp_query: 'action' is required"),
 			Suggestion: "set action to one of: definition, references, hover, symbols, diagnostics, rename",
+			Code:       ErrCodeInvalidArgs,
 		}
 	}
 	if path == "" {
 		return lspRequest{}, &ErrWithSuggestion{
 			Err:        errors.New("lsp_query: 'path' is required"),
 			Suggestion: "provide the path to the source file to query",
+			Code:       ErrCodeInvalidArgs,
 		}
 	}
 	absPath, err := e.checkPath(path)
@@ -127,6 +131,7 @@ func (e *Engine) parseLSPArgs(args map[string]interface{}) (lspRequest, error) {
 		return lspRequest{}, &ErrWithSuggestion{
 			Err:        fmt.Errorf("lsp_query: 'new_name' is required for action %q", action),
 			Suggestion: "provide the new name for the symbol",
+			Code:       ErrCodeInvalidArgs,
 		}
 	}
 
@@ -160,6 +165,7 @@ func resolveLSPPosition(action, absPath string, line, char int, symbol string) (
 		return 0, &ErrWithSuggestion{
 			Err:        fmt.Errorf("lsp_query: 'line' is required for action %q", action),
 			Suggestion: "provide a 1-based line number for the symbol under the cursor",
+			Code:       ErrCodeInvalidArgs,
 		}
 	}
 
@@ -170,6 +176,7 @@ func resolveLSPPosition(action, absPath string, line, char int, symbol string) (
 			return 0, &ErrWithSuggestion{
 				Err:        fmt.Errorf("lsp_query: %w", err),
 				Suggestion: "check that the symbol name appears on the specified line",
+				Code:       ErrCodeInvalidArgs,
 			}
 		}
 		char = col + 1 // convert 0-based back to 1-based for the rest of the flow
@@ -179,6 +186,7 @@ func resolveLSPPosition(action, absPath string, line, char int, symbol string) (
 		return 0, &ErrWithSuggestion{
 			Err:        fmt.Errorf("lsp_query: 'character' (or 'symbol') is required for action %q", action),
 			Suggestion: "provide 1-based character offset, or set 'symbol' to auto-detect the column",
+			Code:       ErrCodeInvalidArgs,
 		}
 	}
 
@@ -204,6 +212,7 @@ func (e *Engine) dispatchLSPAction(client *lspClient, req lspRequest) (string, e
 		return "", &ErrWithSuggestion{
 			Err:        fmt.Errorf("unknown lsp action: %s", req.action),
 			Suggestion: "use one of: definition, references, hover, symbols, diagnostics, rename",
+			Code:       ErrCodeInvalidArgs,
 		}
 	}
 }

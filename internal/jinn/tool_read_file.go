@@ -16,13 +16,17 @@ func (e *Engine) readFile(args map[string]interface{}) (*ToolResult, error) {
 	resolved, err := e.checkPathForRead(path)
 	if err != nil {
 		// Wrap with "blocked:" prefix for backward compat, preserving any
-		// ErrWithSuggestion so callers can surface the suggestion field.
+		// ErrWithSuggestion so callers can surface the suggestion and Code fields.
 		var sErr *ErrWithSuggestion
 		if errors.As(err, &sErr) {
+			code := sErr.Code
+			if code == "" {
+				code = ErrCodePathOutsideSandbox
+			}
 			return nil, &ErrWithSuggestion{
 				Err:        fmt.Errorf("blocked: %w", sErr.Err),
 				Suggestion: sErr.Suggestion,
-				Code:       ErrCodePathOutsideSandbox,
+				Code:       code,
 			}
 		}
 		return nil, &ErrWithSuggestion{
