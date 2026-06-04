@@ -4,8 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
-	"os"
 	"strings"
 )
 
@@ -163,16 +161,10 @@ func errToMultiRead(err error) multiReadError {
 
 // sniffIsImage peeks at the first 512 bytes of a file to detect image MIME type.
 func sniffIsImage(path string) bool {
-	f, err := os.Open(path)
-	if err != nil {
+	data, err := peekFileBytes(path, 512)
+	if err != nil || len(data) == 0 {
 		return false
 	}
-	defer func() { _ = f.Close() }()
-	peek := make([]byte, 512)
-	n, _ := f.Read(peek)
-	if n == 0 {
-		return false
-	}
-	detected := http.DetectContentType(peek[:n])
-	return strings.HasPrefix(detected, "image/")
+	_, ok := imageMIME(data)
+	return ok
 }

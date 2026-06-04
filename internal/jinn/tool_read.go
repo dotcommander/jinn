@@ -104,7 +104,7 @@ func (e *Engine) readFileContent(resolved string, args map[string]interface{}) (
 		check = check[:512]
 	}
 	// Binary detection: return an error so the caller can decide how to present it.
-	if strings.ContainsRune(string(check), 0) {
+	if isBinaryContent(check) {
 		return nil, &ErrWithSuggestion{
 			Err:        fmt.Errorf("binary file: %d bytes", len(data)),
 			Suggestion: "use stat_file for metadata or skip content reads",

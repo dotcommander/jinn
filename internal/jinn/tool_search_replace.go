@@ -341,7 +341,7 @@ func (e *Engine) searchReplace(ctx context.Context, args map[string]interface{})
 		if checkLen > 8192 {
 			checkLen = 8192
 		}
-		if isBinary(data[:checkLen]) {
+		if isBinaryContent(data[:checkLen]) {
 			fileResults = append(fileResults, srFileResult{
 				Path:       c.path,
 				Error:      "binary file detected, skipping",
@@ -485,16 +485,6 @@ func srResultsFromPending(pending []srPending) []srFileResult {
 		}
 	}
 	return results
-}
-
-// isBinary returns true if the data contains null bytes (simple heuristic).
-func isBinary(data []byte) bool {
-	for _, b := range data {
-		if b == 0 {
-			return true
-		}
-	}
-	return false
 }
 
 // globMatch does a simple glob match where '*' matches any non-separator.

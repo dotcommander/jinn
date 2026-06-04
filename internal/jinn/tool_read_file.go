@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -39,16 +38,8 @@ func (e *Engine) readFile(args map[string]interface{}) (*ToolResult, error) {
 	// SVG returns text/xml from DetectContentType, so check extension too.
 	isImage := false
 	var detected string
-	if f, ferr := os.Open(resolved); ferr == nil {
-		peek := make([]byte, 512)
-		if n, _ := f.Read(peek); n > 0 {
-			detected = http.DetectContentType(peek[:n])
-			if i := strings.Index(detected, ";"); i != -1 {
-				detected = strings.TrimSpace(detected[:i])
-			}
-			isImage = strings.HasPrefix(detected, "image/")
-		}
-		_ = f.Close()
+	if data, ferr := peekFileBytes(resolved, 512); ferr == nil && len(data) > 0 {
+		detected, isImage = imageMIME(data)
 	}
 	if !isImage && ext == ".svg" {
 		isImage = true
