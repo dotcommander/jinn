@@ -48,7 +48,7 @@ func (e *Engine) readFile(args map[string]interface{}) (*ToolResult, error) {
 			}
 			isImage = strings.HasPrefix(detected, "image/")
 		}
-		f.Close()
+		_ = f.Close()
 	}
 	if !isImage && ext == ".svg" {
 		isImage = true

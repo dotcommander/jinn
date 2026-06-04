@@ -167,7 +167,7 @@ func sniffIsImage(path string) bool {
 	if err != nil {
 		return false
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	peek := make([]byte, 512)
 	n, _ := f.Read(peek)
 	if n == 0 {

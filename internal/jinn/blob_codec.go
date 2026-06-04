@@ -84,7 +84,7 @@ func decodeBlob(b []byte) ([]byte, error) {
 		if err != nil {
 			return nil, fmt.Errorf("blob: gzip header: %w", err)
 		}
-		defer gr.Close()
+		defer func() { _ = gr.Close() }()
 		out, err := io.ReadAll(io.LimitReader(gr, blobDecodeMax+1))
 		if err != nil {
 			return nil, fmt.Errorf("blob: gzip body: %w", err)

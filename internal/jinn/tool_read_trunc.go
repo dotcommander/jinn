@@ -64,7 +64,7 @@ func byteTruncateResult(content, resolved string, lines []string, startLine, tot
 // file is placed in the XDG cache dir to avoid polluting the project tree.
 // Errors are swallowed — the temp file is best-effort; the agent always has the
 // start_line continuation fallback.
-func writeTruncationRemainder(srcPath string, startLine int, remainderLines []string) (string, error) {
+func writeTruncationRemainder(srcPath string, startLine int, remainderLines []string) (path string, err error) {
 	if len(remainderLines) == 0 {
 		return "", nil
 	}
@@ -81,12 +81,20 @@ func writeTruncationRemainder(srcPath string, startLine int, remainderLines []st
 	if err != nil {
 		return "", err
 	}
-	defer tmpFile.Close()
+	// Close-before-return: a flush failure means the spill file is truncated, so
+	// surface it via the named return (unless an earlier error already won).
+	defer func() {
+		if cerr := tmpFile.Close(); cerr != nil && err == nil {
+			path, err = "", fmt.Errorf("close: %w", cerr)
+		}
+	}()
 
 	endLine := startLine + len(remainderLines) - 1
 	width := len(strconv.Itoa(endLine))
 	for i, line := range remainderLines {
-		fmt.Fprintf(tmpFile, "%*d\t%s\n", width, startLine+i, line)
+		if _, ferr := fmt.Fprintf(tmpFile, "%*d\t%s\n", width, startLine+i, line); ferr != nil {
+			return "", fmt.Errorf("write spill: %w", ferr)
+		}
 	}
 
 	return tmpFile.Name(), nil

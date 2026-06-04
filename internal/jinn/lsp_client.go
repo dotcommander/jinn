@@ -137,7 +137,7 @@ func (c *lspClient) start(argv []string) error {
 
 func (c *lspClient) stop() {
 	if c.stdin != nil {
-		c.stdin.Close()
+		_ = c.stdin.Close()
 	}
 	if c.kill != nil {
 		c.kill() //nolint:errcheck

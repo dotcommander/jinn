@@ -176,7 +176,7 @@ func (e *Engine) recordSnapshot(absPath, displayPath, op string, preContent []by
 	if err := e.saveHistory(hf); err != nil {
 		// Index write failed — clean up orphaned blob, then return nil (non-blocking).
 		if blobPath != "" {
-			os.Remove(blobPath)
+			_ = os.Remove(blobPath)
 		}
 		return nil
 	}
@@ -207,7 +207,7 @@ func (e *Engine) evictHistory(hf *historyFile) {
 // removeBlob deletes the blob file for an entry (best-effort, ignores errors).
 func (e *Engine) removeBlob(ent historyEntry) {
 	if ent.BlobPath != "" {
-		os.Remove(ent.BlobPath)
+		_ = os.Remove(ent.BlobPath)
 	}
 }
 
@@ -222,15 +222,15 @@ func atomicWriteBytes(path string, data []byte, perm os.FileMode) error {
 	ok := false
 	defer func() {
 		if !ok {
-			os.Remove(tmpPath)
+			_ = os.Remove(tmpPath)
 		}
 	}()
 	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return err
 	}
 	if err := tmp.Chmod(perm); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return err
 	}
 	if err := tmp.Close(); err != nil {

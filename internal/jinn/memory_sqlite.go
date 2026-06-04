@@ -69,7 +69,7 @@ func (e *Engine) memDBConn(ctx context.Context) (*sql.DB, error) {
 	db.SetMaxOpenConns(1)
 
 	if err := ensureSchema(ctx, db); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, err
 	}
 
@@ -154,7 +154,7 @@ func (e *Engine) memoryListScoped(ctx context.Context, scope, scopeID string) ([
 	if err != nil {
 		return nil, fmt.Errorf("memory: list: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	keys := []string{}
 	for rows.Next() {
@@ -190,7 +190,7 @@ func (e *Engine) memoryListScopedWithValues(ctx context.Context, scope, scopeID 
 	if err != nil {
 		return nil, fmt.Errorf("memory: list: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	entries := []memoryEntry{}
 	for rows.Next() {
