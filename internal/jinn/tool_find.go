@@ -148,7 +148,7 @@ func (e *Engine) findFiles(ctx context.Context, args map[string]interface{}) (st
 // findViaFd uses fd (fast, respects .gitignore) to find files.
 // Does not use --max-results so we can count the true total for truncation.
 // Returns (output, "fd", err). err is context.DeadlineExceeded on timeout.
-func (e *Engine) findViaFd(ctx context.Context, pattern, searchPath string) (string, string, error) {
+func (e *Engine) findViaFd(ctx context.Context, pattern, searchPath string) (output string, tool string, err error) {
 	// fd --glob matches basenames by default.
 	// If pattern contains /, switch to --full-path and prepend **/ for intuitive matching.
 	args := []string{
@@ -185,7 +185,7 @@ func (e *Engine) findViaFd(ctx context.Context, pattern, searchPath string) (str
 
 // findViaFind uses POSIX find as a fallback when fd is unavailable.
 // Returns (output, "find", err). err is context.DeadlineExceeded on timeout.
-func (e *Engine) findViaFind(ctx context.Context, pattern, searchPath string) (string, string, error) {
+func (e *Engine) findViaFind(ctx context.Context, pattern, searchPath string) (output string, tool string, err error) {
 	var findArgs []string
 
 	if strings.Contains(pattern, "/") {

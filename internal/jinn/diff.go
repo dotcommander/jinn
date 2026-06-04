@@ -19,15 +19,15 @@ type diffOp struct {
 
 // computeEditScript builds an LCS-based edit script between two strings,
 // in forward order.
-func computeEditScript(old, new_ string) []diffOp {
+func computeEditScript(old, newText string) []diffOp {
 	oldLines := strings.Split(old, "\n")
-	newLines := strings.Split(new_, "\n")
+	newLines := strings.Split(newText, "\n")
 
 	// Remove trailing empty element from final newline.
 	if len(oldLines) > 0 && oldLines[len(oldLines)-1] == "" && strings.HasSuffix(old, "\n") {
 		oldLines = oldLines[:len(oldLines)-1]
 	}
-	if len(newLines) > 0 && newLines[len(newLines)-1] == "" && strings.HasSuffix(new_, "\n") {
+	if len(newLines) > 0 && newLines[len(newLines)-1] == "" && strings.HasSuffix(newText, "\n") {
 		newLines = newLines[:len(newLines)-1]
 	}
 
@@ -167,11 +167,11 @@ func formatHunks(script []diffOp, hunks []hunkRange, contextLines int, b *string
 // (no "--- / +++" or "[dry-run]" header) to b. Callers prepend their own header.
 // Returns true and the 1-based new-file line of the first change when there is
 // at least one hunk; false (and 0) when old == new or no hunks survive context.
-func renderDiffBody(old, new_ string, contextLines int, b *strings.Builder) (bool, int) {
-	if old == new_ {
+func renderDiffBody(old, newText string, contextLines int, b *strings.Builder) (bool, int) {
+	if old == newText {
 		return false, 0
 	}
-	script := computeEditScript(old, new_)
+	script := computeEditScript(old, newText)
 	hunks := computeHunks(script, contextLines)
 	if len(hunks) == 0 {
 		return false, 0
@@ -180,10 +180,10 @@ func renderDiffBody(old, new_ string, contextLines int, b *strings.Builder) (boo
 }
 
 // generateDiff computes a unified diff and returns structured output.
-func generateDiff(old, new_, label string, contextLines int) DiffResult {
+func generateDiff(old, newText, label string, contextLines int) DiffResult {
 	var b strings.Builder
 	fmt.Fprintf(&b, "--- %s\n+++ %s\n", label, label)
-	ok, firstChangedLine := renderDiffBody(old, new_, contextLines, &b)
+	ok, firstChangedLine := renderDiffBody(old, newText, contextLines, &b)
 	if !ok {
 		return DiffResult{}
 	}
@@ -195,10 +195,10 @@ func generateDiff(old, new_, label string, contextLines int) DiffResult {
 
 // unifiedDiff generates a unified diff with a "[dry-run]" prefix for tool previews.
 // Returns "[dry-run] no changes" if old and new are identical.
-func unifiedDiff(old, new_, label string, contextLines int) string {
+func unifiedDiff(old, newText, label string, contextLines int) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "[dry-run] diff for %s:\n", label)
-	ok, _ := renderDiffBody(old, new_, contextLines, &b)
+	ok, _ := renderDiffBody(old, newText, contextLines, &b)
 	if !ok {
 		return "[dry-run] no changes"
 	}

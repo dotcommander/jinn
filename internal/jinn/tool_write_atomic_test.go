@@ -18,7 +18,7 @@ func TestAtomicWriteJSON_MkdirFailsOnFile(t *testing.T) {
 	}
 	// path whose parent is "notadir/sub" — MkdirAll fails because notadir is a file
 	target := filepath.Join(blocker, "sub", "data.json")
-	err := atomicWriteJSON(target, map[string]string{"k": "v"}, 0o600)
+	err := atomicWriteJSON(target, map[string]string{"k": "v"})
 	if err == nil {
 		t.Fatal("expected error when parent path is a file, got nil")
 	}
@@ -28,7 +28,7 @@ func TestAtomicWriteJSON_UnmarshalableInput(t *testing.T) {
 	t.Parallel()
 	// channels cannot be marshalled to JSON.
 	ch := make(chan int)
-	err := atomicWriteJSON(filepath.Join(t.TempDir(), "x.json"), ch, 0o600)
+	err := atomicWriteJSON(filepath.Join(t.TempDir(), "x.json"), ch)
 	if err == nil {
 		t.Fatal("expected marshal error for channel, got nil")
 	}
@@ -38,7 +38,7 @@ func TestAtomicWriteJSON_RoundTrip(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "data.json")
 	payload := map[string]string{"hello": "world"}
-	if err := atomicWriteJSON(path, payload, 0o600); err != nil {
+	if err := atomicWriteJSON(path, payload); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	data, err := os.ReadFile(path)

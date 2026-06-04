@@ -54,7 +54,7 @@ func closestLine(oldText, content string) (int, string) {
 }
 
 // stripBom removes a UTF-8 BOM if present. Returns content and the BOM prefix.
-func stripBom(s string) (string, string) {
+func stripBom(s string) (rest string, bom string) {
 	if strings.HasPrefix(s, "\xEF\xBB\xBF") {
 		return s[3:], s[:3]
 	}

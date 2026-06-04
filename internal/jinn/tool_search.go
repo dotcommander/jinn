@@ -137,7 +137,7 @@ func (e *Engine) searchFilesContext(ctx context.Context, args map[string]interfa
 	}
 	cmdArgs = append(cmdArgs, "--", pattern, searchPath)
 
-	raw, errOutput, exitCode, runErr := e.runGrep(ctx, cmd, cmdArgs)
+	raw, errOutput, _, runErr := e.runGrep(ctx, cmd, cmdArgs)
 	if runErr != nil {
 		return "", runErr
 	}
@@ -151,7 +151,7 @@ func (e *Engine) searchFilesContext(ctx context.Context, args map[string]interfa
 
 		resp := searchFilesResult{Results: shown, Truncated: truncated, TotalCount: total}
 		if total == 0 {
-			resp.ZeroMatchReason = e.classifyZeroMatch(pattern, searchPath, literal, exitCode, errOutput)
+			resp.ZeroMatchReason = e.classifyZeroMatch(pattern, searchPath, literal, errOutput)
 		}
 		jsonBytes, err := json.Marshal(resp)
 		if err != nil {
@@ -183,7 +183,7 @@ func (e *Engine) searchFilesContext(ctx context.Context, args map[string]interfa
 		result += "\n" + formatTruncatedHint(maxMatches, count, "'max_matches' or a more specific pattern")
 	}
 	if count == 0 {
-		reason := e.classifyZeroMatch(pattern, searchPath, literal, exitCode, errOutput)
+		reason := e.classifyZeroMatch(pattern, searchPath, literal, errOutput)
 		result += "[no matches: " + reason + "]"
 	}
 	return result, nil
@@ -239,7 +239,7 @@ func (e *Engine) runGrep(ctx context.Context, cmd string, cmdArgs []string) (std
 }
 
 // classifyZeroMatch determines why a grep returned zero results.
-func (e *Engine) classifyZeroMatch(pattern, searchPath string, literal bool, exitCode int, stderr string) string {
+func (e *Engine) classifyZeroMatch(pattern, searchPath string, literal bool, stderr string) string {
 	if !literal {
 		if _, err := regexp.Compile(pattern); err != nil {
 			return "invalid_regex"

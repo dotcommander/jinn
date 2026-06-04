@@ -432,7 +432,9 @@ func (e *Engine) searchReplace(ctx context.Context, args map[string]interface{})
 			}
 			previews = append(previews, line)
 		}
-		allResults := append(fileResults, srResultsFromPending(pending)...)
+		allResults := make([]srFileResult, 0, len(fileResults)+len(pending))
+		allResults = append(allResults, fileResults...)
+		allResults = append(allResults, srResultsFromPending(pending)...)
 		return &ToolResult{
 			Text: fmt.Sprintf("[dry-run] %d files would be changed:\n%s", len(pending), strings.Join(previews, "\n\n")),
 			Meta: map[string]any{

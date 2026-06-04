@@ -162,7 +162,7 @@ func (e *Engine) undoRestore(args map[string]interface{}) (string, error) {
 	}
 
 	// Restore via atomic write (preserves existing permissions, fsyncs).
-	if err := os.MkdirAll(filepath.Dir(resolved), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(resolved), 0o750); err != nil {
 		return "", fmt.Errorf("restore: mkdir: %w", err)
 	}
 	if err := e.atomicWriteFile(resolved, string(preContent)); err != nil {

@@ -104,14 +104,15 @@ func applyEdit(content []byte, oldText, newText string, fuzzyIndent bool) (strin
 		lineNum := strings.Count(raw[:idx], "\n")
 		lines := strings.Split(raw, "\n")
 		// Leading whitespace of the line containing the match start.
-		leading := ""
+		var b strings.Builder
 		for _, ch := range lines[lineNum] {
 			if ch == ' ' || ch == '\t' {
-				leading += string(ch)
+				b.WriteRune(ch)
 			} else {
 				break
 			}
 		}
+		leading := b.String()
 		// Find minimum indentation of non-empty newText lines.
 		newLines := strings.Split(newText, "\n")
 		minIndent := -1

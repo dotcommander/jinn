@@ -8,9 +8,9 @@ import (
 )
 
 // atomicWriteJSON marshals v as indented JSON and atomically writes it to path
-// (temp+chmod+fsync+rename). perm is the target file mode. Returns a descriptive
+// (temp+chmod+fsync+rename) with mode 0o600. Returns a descriptive
 // wrapped error on any failure.
-func atomicWriteJSON(path string, v any, perm os.FileMode) error {
+func atomicWriteJSON(path string, v any) error {
 	data, merr := json.MarshalIndent(v, "", "  ")
 	if merr != nil {
 		return fmt.Errorf("marshal: %w", merr)
@@ -18,7 +18,7 @@ func atomicWriteJSON(path string, v any, perm os.FileMode) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("mkdir: %w", err)
 	}
-	if err := atomicWriteBytes(path, data, perm); err != nil {
+	if err := atomicWriteBytes(path, data, 0o600); err != nil {
 		return fmt.Errorf("atomic write: %w", err)
 	}
 	return nil
@@ -74,7 +74,7 @@ func (e *Engine) writeFile(args map[string]interface{}) (string, error) {
 	}
 	_ = e.recordSnapshot(resolved, path, "write_file", preContent)
 
-	if err := os.MkdirAll(filepath.Dir(resolved), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(resolved), 0o750); err != nil {
 		return "", fmt.Errorf("mkdir: %w", err)
 	}
 	if err := e.atomicWriteFile(resolved, content); err != nil {

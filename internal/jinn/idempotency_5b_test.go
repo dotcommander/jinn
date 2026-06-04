@@ -9,14 +9,14 @@ import (
 // Non-parallel: t.Setenv is process-wide. Uses newIdempotencyEngine from idempotency_test.go.
 
 // dbCount is a helper that runs a COUNT(*) query and returns the result.
-func dbCount(t *testing.T, e *Engine, ctx context.Context, query string, args ...any) int {
+func dbCount(t *testing.T, e *Engine, ctx context.Context, query string) int {
 	t.Helper()
 	db, err := e.memDBConn(ctx)
 	if err != nil {
 		t.Fatalf("memDBConn: %v", err)
 	}
 	var n int
-	if err := db.QueryRowContext(ctx, query, args...).Scan(&n); err != nil {
+	if err := db.QueryRowContext(ctx, query).Scan(&n); err != nil {
 		t.Fatalf("dbCount(%q): %v", query, err)
 	}
 	return n

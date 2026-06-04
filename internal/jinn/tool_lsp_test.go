@@ -31,10 +31,9 @@ func lspArgs(kv ...any) map[string]interface{} {
 // writeLSPFile creates a placeholder Go source file that satisfies
 // lspClient.didOpen (which reads the file from disk). The content is
 // irrelevant to the mock server; only the path extension matters.
-func writeLSPFile(t *testing.T, dir, name string) string {
+func writeLSPFile(t *testing.T, dir, name string) {
 	t.Helper()
 	writeTestFile(t, dir, name, "package main\n")
-	return name
 }
 
 // --- happy-path tests (all parallel — they inject a launcher, no global state) ---

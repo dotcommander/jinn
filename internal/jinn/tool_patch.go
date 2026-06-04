@@ -108,7 +108,7 @@ func (e *Engine) applyPatch(args map[string]interface{}) (*ToolResult, error) {
 		switch r.op.kind {
 		case "add":
 			dir := filepath.Dir(r.resolved)
-			if err := os.MkdirAll(dir, 0o755); err != nil {
+			if err := os.MkdirAll(dir, 0o750); err != nil {
 				return nil, fmt.Errorf("add %s: mkdir: %w", r.op.path, err)
 			}
 			preContent, _ := os.ReadFile(r.resolved)

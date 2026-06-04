@@ -102,7 +102,7 @@ func (e *Engine) loadHistory() (historyFile, error) {
 
 // saveHistory atomically writes the history index via temp+fsync+rename.
 func (e *Engine) saveHistory(hf historyFile) error {
-	if err := atomicWriteJSON(e.indexPath(), hf, 0o600); err != nil {
+	if err := atomicWriteJSON(e.indexPath(), hf); err != nil {
 		return fmt.Errorf("history: %w", err)
 	}
 	return nil

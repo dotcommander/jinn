@@ -74,7 +74,7 @@ func writeTruncationRemainder(srcPath string, startLine int, remainderLines []st
 		userCache = os.TempDir()
 	}
 	cacheDir := filepath.Join(userCache, "jinn", "truncated")
-	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+	if err := os.MkdirAll(cacheDir, 0o750); err != nil {
 		return "", err
 	}
 	tmpFile, err := os.CreateTemp(cacheDir, base+".*.txt")
