@@ -208,6 +208,13 @@ func (e *Engine) findEntry(id string) (historyEntry, error) {
 // Blobs are stored with adaptive compression (see blob_codec.go); decode is
 // transparent to callers.
 func (e *Engine) readBlob(ent historyEntry) ([]byte, error) {
+	blobsRoot := e.blobsDir() + string(os.PathSeparator)
+	if ent.BlobPath != "" && !strings.HasPrefix(ent.BlobPath, blobsRoot) {
+		return nil, &ErrWithSuggestion{
+			Err:        fmt.Errorf("blob path outside history store for id=%s: %q", ent.ID, ent.BlobPath),
+			Suggestion: `use action="clear" to reset history`,
+		}
+	}
 	encoded, err := os.ReadFile(ent.BlobPath)
 	if err != nil {
 		return nil, &ErrWithSuggestion{
