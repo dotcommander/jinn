@@ -30,6 +30,17 @@ Example:
   jinn --schema | jq .
 `
 
+// Logging policy: log/slog is intentionally absent from this binary.
+//
+// jinn speaks a stdin->stdout JSON wire protocol: every response is written
+// with json.NewEncoder(os.Stdout).Encode(...) and parsed as JSON by the
+// calling agent. A slog handler targeting stdout or stderr would interleave
+// non-JSON bytes into that stream and corrupt downstream parsers, so neither
+// stream may carry log output. There are currently no diagnostic call sites,
+// so a file-sink handler (writing under ~/.config/jinn/, gated by
+// JINN_CONFIG_DIR per internal/jinn/config.go) would add a log path, handler
+// lifecycle, and an on-disk file with no consumer. If diagnostic logging is
+// added later, route it ONLY to such a file sink — never to stdout/stderr.
 func main() {
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
