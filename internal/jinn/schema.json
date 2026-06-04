@@ -359,47 +359,8 @@
   {
     "type": "function",
     "function": {
-      "name": "event",
-      "description": "Append to or list the continuity event log. Events are the append-only activity stream for tasks and projects.",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "action":     {"type": "string", "enum": ["append", "list"], "description": "Sub-action to perform."},
-          "kind":       {"type": "string", "description": "Event kind (max 128 chars). Required for append. E.g. 'progress', 'error', 'tool_call'."},
-          "message":    {"type": "string", "description": "Event message (max 4096 chars). Required for append."},
-          "task_id":    {"type": "string", "description": "Associate event with this task ID. Optional for append; filter for list."},
-          "project_id": {"type": "string", "description": "Project ID. Defaults to auto-detected repo root for append; filter for list."},
-          "metadata":   {"description": "Optional JSON object or JSON string (max 16384 bytes). Used with append.", "oneOf": [{"type": "object"}, {"type": "string"}]},
-          "agent":      {"type": "string", "description": "Agent identity for append. Defaults to JINN_CLIENT env var or 'agent'."},
-          "limit":      {"type": "integer", "description": "Max events to return (default 20, cap 100). Used with list."},
-          "since_id":   {"type": "integer", "description": "Return only events with id > since_id (pagination). Used with list."}
-        },
-        "required": ["action"]
-      }
-    }
-  },
-  {
-    "type": "function",
-    "function": {
-      "name": "resume",
-      "description": "Resume work: select a focus task via deterministic 5-rule selection and return a brief packet (task, project, relevant memory, recent events, artifacts, task counts, pipeline, deltas). Advances the agent cursor and persists focus atomically unless peek=true.",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "agent":      {"type": "string", "description": "Agent identity. Defaults to JINN_CLIENT env var or 'agent'."},
-          "project_id": {"type": "string", "description": "Project ID (repo path) to scope focus selection and counts. Defaults to auto-detected repo root."},
-          "peek":       {"type": "boolean", "description": "If true, build the brief WITHOUT advancing the cursor or persisting focus (idempotent read). Default false.", "default": false},
-          "limit":      {"type": "integer", "description": "Max deltas returned (default 20, cap 100)."}
-        },
-        "required": []
-      }
-    }
-  },
-  {
-    "type": "function",
-    "function": {
       "name": "artifact",
-      "description": "Add or list file artifacts linked to a task. add emits an artifact_added event and inserts the artifact row atomically. list returns artifacts ordered by created_at ASC.",
+      "description": "Add or list file artifacts linked to a task. add inserts the artifact row atomically. list returns artifacts ordered by created_at ASC.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -418,23 +379,13 @@
     "type": "function",
     "function": {
       "name": "push",
-      "description": "Atomic multi-op batch: insert an event, upsert memories, add artifacts, and/or change task status — all in one transaction. Any failure rolls back the entire batch.",
+      "description": "Atomic multi-op batch: upsert memories, add artifacts, and/or change task status — all in one transaction. Any failure rolls back the entire batch.",
       "parameters": {
         "type": "object",
         "properties": {
           "task_id":     {"type": "string", "description": "Task the batch is about. Required when artifacts or task_status are provided."},
           "agent":       {"type": "string", "description": "Agent identity. Defaults to JINN_CLIENT env var or 'agent'."},
           "project_id":  {"type": "string", "description": "Project ID. Defaults to auto-detected repo root."},
-          "event": {
-            "type": "object",
-            "description": "Optional event to append first. Its id links all artifacts in the batch.",
-            "properties": {
-              "kind":     {"type": "string", "description": "Event kind (max 128 chars)."},
-              "message":  {"type": "string", "description": "Event message (max 4096 chars)."},
-              "metadata": {"description": "Optional JSON object or JSON string (max 16384 bytes).", "oneOf": [{"type": "object"}, {"type": "string"}]}
-            },
-            "required": ["kind", "message"]
-          },
           "memories": {
             "type": "array",
             "description": "Memory upserts (max 50). Each entry is upserted atomically with the batch.",
@@ -454,7 +405,7 @@
           },
           "artifacts": {
             "type": "array",
-            "description": "Artifacts to link to task_id (max 50). All share the event_id from the batch event.",
+            "description": "Artifacts to link to task_id (max 50).",
             "items": {
               "type": "object",
               "properties": {
@@ -466,7 +417,7 @@
           },
           "task_status": {
             "type": "object",
-            "description": "Optional task status change. Emits a task_status event in the same transaction.",
+            "description": "Optional task status change applied in the same transaction.",
             "properties": {
               "status":         {"type": "string", "enum": ["pending", "in_progress", "completed", "blocked"], "description": "New task status."},
               "blocked_reason": {"type": "string", "description": "Required context when status=blocked."}

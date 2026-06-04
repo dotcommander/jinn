@@ -56,15 +56,6 @@ func TestIdempotency_SameRequestIDRunsOnce(t *testing.T) {
 	if taskCount != 1 {
 		t.Errorf("want 1 task row, got %d", taskCount)
 	}
-
-	// Exactly one task_created event.
-	var evtCount int
-	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM events WHERE kind='task_created'`).Scan(&evtCount); err != nil {
-		t.Fatalf("count events: %v", err)
-	}
-	if evtCount != 1 {
-		t.Errorf("want 1 task_created event, got %d", evtCount)
-	}
 }
 
 // TestIdempotency_DifferentRequestIDsCreateDistinctTasks verifies that two
@@ -211,15 +202,13 @@ func TestIdempotency_SetStatusReplayDoesNotDoubleApply(t *testing.T) {
 		t.Errorf("want status completed, got %q", got.Status)
 	}
 
-	db, err := e.memDBConn(ctx)
+	// A double-apply would bump version twice. Re-fetch and confirm the version
+	// advanced exactly once from the freshly created task (1 → 2).
+	cur, err := e.taskTool(ctx, args("action", "get", "task_id", task.ID))
 	if err != nil {
-		t.Fatalf("memDBConn: %v", err)
+		t.Fatalf("get: %v", err)
 	}
-	var evtCount int
-	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM events WHERE kind='task_status'`).Scan(&evtCount); err != nil {
-		t.Fatalf("count events: %v", err)
-	}
-	if evtCount != 1 {
-		t.Errorf("want 1 task_status event (not double-applied), got %d", evtCount)
+	if v := decodeTask(t, cur).Version; v != 2 {
+		t.Errorf("want version 2 (single apply), got %d", v)
 	}
 }

@@ -77,8 +77,6 @@ func dispatchMutating(t *testing.T, e *Engine, ctx context.Context, a mutatingAc
 		return e.memoryTool(ctx, args("action", "forget", "key", "mut-key", "scope", "global", "agent", "agent", "request_id", requestID))
 	case "memory.gc":
 		return e.memoryTool(ctx, args("action", "gc", "scope", "global", "agent", "agent", "request_id", requestID))
-	case "event.append":
-		return e.eventTool(ctx, args("action", "append", "kind", "progress", "message", "mut-event", "agent", "agent", "request_id", requestID))
 	case "artifact.add":
 		return e.artifactTool(ctx, args("action", "add", "task_id", preTaskID, "file_path", "/tmp/mut.json", "content_type", "application/json", "agent", "agent", "request_id", requestID))
 	case "push":
@@ -86,10 +84,8 @@ func dispatchMutating(t *testing.T, e *Engine, ctx context.Context, a mutatingAc
 			"agent", "agent",
 			"task_id", preTaskID,
 			"request_id", requestID,
-			"event", map[string]interface{}{"kind": "progress", "message": "work"},
+			"memories", []interface{}{map[string]interface{}{"key": "mut-push-key", "value": "v1", "scope": "global"}},
 		))
-	case "resume":
-		return e.resumeTool(ctx, args("agent", "agent", "request_id", requestID))
 	default:
 		t.Fatalf("dispatchMutating: unhandled command %q", a.Command)
 		return "", nil
@@ -112,13 +108,6 @@ func TestMutatingRegistryReplay(t *testing.T) {
 			}
 			preTaskID := decodeTask(t, cr).ID
 
-			// resume needs a delta to advance over; append one event.
-			if a.Command == "resume" {
-				if _, err := e.eventTool(ctx, args("action", "append", "kind", "progress", "message", "seed", "agent", "agent")); err != nil {
-					t.Fatalf("seed event: %v", err)
-				}
-			}
-
 			reqID := "mut-replay-" + a.Command
 
 			first, err := dispatchMutating(t, e, ctx, a, reqID, preTaskID)
@@ -133,29 +122,5 @@ func TestMutatingRegistryReplay(t *testing.T) {
 				t.Errorf("%s replay not byte-identical:\n first:  %s\n second: %s", a.Command, first, second)
 			}
 		})
-	}
-}
-
-// TestMutatingRegistryResumePeekException is the BLOCKING negative assertion:
-// resume with peek=true performs ZERO writes and creates NO idempotency row,
-// even when a request_id is supplied. resumePeek is the documented read-only
-// exception to the mutating set.
-func TestMutatingRegistryResumePeekException(t *testing.T) {
-	e, ctx := newIdempotencyEngine(t)
-
-	if _, err := e.eventTool(ctx, args("action", "append", "kind", "progress", "message", "peek-seed", "agent", "agent")); err != nil {
-		t.Fatalf("seed event: %v", err)
-	}
-
-	const q = `SELECT COUNT(*) FROM idempotency WHERE command='resume'`
-	before := dbCount(t, e, ctx, q)
-
-	if _, err := e.resumeTool(ctx, args("agent", "agent", "peek", true, "request_id", "peek-req-001")); err != nil {
-		t.Fatalf("peek: %v", err)
-	}
-
-	after := dbCount(t, e, ctx, q)
-	if before != after {
-		t.Errorf("resume peek must not create an idempotency row: command='resume' count before=%d after=%d", before, after)
 	}
 }

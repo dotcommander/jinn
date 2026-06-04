@@ -83,7 +83,7 @@ func TestTask_CreateGetList(t *testing.T) {
 	}
 }
 
-// TestTask_BeginSetsInProgress verifies begin transitions status and emits task_started.
+// TestTask_BeginSetsInProgress verifies begin transitions status and bumps version.
 func TestTask_BeginSetsInProgress(t *testing.T) {
 	e, ctx := newTaskEngine(t)
 
@@ -102,13 +102,13 @@ func TestTask_BeginSetsInProgress(t *testing.T) {
 		t.Errorf("version should have bumped: before=%d after=%d", task.Version, begun.Version)
 	}
 
-	// Verify task_started event was emitted.
-	evts, err := e.eventTool(ctx, args("action", "list", "task_id", task.ID, "kind", "task_started"))
+	// Re-fetch confirms the persisted status.
+	got, err := e.taskTool(ctx, args("action", "get", "task_id", task.ID))
 	if err != nil {
-		t.Fatalf("event list: %v", err)
+		t.Fatalf("get: %v", err)
 	}
-	if !strings.Contains(evts, "task_started") {
-		t.Errorf("task_started event not found: %s", evts)
+	if decodeTask(t, got).Status != "in_progress" {
+		t.Errorf("persisted status want in_progress, got %q", decodeTask(t, got).Status)
 	}
 }
 
@@ -144,22 +144,6 @@ func TestTask_SetStatus(t *testing.T) {
 		if c.blockedReason != "" && got.BlockedReason != c.blockedReason {
 			t.Errorf("blocked_reason want %q got %q", c.blockedReason, got.BlockedReason)
 		}
-	}
-}
-
-// TestTask_CreateEmitsTaskCreatedEvent verifies the task_created event.
-func TestTask_CreateEmitsTaskCreatedEvent(t *testing.T) {
-	e, ctx := newTaskEngine(t)
-
-	cr, _ := e.taskTool(ctx, args("action", "create", "title", "event-check"))
-	task := decodeTask(t, cr)
-
-	evts, err := e.eventTool(ctx, args("action", "list", "task_id", task.ID))
-	if err != nil {
-		t.Fatalf("event list: %v", err)
-	}
-	if !strings.Contains(evts, "task_created") {
-		t.Errorf("task_created event not found in: %s", evts)
 	}
 }
 

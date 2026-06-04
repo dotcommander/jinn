@@ -25,18 +25,6 @@ type Task struct {
 	UpdatedAt     time.Time `json:"updated_at"`
 }
 
-// Event represents a continuity event row.
-type Event struct {
-	ID        int64     `json:"id"`
-	Kind      string    `json:"kind"`
-	AgentName string    `json:"agent_name"`
-	ProjectID string    `json:"project_id,omitempty"`
-	TaskID    string    `json:"task_id,omitempty"`
-	Message   string    `json:"message"`
-	Metadata  string    `json:"metadata,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
-}
-
 // newID generates a prefixed string id: prefix_<unix_nano>_<4-byte hex>.
 func newID(prefix string) string {
 	b := make([]byte, 4)
@@ -59,14 +47,6 @@ func ensureProject(ctx context.Context, tx *sql.Tx, projectID string) error {
 	}
 	return nil
 }
-
-// Event payload size constraints (ported from vybe store/events.go).
-const (
-	maxEventKind     = 128
-	maxEventAgent    = 128
-	maxEventMessage  = 4096
-	maxEventMetadata = 16384
-)
 
 // errInvalidArgs constructs an ErrWithSuggestion for ErrCodeInvalidArgs.
 func errInvalidArgs(msg, suggestion string) error {

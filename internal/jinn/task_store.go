@@ -75,10 +75,9 @@ func scanTaskRow(s scanner) (*Task, error) {
 	return &t, nil
 }
 
-// updateTaskStatusTx performs an in-transaction read-modify-write status change
-// and emits an event in the same transaction.
+// updateTaskStatusTx performs an in-transaction read-modify-write status change.
 // blocked_reason: cleared unless newStatus=="blocked" (preserved then).
-func updateTaskStatusTx(ctx context.Context, tx *sql.Tx, taskID, newStatus, agentName, eventKind string) (*Task, error) {
+func updateTaskStatusTx(ctx context.Context, tx *sql.Tx, taskID, newStatus string) (*Task, error) {
 	var currentVersion int
 	err := tx.QueryRowContext(ctx, `SELECT version FROM tasks WHERE id = ?`, taskID).Scan(&currentVersion)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -100,16 +99,7 @@ func updateTaskStatusTx(ctx context.Context, tx *sql.Tx, taskID, newStatus, agen
 		return nil, fmt.Errorf("update task status: %w", err)
 	}
 
-	t, err := getTaskTx(ctx, tx, taskID)
-	if err != nil {
-		return nil, err
-	}
-	_, err = insertEventTx(ctx, tx, eventKind, agentName, t.ProjectID, taskID,
-		fmt.Sprintf("Status changed to: %s", newStatus), "")
-	if err != nil {
-		return nil, err
-	}
-	return t, nil
+	return getTaskTx(ctx, tx, taskID)
 }
 
 // setBlockedReasonTx sets blocked_reason (truncated at 256 runes).

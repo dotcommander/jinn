@@ -3,46 +3,23 @@ package jinn
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 )
 
 // insertArtifactTx inserts the artifact row inside the provided transaction and
 // returns the populated Artifact. The caller must have already validated task_id
-// and file_path.
-//
-// eventID selects the linkage mode:
-//   - eventID == 0: emit a dedicated artifact_added event and link to it
-//     (artifact.add path).
-//   - eventID != 0: link the artifact to the supplied pre-existing event,
-//     emitting no extra event (push batch path).
-func insertArtifactTx(ctx context.Context, tx *sql.Tx, agentName, taskID, projectID, filePath, contentType string, eventID int64) (*Artifact, error) {
+// and file_path. The artifact links to task_id (+ project_id) only.
+func insertArtifactTx(ctx context.Context, tx *sql.Tx, taskID, projectID, filePath, contentType string) (*Artifact, error) {
 	artifactID := newID("artifact")
-
-	if eventID == 0 {
-		// Build event metadata with artifact provenance.
-		metaBytes, _ := json.Marshal(map[string]any{
-			"artifact_id":  artifactID,
-			"file_path":    filePath,
-			"content_type": contentType,
-		})
-
-		id, err := insertEventTx(ctx, tx, "artifact_added", agentName, projectID, taskID,
-			fmt.Sprintf("Artifact added: %s", filePath), string(metaBytes))
-		if err != nil {
-			return nil, fmt.Errorf("artifact: insert event: %w", err)
-		}
-		eventID = id
-	}
 
 	var ctVal any
 	if contentType != "" {
 		ctVal = contentType
 	}
 	_, err := tx.ExecContext(ctx, `
-		INSERT INTO artifacts (id, task_id, project_id, event_id, file_path, content_type, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-	`, artifactID, taskID, projectID, eventID, filePath, ctVal)
+		INSERT INTO artifacts (id, task_id, project_id, file_path, content_type, created_at)
+		VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+	`, artifactID, taskID, projectID, filePath, ctVal)
 	if err != nil {
 		return nil, fmt.Errorf("artifact: insert row: %w", err)
 	}
@@ -57,9 +34,9 @@ func getArtifactTx(ctx context.Context, tx *sql.Tx, id string) (*Artifact, error
 	var ct sql.NullString
 	var createdAt string
 	err := tx.QueryRowContext(ctx, `
-		SELECT id, task_id, event_id, file_path, content_type, created_at
+		SELECT id, task_id, file_path, content_type, created_at
 		FROM artifacts WHERE id = ?
-	`, id).Scan(&a.ID, &a.TaskID, &a.EventID, &a.FilePath, &ct, &createdAt)
+	`, id).Scan(&a.ID, &a.TaskID, &a.FilePath, &ct, &createdAt)
 	if err != nil {
 		return nil, fmt.Errorf("artifact: get: %w", err)
 	}
@@ -71,7 +48,7 @@ func getArtifactTx(ctx context.Context, tx *sql.Tx, id string) (*Artifact, error
 // listArtifactsDB returns artifacts for a task, ordered by created_at ASC.
 func listArtifactsDB(ctx context.Context, db *sql.DB, taskID string) ([]*Artifact, error) {
 	rows, err := db.QueryContext(ctx, `
-		SELECT id, task_id, event_id, file_path, content_type, created_at
+		SELECT id, task_id, file_path, content_type, created_at
 		FROM artifacts WHERE task_id = ?
 		ORDER BY created_at ASC
 	`, taskID)
@@ -85,7 +62,7 @@ func listArtifactsDB(ctx context.Context, db *sql.DB, taskID string) ([]*Artifac
 		var a Artifact
 		var ct sql.NullString
 		var createdAt string
-		if err := rows.Scan(&a.ID, &a.TaskID, &a.EventID, &a.FilePath, &ct, &createdAt); err != nil {
+		if err := rows.Scan(&a.ID, &a.TaskID, &a.FilePath, &ct, &createdAt); err != nil {
 			return nil, fmt.Errorf("artifact: scan: %w", err)
 		}
 		a.ContentType = ct.String

@@ -11,21 +11,6 @@ import (
 // no migration framework (Beta, no back-compat).
 func ensureSchema(ctx context.Context, db *sql.DB) error {
 	stmts := []string{
-		`CREATE TABLE IF NOT EXISTS events (
-			id         INTEGER PRIMARY KEY AUTOINCREMENT,
-			kind       TEXT    NOT NULL,
-			agent_name TEXT    NOT NULL,
-			project_id TEXT    NOT NULL DEFAULT '',
-			task_id    TEXT,
-			message    TEXT    NOT NULL,
-			metadata   TEXT,
-			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-		)`,
-		`CREATE INDEX IF NOT EXISTS idx_events_agent       ON events(agent_name)`,
-		`CREATE INDEX IF NOT EXISTS idx_events_task        ON events(task_id)`,
-		`CREATE INDEX IF NOT EXISTS idx_events_project_cur ON events(project_id, id)`,
-		`CREATE INDEX IF NOT EXISTS idx_events_kind_id     ON events(kind, id)`,
-
 		`CREATE TABLE IF NOT EXISTS tasks (
 			id             TEXT PRIMARY KEY,
 			title          TEXT NOT NULL,
@@ -41,15 +26,6 @@ func ensureSchema(ctx context.Context, db *sql.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_tasks_status  ON tasks(status)`,
 		`CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_tasks_focus   ON tasks(status, project_id, priority DESC, created_at ASC)`,
-
-		`CREATE TABLE IF NOT EXISTS agent_state (
-			agent_name         TEXT PRIMARY KEY,
-			last_seen_event_id INTEGER NOT NULL DEFAULT 0,
-			focus_task_id      TEXT,
-			focus_project_id   TEXT,
-			version            INTEGER NOT NULL DEFAULT 1,
-			last_active_at     TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-		)`,
 
 		`CREATE TABLE IF NOT EXISTS memory (
 			id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -71,7 +47,6 @@ func ensureSchema(ctx context.Context, db *sql.DB) error {
 		`CREATE TABLE IF NOT EXISTS artifacts (
 			id           TEXT PRIMARY KEY,
 			task_id      TEXT NOT NULL,
-			event_id     INTEGER NOT NULL,
 			file_path    TEXT NOT NULL,
 			content_type TEXT,
 			project_id   TEXT NOT NULL DEFAULT '',

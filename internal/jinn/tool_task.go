@@ -55,16 +55,7 @@ func (e *Engine) taskCreate(ctx context.Context, args map[string]interface{}) (s
 		if projErr := ensureProject(ctx, tx, projectID); projErr != nil {
 			return nil, projErr
 		}
-		t, insertErr := insertTaskTx(ctx, tx, title, description, projectID, priority)
-		if insertErr != nil {
-			return nil, insertErr
-		}
-		_, evtErr := insertEventTx(ctx, tx, "task_created", agent, projectID, t.ID,
-			fmt.Sprintf("Task created: %s", title), "")
-		if evtErr != nil {
-			return nil, evtErr
-		}
-		return t, nil
+		return insertTaskTx(ctx, tx, title, description, projectID, priority)
 	})
 	if err != nil {
 		return "", err
@@ -86,7 +77,7 @@ func (e *Engine) taskBegin(ctx context.Context, args map[string]interface{}) (st
 	}
 
 	result, err := runIdempotent(ctx, db, agent, requestID, "task.begin", func(tx *sql.Tx) (any, error) {
-		return updateTaskStatusTx(ctx, tx, taskID, "in_progress", agent, "task_started")
+		return updateTaskStatusTx(ctx, tx, taskID, "in_progress")
 	})
 	if err != nil {
 		return "", err
@@ -118,7 +109,7 @@ func (e *Engine) taskSetStatus(ctx context.Context, args map[string]interface{})
 	}
 
 	result, err := runIdempotent(ctx, db, agent, requestID, "task.set_status", func(tx *sql.Tx) (any, error) {
-		t, txErr := updateTaskStatusTx(ctx, tx, taskID, status, agent, "task_status")
+		t, txErr := updateTaskStatusTx(ctx, tx, taskID, status)
 		if txErr != nil {
 			return nil, txErr
 		}

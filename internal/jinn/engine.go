@@ -140,12 +140,6 @@ func (e *Engine) Dispatch(ctx context.Context, tool string, args map[string]inte
 	case "task":
 		result, err := e.taskTool(ctx, args)
 		return textResult(result), nil, err
-	case "event":
-		result, err := e.eventTool(ctx, args)
-		return textResult(result), nil, err
-	case "resume":
-		result, err := e.resumeTool(ctx, args)
-		return textResult(result), nil, err
 	case "artifact":
 		result, err := e.artifactTool(ctx, args)
 		return textResult(result), nil, err

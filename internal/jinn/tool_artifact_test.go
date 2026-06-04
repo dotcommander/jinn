@@ -63,10 +63,6 @@ func TestArtifact_AddList(t *testing.T) {
 	if artifact.ContentType != "application/json" {
 		t.Errorf("content_type: got %q want application/json", artifact.ContentType)
 	}
-	if artifact.EventID == 0 {
-		t.Error("expected non-zero event_id linked to artifact")
-	}
-	savedEventID := artifact.EventID
 
 	// List confirms the artifact is stored.
 	listRaw, err := e.artifactTool(ctx, args("action", "list", "task_id", taskID))
@@ -82,26 +78,6 @@ func TestArtifact_AddList(t *testing.T) {
 	}
 	if artifacts[0].ID != artifact.ID {
 		t.Errorf("listed artifact id mismatch: got %q want %q", artifacts[0].ID, artifact.ID)
-	}
-
-	// Verify add emits an artifact_added event and that event_id matches.
-	evRaw, err := e.eventTool(ctx, args("action", "list", "task_id", taskID, "kind", "artifact_added"))
-	if err != nil {
-		t.Fatalf("event list: %v", err)
-	}
-	var events []*Event
-	if err := json.Unmarshal([]byte(evRaw), &events); err != nil {
-		t.Fatalf("decode events: %v", err)
-	}
-	var found bool
-	for _, ev := range events {
-		if ev.Kind == "artifact_added" && ev.ID == savedEventID {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Errorf("expected artifact_added event with id=%d; events: %v", savedEventID, events)
 	}
 }
 

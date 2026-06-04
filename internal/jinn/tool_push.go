@@ -12,30 +12,12 @@ const (
 	maxPushArtifacts = 50
 )
 
-// pushTool executes an atomic multi-op batch: event, artifacts, memories, task_status.
+// pushTool executes an atomic multi-op batch: artifacts, memories, task_status.
 // All operations share one transaction — any failure rolls back the entire batch.
 func (e *Engine) pushTool(ctx context.Context, args map[string]interface{}) (string, error) {
 	agent := resolveAgent(args)
 	taskID := strArg(args, "task_id")
 	projectID := e.resolveProjectID(args)
-
-	// Parse optional event.
-	var pushEvent *pushEventInput
-	if raw, ok := args["event"]; ok && raw != nil {
-		m, ok := raw.(map[string]interface{})
-		if !ok {
-			return "", errInvalidArgs("event must be an object", "pass event as a JSON object")
-		}
-		pushEvent = &pushEventInput{
-			Kind:    strArg(m, "kind"),
-			Message: strArg(m, "message"),
-		}
-		if meta, err := resolveMetadata(m); err != nil {
-			return "", err
-		} else {
-			pushEvent.Metadata = meta
-		}
-	}
 
 	// Parse optional artifacts array.
 	var artifacts []pushArtifactInput
@@ -113,9 +95,9 @@ func (e *Engine) pushTool(ctx context.Context, args map[string]interface{}) (str
 	}
 
 	// Validation.
-	if pushEvent == nil && len(memories) == 0 && len(artifacts) == 0 && taskStatus == nil {
-		return "", errInvalidArgs("push requires at least one operation (event, memories, artifacts, or task_status)",
-			"provide at least one field: event, memories, artifacts, or task_status")
+	if len(memories) == 0 && len(artifacts) == 0 && taskStatus == nil {
+		return "", errInvalidArgs("push requires at least one operation (memories, artifacts, or task_status)",
+			"provide at least one field: memories, artifacts, or task_status")
 	}
 	if len(artifacts) > 0 && taskID == "" {
 		return "", errInvalidArgs("task_id is required when artifacts are provided", "provide task_id")
@@ -138,7 +120,6 @@ func (e *Engine) pushTool(ctx context.Context, args map[string]interface{}) (str
 	}
 
 	type pushResult struct {
-		EventID     int64    `json:"event_id,omitempty"`
 		MemoryCount int      `json:"memory_count"`
 		ArtifactIDs []string `json:"artifact_ids"`
 		Task        *Task    `json:"task"`
@@ -152,35 +133,16 @@ func (e *Engine) pushTool(ctx context.Context, args map[string]interface{}) (str
 			return nil, projErr
 		}
 
-		// Step 1: event (or synthesize one when artifacts need an event_id).
-		var eventID int64
-		if pushEvent != nil {
-			id, evErr := insertEventTx(ctx, tx, pushEvent.Kind, agent, projectID, taskID, pushEvent.Message, pushEvent.Metadata)
-			if evErr != nil {
-				return nil, fmt.Errorf("push: insert event: %w", evErr)
-			}
-			eventID = id
-			result.EventID = id
-		} else if len(artifacts) > 0 {
-			// Synthesize a minimal push event so artifacts.event_id is never NULL.
-			id, evErr := insertEventTx(ctx, tx, "push", agent, projectID, taskID, "artifact batch", "")
-			if evErr != nil {
-				return nil, fmt.Errorf("push: synthesize event: %w", evErr)
-			}
-			eventID = id
-			result.EventID = id
-		}
-
-		// Step 2: artifacts (all linked to eventID from step 1).
+		// Step 1: artifacts (linked to task_id only).
 		for _, art := range artifacts {
-			a, insErr := insertArtifactTx(ctx, tx, agent, taskID, projectID, art.FilePath, art.ContentType, eventID)
+			a, insErr := insertArtifactTx(ctx, tx, taskID, projectID, art.FilePath, art.ContentType)
 			if insErr != nil {
 				return nil, fmt.Errorf("push: insert artifact %q: %w", art.FilePath, insErr)
 			}
 			result.ArtifactIDs = append(result.ArtifactIDs, a.ID)
 		}
 
-		// Step 3: memories via the shared memoryUpsertTx.
+		// Step 2: memories via the shared memoryUpsertTx.
 		for i, mem := range memories {
 			rs, rsErr := e.resolveMemoryScope(mem.Scope, mem.ScopeID)
 			if rsErr != nil {
@@ -195,9 +157,9 @@ func (e *Engine) pushTool(ctx context.Context, args map[string]interface{}) (str
 			result.MemoryCount++
 		}
 
-		// Step 4: task status change (emits its own event inside the same tx).
+		// Step 3: task status change.
 		if taskStatus != nil {
-			t, tsErr := updateTaskStatusTx(ctx, tx, taskID, taskStatus.Status, agent, "task_status")
+			t, tsErr := updateTaskStatusTx(ctx, tx, taskID, taskStatus.Status)
 			if tsErr != nil {
 				return nil, fmt.Errorf("push: task_status: %w", tsErr)
 			}
@@ -216,13 +178,6 @@ func (e *Engine) pushTool(ctx context.Context, args map[string]interface{}) (str
 		return "", err
 	}
 	return out.(string), nil
-}
-
-// pushEventInput holds parsed event fields from the push args.
-type pushEventInput struct {
-	Kind     string
-	Message  string
-	Metadata string
 }
 
 // pushArtifactInput holds parsed artifact fields from the push args.

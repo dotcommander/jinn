@@ -19,7 +19,6 @@ func newPushEngine(t *testing.T) (*Engine, context.Context) {
 
 // pushSummary matches the summary returned by pushTool.
 type pushSummary struct {
-	EventID     int64    `json:"event_id"`
 	MemoryCount int      `json:"memory_count"`
 	ArtifactIDs []string `json:"artifact_ids"`
 	Task        *Task    `json:"task"`
@@ -48,20 +47,6 @@ func listArtifactsForTask(t *testing.T, e *Engine, ctx context.Context, taskID s
 	return out
 }
 
-// listEventsForTask is a decode helper for event list results filtered by kind.
-func listEventsForTask(t *testing.T, e *Engine, ctx context.Context, taskID, kind string) []*Event {
-	t.Helper()
-	raw, err := e.eventTool(ctx, args("action", "list", "task_id", taskID, "kind", kind))
-	if err != nil {
-		t.Fatalf("event list: %v", err)
-	}
-	var out []*Event
-	if err := json.Unmarshal([]byte(raw), &out); err != nil {
-		t.Fatalf("decode events: %v", err)
-	}
-	return out
-}
-
 // TestPush_AllFields exercises every sub-operation in one call.
 func TestPush_AllFields(t *testing.T) {
 	e, ctx := newPushEngine(t)
@@ -70,7 +55,6 @@ func TestPush_AllFields(t *testing.T) {
 	raw, err := e.pushTool(ctx, map[string]interface{}{
 		"task_id": taskID,
 		"agent":   "test-agent",
-		"event":   map[string]interface{}{"kind": "progress", "message": "doing work"},
 		"memories": []interface{}{
 			map[string]interface{}{"key": "mem.one", "value": "v1"},
 			map[string]interface{}{"key": "mem.two", "value": "v2", "kind": "directive"},
@@ -86,9 +70,6 @@ func TestPush_AllFields(t *testing.T) {
 	}
 	s := decodePushSummary(t, raw)
 
-	if s.EventID == 0 {
-		t.Error("expected non-zero event_id")
-	}
 	if s.MemoryCount != 2 {
 		t.Errorf("memory_count: got %d want 2", s.MemoryCount)
 	}
@@ -99,10 +80,8 @@ func TestPush_AllFields(t *testing.T) {
 		t.Errorf("task status: got %v want in_progress", s.Task)
 	}
 
-	for _, a := range listArtifactsForTask(t, e, ctx, taskID) {
-		if a.EventID != s.EventID {
-			t.Errorf("artifact %s: event_id=%d want %d", a.ID, a.EventID, s.EventID)
-		}
+	if arts := listArtifactsForTask(t, e, ctx, taskID); len(arts) != 2 {
+		t.Errorf("expected 2 artifacts linked to task, got %d", len(arts))
 	}
 
 	v1, err := e.memoryTool(ctx, args("action", "recall", "key", "mem.one"))
@@ -112,12 +91,9 @@ func TestPush_AllFields(t *testing.T) {
 	if v1 != "v1" {
 		t.Errorf("mem.one: got %q want v1", v1)
 	}
-	if evs := listEventsForTask(t, e, ctx, taskID, "task_status"); len(evs) == 0 {
-		t.Error("expected at least one task_status event")
-	}
 }
 
-// TestPush_OnlyMemories verifies memories-only push (no event, no artifacts).
+// TestPush_OnlyMemories verifies memories-only push (no artifacts).
 func TestPush_OnlyMemories(t *testing.T) {
 	e, ctx := newPushEngine(t)
 
@@ -130,9 +106,6 @@ func TestPush_OnlyMemories(t *testing.T) {
 		t.Fatalf("push only memories: %v", err)
 	}
 	s := decodePushSummary(t, raw)
-	if s.EventID != 0 {
-		t.Errorf("expected zero event_id, got %d", s.EventID)
-	}
 	if s.MemoryCount != 1 {
 		t.Errorf("memory_count: got %d want 1", s.MemoryCount)
 	}
@@ -145,55 +118,51 @@ func TestPush_OnlyMemories(t *testing.T) {
 	}
 }
 
-// TestPush_ArtifactsNoExplicitEvent verifies a synthesized push event is created.
-func TestPush_ArtifactsNoExplicitEvent(t *testing.T) {
+// TestPush_ArtifactsLinkToTask verifies artifacts are inserted linked to task_id.
+func TestPush_ArtifactsLinkToTask(t *testing.T) {
 	e, ctx := newPushEngine(t)
-	taskID := createTestTask(t, e, ctx, "synth event task")
+	taskID := createTestTask(t, e, ctx, "artifact link task")
 
 	raw, err := e.pushTool(ctx, map[string]interface{}{
 		"task_id":   taskID,
 		"artifacts": []interface{}{map[string]interface{}{"file_path": "/tmp/synth.txt"}},
 	})
 	if err != nil {
-		t.Fatalf("push artifacts no event: %v", err)
+		t.Fatalf("push artifacts: %v", err)
 	}
 	s := decodePushSummary(t, raw)
-	if s.EventID == 0 {
-		t.Error("expected synthesized event_id")
+	if len(s.ArtifactIDs) != 1 {
+		t.Fatalf("expected 1 artifact id, got %d", len(s.ArtifactIDs))
 	}
 
 	arts := listArtifactsForTask(t, e, ctx, taskID)
 	if len(arts) != 1 {
 		t.Fatalf("expected 1 artifact, got %d", len(arts))
 	}
-	if arts[0].EventID != s.EventID {
-		t.Errorf("artifact event_id=%d want %d", arts[0].EventID, s.EventID)
-	}
-	if evs := listEventsForTask(t, e, ctx, taskID, "push"); len(evs) == 0 {
-		t.Error("expected synthesized push event in event log")
+	if arts[0].TaskID != taskID {
+		t.Errorf("artifact task_id=%q want %q", arts[0].TaskID, taskID)
 	}
 }
 
-// TestPush_Atomicity: an invalid event rolls back the ENTIRE batch.
+// TestPush_Atomicity: an invalid memory key rolls back the ENTIRE batch.
 func TestPush_Atomicity(t *testing.T) {
 	e, ctx := newPushEngine(t)
 	taskID := createTestTask(t, e, ctx, "atomicity task")
 
 	_, err := e.pushTool(ctx, map[string]interface{}{
 		"task_id": taskID,
-		"event":   map[string]interface{}{"kind": "progress", "message": strings.Repeat("x", maxEventMessage+1)},
 		"memories": []interface{}{
-			map[string]interface{}{"key": "should.not.persist", "value": "oops"},
+			map[string]interface{}{"key": strings.Repeat("x", 200), "value": "oops"},
 		},
 		"artifacts":   []interface{}{map[string]interface{}{"file_path": "/tmp/nope.txt"}},
 		"task_status": map[string]interface{}{"status": "completed"},
 	})
 	if err == nil {
-		t.Fatal("expected error for oversize event message")
+		t.Fatal("expected error for invalid memory key")
 	}
 
 	// No memory written.
-	v, merr := e.memoryTool(ctx, args("action", "recall", "key", "should.not.persist"))
+	v, merr := e.memoryTool(ctx, args("action", "recall", "key", strings.Repeat("x", 200)))
 	if merr == nil {
 		t.Errorf("memory should not have been written; got %q", v)
 	}
@@ -212,10 +181,6 @@ func TestPush_Atomicity(t *testing.T) {
 	}
 	if task.Status != "pending" {
 		t.Errorf("task status: got %q want pending", task.Status)
-	}
-	// No progress events.
-	if evs := listEventsForTask(t, e, ctx, taskID, "progress"); len(evs) != 0 {
-		t.Errorf("expected 0 progress events, got %d", len(evs))
 	}
 }
 

@@ -9,8 +9,7 @@ package jinn
 //
 // Read-only actions are intentionally ABSENT and must stay absent:
 //
-//	task.get, task.list, memory.recall, memory.list, event.list,
-//	artifact.list, and resume peek (resumePeek performs zero writes).
+//	task.get, task.list, memory.recall, memory.list, artifact.list.
 type mutatingAction struct {
 	Tool    string // Dispatch tool name (engine.go switch)
 	Action  string // sub-action value (args["action"]); "" when the tool has no action fan-out
@@ -26,8 +25,6 @@ var mutatingActions = []mutatingAction{
 	{Tool: "memory", Action: "save", Command: "memory.save"},
 	{Tool: "memory", Action: "forget", Command: "memory.forget"},
 	{Tool: "memory", Action: "gc", Command: "memory.gc"},
-	{Tool: "event", Action: "append", Command: "event.append"},
 	{Tool: "artifact", Action: "add", Command: "artifact.add"},
 	{Tool: "push", Action: "", Command: "push"},
-	{Tool: "resume", Action: "", Command: "resume"},
 }
