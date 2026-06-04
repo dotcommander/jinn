@@ -36,16 +36,26 @@ import (
 //	    paths / state into the subprocess. Omit unless a concrete need is proven.
 var shellAllowList = []string{"PATH", "HOME", "LANG", "LC_ALL", "TERM", "USER", "LOGNAME", "TMPDIR", "TZ", "SHELL"} // tunable: config candidate
 
-// shellEnv returns a minimal environment for shell commands, preventing
-// accidental leakage of host secrets (API keys, credentials) to the subprocess.
-func shellEnv() []string {
-	env := make([]string, 0, len(shellAllowList))
+// subprocessEnv returns a minimal environment for subprocess tools, preventing
+// accidental leakage of host secrets (API keys, credentials). Extra values are
+// explicit per-tool overlays, such as a dedicated Go build cache.
+func subprocessEnv(extra map[string]string) []string {
+	env := make([]string, 0, len(shellAllowList)+len(extra))
 	for _, key := range shellAllowList {
 		if v, ok := os.LookupEnv(key); ok {
 			env = append(env, key+"="+v)
 		}
 	}
+	for key, value := range extra {
+		env = append(env, key+"="+value)
+	}
 	return env
+}
+
+// shellEnv preserves the run_shell helper name for tests and callers while
+// sharing the same policy with LSP subprocesses.
+func shellEnv() []string {
+	return subprocessEnv(nil)
 }
 
 // waitExitCode waits for c and returns its exit code: the process exit code for
@@ -61,23 +71,45 @@ func waitExitCode(c *exec.Cmd) int {
 	return 0
 }
 
-// runWithTimeout starts c, kills its process group after timeout seconds, and
-// returns the exit code: 1 if start fails, 124 on timeout, else the wait code.
-func runWithTimeout(c *exec.Cmd, timeout int) int {
+const shellCanceledExitCode = 130
+
+type shellRunResult struct {
+	exitCode int
+	canceled bool
+}
+
+// runWithTimeout starts c, kills its process group after timeout seconds or
+// parent cancellation, waits for cleanup, and returns the exit status.
+func runWithTimeout(ctx context.Context, c *exec.Cmd, timeout int) shellRunResult {
+	if err := ctx.Err(); err != nil {
+		return shellRunResult{exitCode: shellCanceledExitCode, canceled: true}
+	}
 	if err := c.Start(); err != nil {
-		return 1
+		return shellRunResult{exitCode: 1}
 	}
 	pgid := c.Process.Pid // bash is the group leader (Setpgid=true)
-	timer := time.AfterFunc(time.Duration(timeout)*time.Second, func() {
+	killGroup := func() {
 		// Negative pgid targets the whole process group.
 		syscall.Kill(-pgid, syscall.SIGKILL) //nolint:errcheck
-	})
-	exitCode := waitExitCode(c)
-	// Stop returns false when the timer already fired.
-	if !timer.Stop() {
-		return 124 // preserves "timed out after N seconds" message
 	}
-	return exitCode
+	done := make(chan int, 1)
+	go func() { done <- waitExitCode(c) }()
+
+	timer := time.NewTimer(time.Duration(timeout) * time.Second)
+	defer timer.Stop()
+
+	select {
+	case exitCode := <-done:
+		return shellRunResult{exitCode: exitCode}
+	case <-timer.C:
+		killGroup()
+		<-done
+		return shellRunResult{exitCode: 124} // preserves "timed out after N seconds" message
+	case <-ctx.Done():
+		killGroup()
+		<-done
+		return shellRunResult{exitCode: shellCanceledExitCode, canceled: true}
+	}
 }
 
 // shapeShellOutput compresses, truncates and frames captured output, appending a
@@ -121,6 +153,7 @@ func shapeShellOutput(capture *shellOutputCapture, cmd string, exitCode, timeout
 type shellExecution struct {
 	content  string
 	exitCode int
+	canceled bool
 	stdout   string
 	stderr   string
 }
@@ -129,16 +162,16 @@ type shellExecution struct {
 // bounded capture + stdout/stderr buffers), runs it under the timeout, and shapes
 // the captured output. It covers the execution half of runShell; classification,
 // hint matching and meta assembly stay in the caller. ctx threads to the subprocess
-// via exec.CommandContext; a nil ctx is a caller bug and panics.
+// via explicit cancellation handling; a nil ctx is a caller bug and panics.
 func executeShellCommand(ctx context.Context, cmd string, timeout int) shellExecution {
 	// Always use a process group so SIGKILL reaches background processes too.
-	// exec.CommandContext only kills the direct child; our timer kills -pgid.
+	// Both timeout and parent cancellation must kill -pgid, not only bash.
 	// nil ctx is a caller bug — guard with panic so it surfaces in tests rather
 	// than masking parent cancellation in production.
 	if ctx == nil {
 		panic("runShell: nil ctx")
 	}
-	c := exec.CommandContext(ctx, "bash", "-c", cmd) //nolint:gosec // G204: the shell tool intentionally executes agent-provided commands (its documented purpose)
+	c := exec.CommandContext(context.WithoutCancel(ctx), "bash", "-c", cmd) //nolint:gosec // G204: the shell tool intentionally executes agent-provided commands (its documented purpose)
 	c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 	capture := newShellOutputCapture(1 << 20) // 1 MB response tail + full spill on overflow
@@ -149,12 +182,13 @@ func executeShellCommand(ctx context.Context, cmd string, timeout int) shellExec
 	c.Stdout = io.MultiWriter(capture, outBuf)
 	c.Stderr = io.MultiWriter(capture, errBuf)
 
-	exitCode := runWithTimeout(c, timeout)
-	content := shapeShellOutput(capture, cmd, exitCode, timeout)
+	run := runWithTimeout(ctx, c, timeout)
+	content := shapeShellOutput(capture, cmd, run.exitCode, timeout)
 
 	return shellExecution{
 		content:  content,
-		exitCode: exitCode,
+		exitCode: run.exitCode,
+		canceled: run.canceled,
 		stdout:   outBuf.String(),
 		stderr:   errBuf.String(),
 	}
@@ -201,6 +235,19 @@ func (e *Engine) runShell(ctx context.Context, args map[string]interface{}) (str
 
 	argv0 := extractArgv0(cmd)
 	class, reason := classifyExitCode(argv0, res.exitCode)
+	meta := map[string]string{
+		"risk":           riskLevel.String(),
+		"classification": string(class),
+		"stdout":         res.stdout,
+		"stderr":         res.stderr,
+	}
+	if res.canceled {
+		return "", meta, &ErrWithSuggestion{
+			Err:        errors.New("run_shell canceled"),
+			Suggestion: "retry the command if cancellation was unintended",
+			Code:       ErrCodeCanceled,
+		}
+	}
 
 	// Expected-nonzero exits return a success envelope (output + annotation)
 	// rather than an error, so the LLM sees the command's output alongside
@@ -212,11 +259,5 @@ func (e *Engine) runShell(ctx context.Context, args map[string]interface{}) (str
 		result += fmt.Sprintf("\n[hint: %s]", hint)
 	}
 
-	meta := map[string]string{
-		"risk":           riskLevel.String(),
-		"classification": string(class),
-		"stdout":         res.stdout,
-		"stderr":         res.stderr,
-	}
 	return result, meta, nil
 }

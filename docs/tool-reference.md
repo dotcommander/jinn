@@ -1,12 +1,12 @@
 # Tool Reference
 
-jinn exposes 20 tools through a JSON-over-stdin/stdout protocol. You call them by piping a request object:
+jinn exposes 18 tools through a JSON-over-stdin/stdout protocol. You call them by piping a request object:
 
 ```bash
 echo '{"tool":"read_file","args":{"path":"main.go"}}' | jinn
 ```
 
-Every tool returns `{"ok": true, "result": "..."}` on success or `{"ok": false, "error": "..."}` on failure.
+Every text tool returns `{"ok": true, "result": "..."}` on success or `{"ok": false, "error": "..."}` on failure. Tools can also attach structured `content` and `meta` fields for images, checksums, truncation, diffs, and other machine-readable details.
 
 ## Response Envelope
 
@@ -15,11 +15,15 @@ The full response type includes optional fields that carry structured metadata:
 | Field | Type | Description |
 |-------|------|-------------|
 | `ok` | bool | `true` on success, `false` on error |
-| `result` | string | Tool output (present when `ok: true`) |
+| `result` | string | Text tool output (present when `ok: true` for text responses) |
+| `content` | array | Structured content blocks, currently used for detected images from `read_file` |
+| `meta` | object | Structured metadata such as truncation info, checksums, diffs, stdout/stderr, and compression details |
 | `error` | string | Error message (present when `ok: false`) |
+| `error_code` | string | Stable error category on structured errors |
 | `suggestion` | string | One-sentence next-step hint on structured errors |
 | `classification` | string | Exit-code class set by `run_shell`: `success`, `expected_nonzero`, `error`, `timeout`, `signal` |
 | `risk` | string | Pre-execution risk set by `run_shell`: `safe`, `caution`, `dangerous` |
+| `request_id` | string | Echoes the caller-supplied top-level `request_id` |
 
 `suggestion` is present on errors from any tool when jinn can offer a specific recovery action. Always read it before retrying.
 
@@ -47,6 +51,8 @@ echo '{"tool":"read_file","args":{"path":"main.go"}}' | jinn
 | `tail` | int | No | `0` (disabled) | Return last N lines. Overrides `start_line`/`end_line` |
 | `line_numbers` | bool | No | `true` | Prefix each output line with a right-justified line number. Set `false` for raw content without numbering. |
 | `truncate` | string | No | `"head"` | Strategy when windowed output exceeds the line limit: `head` (keep first N lines, paginate with `start_line`), `tail` (keep last N lines, useful for logs), `middle` (keep both ends, elide center), `none` (no line-level truncation, byte cap still applies), `smart` (brace-depth heuristic — cuts at block boundaries for C-syntax files `.go`/`.rs`/`.ts`/`.js`/`.java`/`.c`/`.cpp`/`.h`/`.hpp`/`.tsx`/`.jsx`, falls back to `head` for others). |
+| `include_checksum` | bool | No | `false` | Include a SHA-256 checksum in `meta.sha256` |
+| `if_checksum` | string | No | -- | Return `[unchanged: sha256 matches]` when the current file checksum matches this value |
 
 **Notes:**
 
@@ -68,6 +74,13 @@ Read the last 5 lines:
 
 ```bash
 echo '{"tool":"read_file","args":{"path":"main.go","tail":5}}' | jinn
+```
+
+Read with a checksum, then skip the body on the next call if the file has not changed:
+
+```bash
+echo '{"tool":"read_file","args":{"path":"go.mod","include_checksum":true}}' | jinn
+echo '{"tool":"read_file","args":{"path":"go.mod","if_checksum":"<sha256-from-meta>"}}' | jinn
 ```
 
 ### multi_read
@@ -527,7 +540,7 @@ echo '{"tool":"detect_project","args":{"path":"."}}' | jinn
 
 ### memory
 
-Persist key/value pairs across jinn invocations, scoped per project.
+Persist key/value pairs across jinn invocations, scoped per project by default.
 
 ```bash
 echo '{"tool":"memory","args":{"action":"save","key":"project.notes","value":"auth service uses JWT RS256"}}' | jinn
@@ -537,10 +550,16 @@ echo '{"tool":"memory","args":{"action":"save","key":"project.notes","value":"au
 
 | Name | Type | Required | Default | Description |
 |------|------|----------|---------|-------------|
-| `action` | string | Yes | -- | `save`, `recall`, `list`, or `forget` |
-| `key` | string | Depends | -- | Key name. Required for `save`, `recall`, `forget`. Charset: `[a-zA-Z0-9_.-]`, max 128 chars. |
+| `action` | string | Yes | -- | `save`, `recall`, `list`, `forget`, or `gc` |
+| `key` | string | Depends | -- | Key name. Required for `save`, `recall`, and `forget`. Charset: `[a-zA-Z0-9_.-]`, max 128 chars. |
 | `value` | string | For `save` | -- | Value to store. Max 16 KiB. |
-| `scope` | string | No | current project | Omit for the auto-detected current project (nearest `.git` ancestor). Use `"global"` for the cross-project bucket, or an absolute path for an explicit project. |
+| `scope` | string | No | `"project"` | Omit for the auto-detected current project. Use `"global"`, `"project"`, `"task"`, or `"agent"`. |
+| `scope_id` | string | Depends | auto project root | Explicit project path, task ID, or agent name. Required for `task` and `agent`; invalid with `global`. |
+| `kind` | string | No | `"fact"` | Memory type: `"fact"`, `"directive"`, or `"lesson"` |
+| `pin` | bool | No | `false` | Keep this entry during memory garbage collection |
+| `expires_in` | string | No | -- | Relative expiry duration such as `"12h"`, `"7d"`, or `"2w"` |
+| `include_values` | bool | For `list` | `false` | Include values and metadata in list output instead of keys only |
+| `request_id` | string | No | -- | Idempotency key for mutating actions. The top-level request ID is copied here automatically when present. |
 
 **Returns by action:**
 
@@ -548,16 +567,19 @@ echo '{"tool":"memory","args":{"action":"save","key":"project.notes","value":"au
 |--------|---------------|
 | `save` | `"saved: <key>"` |
 | `recall` | The stored value string |
-| `list` | `{"keys": [...], "count": N}` |
-| `forget` | `"forgotten: <key>"` (idempotent — not found is success) |
+| `list` | `{"keys": [...], "count": N}` or `{"entries": [...], "count": N}` with `include_values: true` |
+| `forget` | `"forgotten: <key>"` (idempotent; not found is success) |
+| `gc` | `{"deleted": N, "idempotency_deleted": N, "scope": "..."}` |
 
 **Notes:**
 
 - Stored in a SQLite database at `~/.config/jinn/memory.db`. Override the base dir with `JINN_CONFIG_DIR` (the DB lives at `$JINN_CONFIG_DIR/jinn/memory.db`).
-- Keys are scoped per project. With no `scope` argument, jinn auto-detects the project from the nearest `.git` ancestor of its working directory (falling back to the working directory itself). Pass `scope: "global"` for a cross-project bucket, or an absolute path for a specific project.
+- Keys are scoped by `(scope, scope_id)`. With no `scope`, jinn uses `project` and auto-detects the nearest `.git` ancestor of its working directory, falling back to the working directory itself.
+- `scope: "project"` accepts an optional `scope_id` path. `scope: "task"` and `scope: "agent"` require a caller-supplied `scope_id`. `scope: "global"` cannot have a `scope_id`.
 - The DB directory is created with mode `0700`. Writes use WAL journaling with a 5s busy timeout for cross-process safety.
 - A legacy `memory.json` from older jinn versions is imported once into the `"global"` scope on first run, then renamed to `memory.json.migrated`.
 - `recall` on a missing key returns `ok: false` with `suggestion: "use action=\"list\" to see available keys"`.
+- `gc` removes expired, unpinned memories and old idempotency rows. Pass `scope` to restrict memory cleanup to one scope bucket.
 
 Save a value:
 
@@ -571,10 +593,28 @@ List all keys:
 echo '{"tool":"memory","args":{"action":"list"}}' | jinn
 ```
 
+List values and metadata:
+
+```bash
+echo '{"tool":"memory","args":{"action":"list","include_values":true}}' | jinn
+```
+
+Save an expiring task-scoped lesson:
+
+```bash
+echo '{"tool":"memory","args":{"action":"save","key":"migration.lesson","value":"retry failed rows after backfill","kind":"lesson","scope":"task","scope_id":"backfill-2026-06","expires_in":"14d"}}' | jinn
+```
+
 Forget a key:
 
 ```bash
 echo '{"tool":"memory","args":{"action":"forget","key":"db.host"}}' | jinn
+```
+
+Garbage-collect expired memories and old idempotency rows:
+
+```bash
+echo '{"tool":"memory","args":{"action":"gc"}}' | jinn
 ```
 
 ---

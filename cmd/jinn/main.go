@@ -42,99 +42,159 @@ Example:
 // lifecycle, and an on-disk file with no consumer. If diagnostic logging is
 // added later, route it ONLY to such a file sink — never to stdout/stderr.
 func main() {
+	if err := run(context.Background()); err != nil {
+		writeRunError(err)
+		os.Exit(1)
+	}
+}
+
+func writeRunError(err error) {
+	resp := jinn.Response{Error: err.Error()}
+	var cErr *cliError
+	if errors.As(err, &cErr) {
+		resp = cErr.resp
+	}
+	if writeErr := writeResponse(resp); writeErr != nil {
+		fmt.Fprintf(os.Stderr, "write response: %s\n", writeErr)
+	}
+}
+
+type cliError struct {
+	resp jinn.Response
+}
+
+func (e *cliError) Error() string {
+	return e.resp.Error
+}
+
+func fail(resp jinn.Response) error {
+	return &cliError{resp: resp}
+}
+
+func writeResponse(resp jinn.Response) error {
+	return json.NewEncoder(os.Stdout).Encode(resp)
+}
+
+func run(ctx context.Context) error {
 	if len(os.Args) > 1 {
-		switch os.Args[1] {
-		case "--schema":
-			schema, err := jinn.LeanSchema()
-			if err != nil {
-				json.NewEncoder(os.Stdout).Encode(jinn.Response{Error: fmt.Sprintf("lean schema: %s", err)})
-				os.Exit(1)
-			}
-			fmt.Println(schema)
-			return
-		case "--version":
-			fmt.Println(jinn.ResolveVersion(version))
-			return
-		case "--help", "-h":
-			fmt.Print(helpText)
-			return
+		handled, err := handleFlag(os.Args[1])
+		if handled || err != nil {
+			return err
 		}
 	}
 
 	if fi, err := os.Stdin.Stat(); err == nil && fi.Mode()&os.ModeCharDevice != 0 {
 		fmt.Print(helpText)
-		return
+		return nil
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	sigCtx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	wd, err := os.Getwd()
 	if err != nil {
-		json.NewEncoder(os.Stdout).Encode(jinn.Response{Error: fmt.Sprintf("getwd: %s", err)})
-		os.Exit(1)
+		return fail(jinn.Response{Error: fmt.Sprintf("getwd: %s", err)})
 	}
 
 	e := jinn.New(wd, version)
 	defer func() { _ = e.Close() }()
 
-	var req jinn.Request
-	if err := json.NewDecoder(os.Stdin).Decode(&req); err != nil {
-		if errors.Is(err, io.EOF) {
-			json.NewEncoder(os.Stdout).Encode(jinn.Response{Error: "no input: pipe a JSON request to stdin (try jinn --help)"})
-		} else {
-			json.NewEncoder(os.Stdout).Encode(jinn.Response{Error: fmt.Sprintf("invalid JSON: %s", err)})
-		}
-		os.Exit(1)
-	}
-	if req.RequestID != "" {
-		if req.Args == nil {
-			req.Args = make(map[string]interface{})
-		}
-		if _, ok := req.Args["request_id"]; !ok {
-			req.Args["request_id"] = req.RequestID
-		}
-	}
-
-	result, meta, err := e.Dispatch(ctx, req.Tool, req.Args)
+	req, err := readRequest()
 	if err != nil {
-		risk := ""
-		classification := ""
-		if meta != nil {
-			risk = meta["risk"]
-			classification = meta["classification"]
-		}
-		resp := jinn.Response{
-			Error:          err.Error(),
-			Risk:           risk,
-			Classification: classification,
-			RequestID:      req.RequestID,
-		}
-		// Populate suggestion and error_code fields when the error carries them.
-		var sErr *jinn.ErrWithSuggestion
-		if errors.As(err, &sErr) {
-			resp.Suggestion = sErr.Suggestion
-			resp.ErrorCode = sErr.Code
-		}
-		json.NewEncoder(os.Stdout).Encode(resp)
-		os.Exit(1)
+		return err
+	}
+	attachRequestID(&req)
+
+	result, meta, err := e.Dispatch(sigCtx, req.Tool, req.Args)
+	if err != nil {
+		return fail(errorResponse(err, meta, req.RequestID))
 	}
 
-	// Apply output compression when requested. run_shell compresses internally
-	// (pre-framing); every other tool opts in via req.Compress.
+	applyCompression(req, result)
+	return writeResponse(successResponse(req, result, meta))
+}
+
+func handleFlag(flag string) (bool, error) {
+	switch flag {
+	case "--schema":
+		schema, err := jinn.LeanSchema()
+		if err != nil {
+			return true, fail(jinn.Response{Error: fmt.Sprintf("lean schema: %s", err)})
+		}
+		fmt.Println(schema)
+		return true, nil
+	case "--version":
+		fmt.Println(jinn.ResolveVersion(version))
+		return true, nil
+	case "--help", "-h":
+		fmt.Print(helpText)
+		return true, nil
+	default:
+		return false, nil
+	}
+}
+
+func readRequest() (jinn.Request, error) {
+	var req jinn.Request
+	decodeErr := json.NewDecoder(os.Stdin).Decode(&req)
+	if decodeErr == nil {
+		return req, nil
+	}
+	if errors.Is(decodeErr, io.EOF) {
+		return req, fail(jinn.Response{Error: "no input: pipe a JSON request to stdin (try jinn --help)"})
+	}
+	return req, fail(jinn.Response{Error: fmt.Sprintf("invalid JSON: %s", decodeErr)})
+}
+
+func attachRequestID(req *jinn.Request) {
+	if req.RequestID == "" {
+		return
+	}
+	if req.Args == nil {
+		req.Args = make(map[string]interface{})
+	}
+	if _, ok := req.Args["request_id"]; !ok {
+		req.Args["request_id"] = req.RequestID
+	}
+}
+
+func errorResponse(err error, meta map[string]string, requestID string) jinn.Response {
+	risk := ""
+	classification := ""
+	if meta != nil {
+		risk = meta["risk"]
+		classification = meta["classification"]
+	}
+	resp := jinn.Response{
+		Error:          err.Error(),
+		Risk:           risk,
+		Classification: classification,
+		RequestID:      requestID,
+	}
+	var sErr *jinn.ErrWithSuggestion
+	if errors.As(err, &sErr) {
+		resp.Suggestion = sErr.Suggestion
+		resp.ErrorCode = sErr.Code
+	}
+	return resp
+}
+
+func applyCompression(req jinn.Request, result *jinn.ToolResult) {
+	if !req.Compress || req.Tool == "run_shell" || result.Text == "" {
+		return
+	}
 	var compressMeta jinn.CompressionMeta
-	if req.Compress && req.Tool != "run_shell" && result.Text != "" {
-		result.Text, compressMeta = jinn.NewCompressor().Compress(result.Text, req.Tool)
-		// Merge compression metadata into result.Meta.
-		if len(compressMeta.Strategies) > 0 {
-			if result.Meta == nil {
-				result.Meta = make(map[string]any)
-			}
-			result.Meta["compression"] = compressMeta
-		}
+	result.Text, compressMeta = jinn.NewCompressor().Compress(result.Text, req.Tool)
+	if len(compressMeta.Strategies) == 0 {
+		return
 	}
+	if result.Meta == nil {
+		result.Meta = make(map[string]any)
+	}
+	result.Meta["compression"] = compressMeta
+}
 
-	// Build success response. Risk/Classification are only set by run_shell.
+func successResponse(req jinn.Request, result *jinn.ToolResult, meta map[string]string) jinn.Response {
 	resp := jinn.Response{
 		OK:        true,
 		Result:    result.Text,
@@ -146,5 +206,5 @@ func main() {
 		resp.Risk = meta["risk"]
 		resp.Classification = meta["classification"]
 	}
-	json.NewEncoder(os.Stdout).Encode(resp)
+	return resp
 }

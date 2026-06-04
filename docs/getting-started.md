@@ -69,7 +69,7 @@ Every request follows this shape:
 }
 ```
 
-Every response is one of two shapes:
+At minimum, every response has one of these shapes:
 
 ```json
 {"ok": true, "result": "..."}
@@ -80,9 +80,13 @@ Some tools add optional fields to the envelope:
 
 | Field | When present | Description |
 |-------|-------------|-------------|
+| `content` | Structured content responses | Typed blocks such as detected images from `read_file` |
+| `meta` | Structured metadata responses | Checksums, truncation details, diffs, stdout/stderr, and compression details |
+| `error_code` | Structured errors | Stable error category for programmatic handling |
 | `suggestion` | On structured errors | One-sentence next-step hint — read it before retrying |
 | `classification` | `run_shell` (always) | Exit-code class: `success`, `expected_nonzero`, `error`, `timeout`, `signal` |
 | `risk` | `run_shell` (always) | Pre-execution risk: `safe`, `caution`, `dangerous` |
+| `request_id` | When supplied by caller | Echoes the top-level request ID |
 
 Example with extended fields:
 
@@ -241,9 +245,20 @@ echo '{"tool":"memory","args":{"action":"list"}}' | jinn
 echo '{"tool":"memory","args":{"action":"save","key":"editor","value":"nvim","scope":"global"}}' | jinn
 ```
 
-By default, keys are scoped to the current project (auto-detected from the nearest `.git` ancestor). Pass `scope: "global"` for a cross-project bucket, or an absolute path for a specific project.
+By default, keys are scoped to the current project (auto-detected from the nearest `.git` ancestor). Pass `scope: "global"` for a cross-project bucket, `scope: "project"` with `scope_id` for an explicit project path, or `scope: "task"` / `scope: "agent"` with a caller-supplied `scope_id`.
 
-Keys must match `[a-zA-Z0-9_.-]` (max 128 chars). Values are capped at 16 KiB.
+Keys must match `[a-zA-Z0-9_.-]` (max 128 chars). Values are capped at 16 KiB. Saved entries can also carry `kind: "fact" | "directive" | "lesson"`, `pin: true`, and `expires_in` durations such as `"12h"`, `"7d"`, or `"2w"`.
+
+```bash
+# Include values and metadata when listing
+echo '{"tool":"memory","args":{"action":"list","include_values":true}}' | jinn
+
+# Save a task-scoped entry that expires
+echo '{"tool":"memory","args":{"action":"save","key":"backfill.lesson","value":"retry failed rows after the second pass","kind":"lesson","scope":"task","scope_id":"backfill-2026-06","expires_in":"14d"}}' | jinn
+
+# Remove expired, unpinned memories and old idempotency rows
+echo '{"tool":"memory","args":{"action":"gc"}}' | jinn
+```
 
 ## Language Server Queries
 

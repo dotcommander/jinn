@@ -3,6 +3,7 @@ package jinn
 import (
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -96,5 +97,38 @@ func TestReadBinary_NotRegressed(t *testing.T) {
 	}
 	if !strings.HasPrefix(result.Text, "[binary file:") {
 		t.Errorf("expected [binary file: prefix, got: %s", result.Text)
+	}
+}
+
+func TestReadImage_TooLargeRejectedBeforeReadAll(t *testing.T) {
+	t.Parallel()
+	e, dir := testEngine(t)
+	path := filepath.Join(dir, "huge.png")
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatalf("create large png: %v", err)
+	}
+	if _, writeErr := f.Write(minimalPNG); writeErr != nil {
+		_ = f.Close()
+		t.Fatalf("write png header: %v", writeErr)
+	}
+	if truncateErr := f.Truncate(maxFileSize + 1); truncateErr != nil {
+		_ = f.Close()
+		t.Fatalf("truncate large png: %v", truncateErr)
+	}
+	if closeErr := f.Close(); closeErr != nil {
+		t.Fatalf("close large png: %v", closeErr)
+	}
+
+	_, err = e.readFile(args("path", "huge.png"))
+	if err == nil {
+		t.Fatal("expected file too large error")
+	}
+	var sErr *ErrWithSuggestion
+	if !errors.As(err, &sErr) {
+		t.Fatalf("expected ErrWithSuggestion, got %T: %v", err, err)
+	}
+	if sErr.Code != ErrCodeFileTooLarge {
+		t.Fatalf("expected file_too_large code, got %q (%v)", sErr.Code, err)
 	}
 }

@@ -69,11 +69,16 @@ func (e *Engine) checkPathForRead(p string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	// Spill-file exemption: read-only access to jinn's own tmp output.
-	// Both sides are cleaned to prevent symlink/.. escape.
+	// Spill-file exemption: read-only access to jinn's own registered tmp
+	// output. Prefix alone is not proof: callers can create temp symlinks or
+	// regular files with this name. The registry binds a path to the inode that
+	// run_shell created before read_file accepts it outside the workdir.
 	if filepath.Dir(resolved) == filepath.Clean(os.TempDir()) &&
 		strings.HasPrefix(filepath.Base(resolved), spillFilePrefix) {
-		return resolved, nil
+		if isRegisteredShellSpill(resolved) {
+			return resolved, nil
+		}
+		return "", unregisteredSpillErr(p)
 	}
 	return e.checkPath(p)
 }

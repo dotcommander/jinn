@@ -47,15 +47,15 @@ func truncateOutputSmart(raw string, limit int, ext string) truncateResult {
 	count := len(lines)
 	result.TotalLines = count
 
+	// Non-C-syntax files fall back to head truncation.
+	if !isCSyntaxExt(ext) {
+		return truncateOutputHead(raw, limit)
+	}
+
 	if count <= limit {
 		result.Content = raw
 		result.ShownLines = count
 		return result
-	}
-
-	// Non-C-syntax files fall back to head truncation.
-	if !isCSyntaxExt(ext) {
-		return truncateOutputHead(raw, limit)
 	}
 
 	cutLine, ok := braceCutLine(lines, limit)

@@ -255,6 +255,9 @@ func (e *Engine) lspQueryWithLauncher(ctx context.Context, args map[string]inter
 	if timeout <= 0 {
 		timeout = 10
 	}
+	if launcher == nil && req.action == "diagnostics" && req.ext == ".go" {
+		return e.goDiagnostics(ctx, req, timeout)
+	}
 
 	type result struct {
 		out string

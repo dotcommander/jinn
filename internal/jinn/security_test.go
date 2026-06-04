@@ -107,6 +107,94 @@ func TestCheckPath_SymlinkEscapeWithMissingChild(t *testing.T) {
 	}
 }
 
+func TestCheckPathForRead_BlocksUnregisteredTempSpillSymlink(t *testing.T) {
+	t.Parallel()
+	e, dir := testEngine(t)
+	target := filepath.Join(dir, ".git", "config")
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, []byte("secret"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(os.TempDir(), spillFilePrefix+"security-test-symlink.log")
+	_ = os.Remove(link)
+	t.Cleanup(func() { _ = os.Remove(link) })
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := e.checkPathForRead(link)
+	if err == nil {
+		t.Fatal("expected unregistered temp spill symlink to be blocked")
+	}
+	if !strings.Contains(err.Error(), "unregistered shell spill file") {
+		t.Fatalf("expected unregistered spill error, got: %v", err)
+	}
+}
+
+func TestCheckPathForRead_BlocksUnregisteredTempSpillFile(t *testing.T) {
+	t.Parallel()
+	e, _ := testEngine(t)
+	path := filepath.Join(os.TempDir(), spillFilePrefix+"security-test-regular.log")
+	_ = os.Remove(path)
+	t.Cleanup(func() { _ = os.Remove(path) })
+	if err := os.WriteFile(path, []byte("not a jinn spill"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := e.checkPathForRead(path)
+	if err == nil {
+		t.Fatal("expected unregistered temp spill file to be blocked")
+	}
+	if !strings.Contains(err.Error(), "unregistered shell spill file") {
+		t.Fatalf("expected unregistered spill error, got: %v", err)
+	}
+}
+
+func TestCheckPathForRead_AllowsRegisteredTempSpill(t *testing.T) {
+	t.Setenv("JINN_CONFIG_DIR", t.TempDir())
+	e, _ := testEngine(t)
+	capture := newShellOutputCapture(4)
+	if _, err := capture.Write([]byte("hello world")); err != nil {
+		t.Fatal(err)
+	}
+	spill := capture.EnsureSpill()
+	t.Cleanup(func() { _ = os.Remove(spill) })
+	capture.Close()
+
+	got, err := e.checkPathForRead(spill)
+	if err != nil {
+		t.Fatalf("expected registered spill to be readable: %v", err)
+	}
+	if got != filepath.Clean(spill) {
+		t.Fatalf("checkPathForRead returned %q, want %q", got, filepath.Clean(spill))
+	}
+}
+
+func TestCheckPathForRead_BlocksReplacedRegisteredTempSpill(t *testing.T) {
+	t.Setenv("JINN_CONFIG_DIR", t.TempDir())
+	e, _ := testEngine(t)
+	capture := newShellOutputCapture(4)
+	if _, err := capture.Write([]byte("hello world")); err != nil {
+		t.Fatal(err)
+	}
+	spill := capture.EnsureSpill()
+	capture.Close()
+	t.Cleanup(func() { _ = os.Remove(spill) })
+
+	if err := os.WriteFile(spill, []byte("replacement"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := e.checkPathForRead(spill)
+	if err == nil {
+		t.Fatal("expected replaced registered spill to be blocked")
+	}
+	if !strings.Contains(err.Error(), "unregistered shell spill file") {
+		t.Fatalf("expected unregistered spill error, got: %v", err)
+	}
+}
+
 // Change 6: resolvePath expands leading ~ to home directory.
 func TestResolvePath_ExpandsTilde(t *testing.T) {
 	t.Parallel()

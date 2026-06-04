@@ -27,6 +27,7 @@ type lspLauncher func(ctx context.Context, argv []string) (lspProc, error)
 func realLauncher(ctx context.Context, argv []string) (lspProc, error) {
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...) //nolint:gosec // G204: argv built internally from a fixed server table
 	cmd.Stderr = io.Discard                               // suppress LSP server stderr noise
+	cmd.Env = subprocessEnv(nil)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return lspProc{}, fmt.Errorf("lsp stdin pipe: %w", err)

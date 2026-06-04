@@ -3,8 +3,11 @@ package jinn
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -305,6 +308,69 @@ func TestRunShell_KillsBackgroundProcesses(t *testing.T) {
 	}
 }
 
+func TestRunShell_CancelKillsBackgroundProcesses(t *testing.T) {
+	t.Parallel()
+	e, _ := testEngine(t)
+	pidFile := t.TempDir() + "/child.pid"
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	type runResult struct {
+		result string
+		err    error
+	}
+	done := make(chan runResult, 1)
+	go func() {
+		result, _, err := e.runShell(ctx, args(
+			"command", fmt.Sprintf("sleep 30 & echo $! > %q; wait", pidFile),
+			"timeout", float64(30),
+		))
+		done <- runResult{result: result, err: err}
+	}()
+
+	pid := waitForPIDFile(t, pidFile)
+	cancel()
+
+	select {
+	case r := <-done:
+		if r.err == nil {
+			t.Fatal("expected cancellation error")
+		}
+		var sErr *ErrWithSuggestion
+		if !errors.As(r.err, &sErr) {
+			t.Fatalf("expected ErrWithSuggestion, got %T: %v", r.err, r.err)
+		}
+		if sErr.Code != ErrCodeCanceled {
+			t.Fatalf("expected Code=%q, got %q", ErrCodeCanceled, sErr.Code)
+		}
+		if r.result != "" {
+			t.Fatalf("expected empty result on cancellation error, got: %s", r.result)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("runShell did not return promptly after cancellation")
+	}
+
+	waitForProcessExit(t, pid)
+}
+
+func TestSubprocessEnv_AllowsExplicitOverlayWithoutSecrets(t *testing.T) {
+	t.Setenv("PATH", "/bin")
+	t.Setenv("OPENAI_API_KEY", "secret")
+	t.Setenv("GITHUB_TOKEN", "secret")
+
+	env := subprocessEnv(map[string]string{"GOCACHE": "/tmp/jinn-cache"})
+	joined := strings.Join(env, "\n")
+	if !strings.Contains(joined, "PATH=/bin") {
+		t.Fatalf("expected PATH allowlist entry, got %#v", env)
+	}
+	if !strings.Contains(joined, "GOCACHE=/tmp/jinn-cache") {
+		t.Fatalf("expected explicit GOCACHE overlay, got %#v", env)
+	}
+	if strings.Contains(joined, "OPENAI_API_KEY") || strings.Contains(joined, "GITHUB_TOKEN") {
+		t.Fatalf("secret-bearing env leaked into subprocess env: %#v", env)
+	}
+}
+
 func TestRunShell_SmallOutput_NoTruncation(t *testing.T) {
 	t.Parallel()
 	e, _ := testEngine(t)
@@ -331,4 +397,38 @@ func shellSpillPath(result string) string {
 		rest = rest[:end]
 	}
 	return strings.TrimSpace(rest)
+}
+
+func waitForPIDFile(t *testing.T, path string) int {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		data, err := os.ReadFile(path)
+		if err == nil {
+			pid, convErr := strconv.Atoi(strings.TrimSpace(string(data)))
+			if convErr == nil && pid > 0 {
+				return pid
+			}
+			lastErr = convErr
+		} else {
+			lastErr = err
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("child pid file was not written: %v", lastErr)
+	return 0
+}
+
+func waitForProcessExit(t *testing.T, pid int) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if err := syscall.Kill(pid, 0); err != nil {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	_ = syscall.Kill(pid, syscall.SIGKILL)
+	t.Fatalf("background child process %d survived run_shell cancellation", pid)
 }

@@ -56,7 +56,7 @@ echo '{"tool":"run_shell","args":{"command":"go test ./..."}}' | jinn
 
 ## Toolset
 
-`jinn` exposes 20 specialized tools for coding agents:
+`jinn` exposes 18 specialized tools for coding agents:
 
 | Tool | Description |
 | :--- | :--- |

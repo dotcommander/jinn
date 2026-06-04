@@ -16,6 +16,9 @@ func (e *Engine) readFile(args map[string]interface{}) (*ToolResult, error) {
 	if err != nil {
 		return nil, wrapBlockedReadErr(err)
 	}
+	if _, statErr := statForRead(resolved); statErr != nil {
+		return nil, statErr
+	}
 
 	// Image detection: single source of truth in detectIsImage.
 	detected, isImage := detectIsImage(resolved, resolved)

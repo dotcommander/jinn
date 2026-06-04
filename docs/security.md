@@ -137,7 +137,7 @@ jinn caps output to prevent unbounded memory growth:
 | Read truncation | Configurable strategy (`head`/`tail`/`middle`/`none`/`smart`); default keeps first N lines. `smart` uses brace-depth heuristic for C-syntax files, cutting at block boundaries. Truncation hint appended: `[Showing lines X-Y of Z. Use start_line=N to continue. Remainder saved to <path>.]` | `read_file` |
 | File size limit | 50 MB | `read_file` |
 
-When shell output exceeds 1 MB, it spills to a temp file (`jinn-shell-*.log`). jinn keeps the tail of the output so you always see the exit code and final lines.
+When shell output exceeds 1 MB, it spills to a temp file (`jinn-shell-*.log`). jinn keeps the tail of the output so you always see the exit code and final lines. Follow-up `read_file` access to a spill file is allowed only for spill paths that Jinn registered when `run_shell` created them; same-prefix temp files, symlinks, and replaced spill files are blocked.
 
 The repeated line collapse replaces 3 or more identical consecutive output lines with `[... N identical lines collapsed ...]`. This keeps build output and log dumps readable without losing the line count.
 

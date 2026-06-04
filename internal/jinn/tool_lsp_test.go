@@ -37,6 +37,29 @@ func writeLSPFile(t *testing.T, dir, name string) {
 	writeTestFile(t, dir, name, "package main\n")
 }
 
+func TestLSPDiagnosticsGoUsesGoplsCheckForValidFile(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("gopls"); err != nil {
+		t.Skip("gopls not installed")
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	e := New(wd, "dev")
+
+	out, err := e.lspQuery(context.Background(), lspArgs(
+		"action", "diagnostics",
+		"path", "tool_shell.go",
+	))
+	if err != nil {
+		t.Fatalf("unexpected diagnostics error: %v", err)
+	}
+	if out != "no diagnostics found" {
+		t.Fatalf("expected no diagnostics for compiling Go file, got:\n%s", out)
+	}
+}
+
 // --- happy-path tests (all parallel — they inject a launcher, no global state) ---
 
 func TestLSP_InitializeIncludesWorkspaceFolder(t *testing.T) {

@@ -96,6 +96,7 @@ func (c *shellOutputCapture) EnsureSpill() string {
 	c.ensureSpillLocked()
 	if c.spill != nil {
 		_ = c.spill.Sync()
+		registerShellSpill(c.spillPath)
 	}
 	return c.spillPath
 }

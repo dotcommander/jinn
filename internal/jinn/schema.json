@@ -244,15 +244,15 @@
     "type": "function",
     "function": {
       "name": "memory",
-      "description": "Persistent key/value memory for the agent, scoped per project. Save, recall, list, or forget keys across sessions. Stored in a SQLite DB at ~/.config/jinn/memory.db (or $JINN_CONFIG_DIR/jinn/memory.db). Keys are isolated per project (auto-detected from the nearest .git ancestor); use scope=\"global\" for a cross-project bucket.",
+      "description": "Persistent key/value memory for the agent. Save, recall, list, forget, or garbage-collect keys across sessions. Stored in a SQLite DB at ~/.config/jinn/memory.db (or $JINN_CONFIG_DIR/jinn/memory.db). Keys are isolated by scope: omit scope for the auto-detected project, or use scope=\"global\", \"project\", \"task\", or \"agent\".",
       "parameters": {
         "type": "object",
         "properties": {
           "action": {"type": "string", "enum": ["save", "recall", "list", "forget", "gc"], "description": "Operation to perform. gc sweeps expired entries (optionally restricted to scope)."},
           "key":    {"type": "string", "description": "Key name (1-128 chars, [a-zA-Z0-9_.-]). Required for save, recall, forget."},
           "value":  {"type": "string", "description": "Value to store (max 16 KiB). Required for save."},
-          "scope":          {"type": "string",  "description": "Optional. Omit for the current project (auto-detected). Use \"global\" for the cross-project bucket, or an absolute path for an explicit project. Junk (relative) values are rejected."},
-          "scope_id":       {"type": "string",  "description": "Optional. Sub-bucket identifier within scope, isolating keys further. Pairs with scope; omit for the default bucket."},
+          "scope":          {"type": "string",  "description": "Optional. Omit for the current project (auto-detected). Use \"global\", \"project\", \"task\", or \"agent\"."},
+          "scope_id":       {"type": "string",  "description": "Optional project path, task ID, or agent name. Required for task and agent scopes; invalid with global."},
           "kind":           {"type": "string",  "enum": ["fact", "directive", "lesson"], "description": "save only. Memory category: \"fact\" (default), \"directive\", or \"lesson\"."},
           "pin":            {"type": "boolean", "description": "save only. When true, pins the entry so gc never sweeps it. Default false."},
           "expires_in":     {"type": "string",  "description": "save only. Relative TTL after which the entry expires, e.g. \"12h\", \"30d\", \"2w\". Omit for no expiry."},
@@ -267,7 +267,7 @@
     "type": "function",
     "function": {
       "name": "undo",
-      "description": "Manage file mutation history. Snapshots are captured automatically before write_file, edit_file, and multi_edit operations. Use list to browse, preview to diff, restore to revert.",
+      "description": "Manage file mutation history. Snapshots are captured automatically before write_file, edit_file, multi_edit, and apply_patch operations. Use list to browse, preview to diff, restore to revert.",
       "parameters": {
         "type": "object",
         "properties": {

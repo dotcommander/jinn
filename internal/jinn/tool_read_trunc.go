@@ -67,23 +67,15 @@ func buildReadHint(startLine, endLine, total, nextLine int, tmpPath string) stri
 
 // writeTruncationRemainder writes the lines from startLine onward to a temp file
 // and returns the temp file path. Lines are written with line numbers. The temp
-// file is placed in the XDG cache dir to avoid polluting the project tree.
-// Errors are swallowed — the temp file is best-effort; the agent always has the
-// start_line continuation fallback.
+// file is registered with the spill registry so a follow-up read_file can read
+// the exact path without widening the sandbox. Errors are swallowed by callers:
+// the agent always has the start_line continuation fallback.
 func writeTruncationRemainder(srcPath string, startLine int, remainderLines []string) (path string, err error) {
 	if len(remainderLines) == 0 {
 		return "", nil
 	}
 	base := filepath.Base(srcPath)
-	userCache, _ := os.UserCacheDir()
-	if userCache == "" {
-		userCache = os.TempDir()
-	}
-	cacheDir := filepath.Join(userCache, "jinn", "truncated")
-	if err = os.MkdirAll(cacheDir, 0o750); err != nil {
-		return "", err
-	}
-	tmpFile, err := os.CreateTemp(cacheDir, base+".*.txt")
+	tmpFile, err := os.CreateTemp("", spillFilePrefix+base+".*.txt")
 	if err != nil {
 		return "", err
 	}
@@ -103,5 +95,6 @@ func writeTruncationRemainder(srcPath string, startLine int, remainderLines []st
 		}
 	}
 
+	registerShellSpill(tmpFile.Name())
 	return tmpFile.Name(), nil
 }
