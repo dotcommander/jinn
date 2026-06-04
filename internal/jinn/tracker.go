@@ -26,7 +26,7 @@ func (ft *fileTracker) checkStale(resolved string) error {
 	}
 	info, err := os.Stat(resolved)
 	if err != nil {
-		return nil // file removed since read — allow write to recreate
+		return nil //nolint:nilerr // file removed since read — allow write to recreate
 	}
 	if info.ModTime().After(readTime) {
 		return fmt.Errorf("file modified since last read (mtime changed). Re-read before writing: %s",

@@ -86,7 +86,7 @@ func (c *lspClient) references(absPath string, line, char int, workDir string) (
 	}
 	var locs []lspLocation
 	if err := json.Unmarshal(raw, &locs); err != nil || len(locs) == 0 {
-		return "no references found", nil
+		return "no references found", nil //nolint:nilerr // malformed/empty LSP reply means no references, not a tool error
 	}
 	const refCap = 100
 	truncated := len(locs) > refCap

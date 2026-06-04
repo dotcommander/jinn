@@ -75,7 +75,7 @@ func (e *Engine) listDir(args map[string]interface{}) (string, error) {
 	var all []string
 	err = filepath.WalkDir(resolved, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
-			return nil
+			return nil //nolint:nilerr // skip unreadable entry, continue walking the rest of the tree
 		}
 		// Skip hidden entries (starting with '.')
 		if d.Name() != "." && strings.HasPrefix(d.Name(), ".") {
