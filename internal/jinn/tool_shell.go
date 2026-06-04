@@ -34,7 +34,7 @@ import (
 //	    like XDG_CONFIG_HOME, XDG_CACHE_HOME, XDG_DATA_HOME, XDG_RUNTIME_DIR are
 //	    omitted because they are not required for correctness and can leak host
 //	    paths / state into the subprocess. Omit unless a concrete need is proven.
-var shellAllowList = []string{"PATH", "HOME", "LANG", "LC_ALL", "TERM", "USER", "LOGNAME", "TMPDIR", "TZ", "SHELL"}
+var shellAllowList = []string{"PATH", "HOME", "LANG", "LC_ALL", "TERM", "USER", "LOGNAME", "TMPDIR", "TZ", "SHELL"} // tunable: config candidate
 
 // shellEnv returns a minimal environment for shell commands, preventing
 // accidental leakage of host secrets (API keys, credentials) to the subprocess.

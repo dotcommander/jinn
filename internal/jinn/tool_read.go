@@ -11,9 +11,9 @@ import (
 
 const (
 	maxFileSize      = 50 << 20  // 50 MB absolute file limit
-	readDefaultLines = 2000      // default window when no start_line/end_line given
-	readMaxBytes     = 50 * 1024 // 50 KB output cap per chunk
-	readTruncLines   = 2000      // head+tail collapse threshold
+	readDefaultLines = 2000      // default read window when no start_line/end_line given; distinct knob from readTruncLines (window size, not collapse point). tunable: config candidate
+	readMaxBytes     = 50 * 1024 // 50 KB output cap per chunk. tunable: config candidate
+	readTruncLines   = 2000      // head+tail collapse threshold; distinct knob from readDefaultLines (when to collapse output, not how much to read)
 )
 
 // readContentResult holds the output of readFileContent.

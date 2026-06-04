@@ -13,7 +13,7 @@ import (
 
 var grepExcludeDirs = []string{".git", "node_modules", "vendor", "__pycache__", ".cache", "dist", "build"}
 
-const searchDefaultMax = 500
+const searchDefaultMax = 500 // tunable: config candidate
 
 // searchTimeout caps each rg/grep invocation so a slow filesystem scan cannot
 // hang an agent tool call indefinitely. Declared as var so tests may shorten
