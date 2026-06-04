@@ -1,8 +1,10 @@
 package jinn
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 )
@@ -228,5 +230,60 @@ func TestAtomicWriteBytes_CreatesAndVerifies(t *testing.T) {
 	}
 	if info.Mode().Perm() != 0o600 {
 		t.Errorf("perm: got %o, want 600", info.Mode().Perm())
+	}
+}
+
+// TestRecordSnapshot_SameWorkdirTwoEngines verifies the histMu invariant: two
+// distinct *Engine instances rooted at the SAME workDir share one on-disk store
+// and serialize through the package-level mutex without corrupting index.json.
+// Must NOT call t.Parallel() — t.Setenv is serial only.
+func TestRecordSnapshot_SameWorkdirTwoEngines(t *testing.T) {
+	e1, workDir := historyEngine(t)
+	// Second engine over the SAME workDir → same historyDir() → same on-disk store.
+	e2 := New(workDir, "dev")
+	if e1.historyDir() != e2.historyDir() {
+		t.Fatalf("same workDir must map to same history dir: %q vs %q", e1.historyDir(), e2.historyDir())
+	}
+
+	const perEngine = 20
+	absPath := filepath.Join(workDir, "shared.txt")
+
+	var wg sync.WaitGroup
+	for _, e := range []*Engine{e1, e2} {
+		wg.Add(1)
+		go func(e *Engine) {
+			defer wg.Done()
+			for i := 0; i < perEngine; i++ {
+				// Distinct content per write so blobs differ; ignore best-effort errors.
+				_ = e.recordSnapshot(absPath, "shared.txt", "write_file", []byte(fmt.Sprintf("v%d", i)))
+			}
+		}(e)
+	}
+	wg.Wait()
+
+	histMu.Lock()
+	hf, err := e1.loadHistory()
+	histMu.Unlock()
+	if err != nil {
+		t.Fatalf("loadHistory: %v", err)
+	}
+
+	// Total writes = 2*perEngine = 40, which exceeds historyMaxEntries (50)? No — 40 < 50,
+	// so every recorded entry should survive; the store must be a single coherent index.
+	want := 2 * perEngine
+	if len(hf.Entries) != want {
+		t.Fatalf("entries: got %d, want %d (two engines must share one uncorrupted index)", len(hf.Entries), want)
+	}
+	// Every surviving entry must be well-formed (op set, monotonic-ish timestamps present).
+	for i, ent := range hf.Entries {
+		if ent.Op != "write_file" {
+			t.Errorf("entry %d op: got %q, want write_file", i, ent.Op)
+		}
+		if ent.ID == "" {
+			t.Errorf("entry %d has empty ID — index corruption", i)
+		}
+		if ent.Timestamp.IsZero() {
+			t.Errorf("entry %d has zero timestamp — index corruption", i)
+		}
 	}
 }

@@ -36,7 +36,22 @@ type historyFile struct {
 	Entries []historyEntry `json:"entries"` // oldest first
 }
 
-var histMu sync.Mutex // single global mutex — all engines share the same on-disk store
+// histMu guards all reads and writes to the on-disk history store.
+//
+// It is intentionally a single package-level mutex, NOT a per-Engine field
+// (cf. Engine.memMu) and NOT a per-workDir keyed map. The lock domain is the
+// on-disk store, which is keyed by a hash of workDir in historyDir(). Because
+// New(workDir, ...) may be called more than once in a single process for the
+// SAME workDir, two distinct *Engine instances can map to the identical
+// index.json + blobs/ directory. A per-Engine mutex would let those siblings
+// race on the shared index and corrupt it. The package-level mutex is the
+// cross-engine invariant that prevents that.
+//
+// The coarse granularity (engines on *different* workDirs also serialize) is
+// an accepted trade-off: history ops are infrequent, best-effort, and
+// non-blocking (every failure path returns nil), so contention is negligible
+// and not worth the leak/eviction complexity of a per-workDir mutex map.
+var histMu sync.Mutex
 
 // historyDir returns the per-workdir history directory.
 func (e *Engine) historyDir() string {
