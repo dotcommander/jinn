@@ -6,6 +6,8 @@ import (
 	"fmt"
 )
 
+// db.go holds shared low-level database helpers used across the memory and idempotency stores.
+
 // transact runs fn inside a DB transaction, rolling back on error.
 func transact(ctx context.Context, db *sql.DB, fn func(*sql.Tx) error) error {
 	tx, err := db.BeginTx(ctx, nil)

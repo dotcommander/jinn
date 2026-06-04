@@ -6,7 +6,7 @@ import (
 	"fmt"
 )
 
-// ensureSchema creates the unified continuity + memory schema. Idempotent via
+// ensureSchema creates the memory + idempotency schema. Idempotent via
 // CREATE TABLE/INDEX IF NOT EXISTS. DDL is the authoritative greenfield schema;
 // no migration framework (Beta, no back-compat).
 func ensureSchema(ctx context.Context, db *sql.DB) error {

@@ -12,6 +12,21 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// Memory is a memory-table row.
+type Memory struct {
+	ID        int64     `json:"id"`
+	Scope     string    `json:"scope"`
+	ScopeID   string    `json:"scope_id,omitempty"`
+	Key       string    `json:"key"`
+	Value     string    `json:"value"`
+	ValueType string    `json:"value_type"`
+	Kind      string    `json:"kind"`
+	Pinned    bool      `json:"pinned"`
+	ExpiresAt time.Time `json:"expires_at,omitempty"`
+	UpdatedAt time.Time `json:"updated_at"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 // memoryDBPath resolves the SQLite memory database path. Checks JINN_CONFIG_DIR
 // first for test isolation; falls back to os.UserConfigDir().
 func memoryDBPath() (string, error) {

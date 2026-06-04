@@ -10,9 +10,9 @@ import (
 	"time"
 )
 
-// TestContinuitySchema_TablesExist boots the engine, triggers lazy DB open,
+// TestMemorySchema_TablesExist boots the engine, triggers lazy DB open,
 // and asserts all 7 unified schema tables are present.
-func TestContinuitySchema_TablesExist(t *testing.T) {
+func TestMemorySchema_TablesExist(t *testing.T) {
 	t.Setenv("JINN_CONFIG_DIR", t.TempDir())
 	e := New(t.TempDir(), "dev")
 	t.Cleanup(func() { _ = e.Close() })
@@ -59,9 +59,9 @@ func TestContinuitySchema_TablesExist(t *testing.T) {
 	}
 }
 
-// TestContinuitySchema_NewMemoryColumns verifies the new memory table columns
+// TestMemorySchema_NewMemoryColumns verifies the new memory table columns
 // (scope_id, value_type, kind, pinned, expires_at) exist and are queryable.
-func TestContinuitySchema_NewMemoryColumns(t *testing.T) {
+func TestMemorySchema_NewMemoryColumns(t *testing.T) {
 	t.Setenv("JINN_CONFIG_DIR", t.TempDir())
 	e := New(t.TempDir(), "dev")
 	t.Cleanup(func() { _ = e.Close() })
