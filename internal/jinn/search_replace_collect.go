@@ -254,7 +254,7 @@ func globToRegex(glob string) string {
 			b.WriteString("[^/]*")
 		case '?':
 			b.WriteString("[^/]")
-		case '.', '(', ')', '|', '+', '^', '$', '[', ']', '{', '}':
+		case '\\', '.', '(', ')', '|', '+', '^', '$', '[', ']', '{', '}':
 			b.WriteByte('\\')
 			b.WriteRune(ch)
 		default:
