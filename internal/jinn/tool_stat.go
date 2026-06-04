@@ -56,11 +56,12 @@ func (e *Engine) statFile(args map[string]interface{}) (string, error) {
 			sample = sample[:8192]
 		}
 		// BOM detection
-		if bytes.HasPrefix(sample, []byte{0xEF, 0xBB, 0xBF}) {
+		switch {
+		case bytes.HasPrefix(sample, []byte{0xEF, 0xBB, 0xBF}):
 			bom = "utf-8-bom"
-		} else if bytes.HasPrefix(sample, []byte{0xFF, 0xFE}) {
+		case bytes.HasPrefix(sample, []byte{0xFF, 0xFE}):
 			bom = "utf-16-le"
-		} else if bytes.HasPrefix(sample, []byte{0xFE, 0xFF}) {
+		case bytes.HasPrefix(sample, []byte{0xFE, 0xFF}):
 			bom = "utf-16-be"
 		}
 		// Line ending detection

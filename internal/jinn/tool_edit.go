@@ -125,11 +125,12 @@ func applyEdit(content []byte, oldText, newText string, fuzzyIndent bool) (strin
 		// Re-indent: strip minIndent from each line, prepend leading whitespace.
 		if minIndent >= 0 {
 			for i, l := range newLines {
-				if strings.TrimSpace(l) == "" {
+				switch {
+				case strings.TrimSpace(l) == "":
 					newLines[i] = ""
-				} else if len(l) >= minIndent {
+				case len(l) >= minIndent:
 					newLines[i] = leading + l[minIndent:]
-				} else {
+				default:
 					newLines[i] = leading + l
 				}
 			}

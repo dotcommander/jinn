@@ -137,12 +137,13 @@ func parseUpdateChunk(lines []string, startIdx, lastContentLine int, allowMissin
 	var ctx string
 	first := strings.TrimRight(lines[i], " \t")
 
-	if first == "@@" {
+	switch {
+	case first == "@@":
 		i++
-	} else if strings.HasPrefix(first, "@@ ") {
+	case strings.HasPrefix(first, "@@ "):
 		ctx = first[3:]
 		i++
-	} else if !allowMissingContext {
+	case !allowMissingContext:
 		return updateChunk{}, i, fmt.Errorf("expected update hunk to start with @@ context marker, got: %q", lines[i])
 	}
 
