@@ -28,9 +28,6 @@ func (e *Engine) searchFiles(args map[string]interface{}) (string, error) {
 }
 
 func (e *Engine) searchFilesContext(ctx context.Context, args map[string]interface{}) (string, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	pattern, _ := args["pattern"].(string)
 	searchPath := "."
 	if p, ok := args["path"].(string); ok && p != "" {

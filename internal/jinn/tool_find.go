@@ -31,9 +31,6 @@ type findFilesResult struct {
 }
 
 func (e *Engine) findFiles(ctx context.Context, args map[string]interface{}) (string, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	pattern, _ := args["pattern"].(string)
 	if pattern == "" {
 		return "", &ErrWithSuggestion{

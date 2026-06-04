@@ -21,9 +21,6 @@ type grepResult struct {
 // Returns a grepResult and an error. error is non-nil only on cancellation or
 // timeout; non-zero grep/rg exits are returned via grepResult.exitCode.
 func (e *Engine) runGrep(ctx context.Context, cmd string, cmdArgs []string) (grepResult, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	outBuf := &boundedWriter{limit: 1 << 20}
 	errBuf := &boundedWriter{limit: 1 << 20}
 	cmdCtx, cancel := context.WithTimeout(ctx, searchTimeout)
