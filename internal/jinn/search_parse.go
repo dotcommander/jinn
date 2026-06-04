@@ -33,97 +33,154 @@ type searchFilesResult struct {
 // total count returned via the second value continues — callers rely
 // on accurate TotalCount even when truncated).
 func parseSearchResults(raw string, cap int) (results []searchResult, total int) {
-	var pending *searchResult // current match awaiting context lines
-	// Buffer context-before lines that appear before their match.
-	var preContext []string
-	var preContextFile string
-
+	acc := searchAccumulator{cap: cap}
 	for _, line := range strings.Split(raw, "\n") {
-		if line == "" || line == "--" {
-			if pending != nil {
-				results = append(results, *pending)
-				pending = nil
-			}
-			preContext = nil
-			preContextFile = ""
-			continue
+		switch {
+		case line == "" || line == "--":
+			acc.flush()
+		case acc.addMatchLine(line):
+			// handled inside addMatchLine
+		default:
+			acc.addContextLine(line)
 		}
+	}
+	acc.flush()
+	if acc.results == nil {
+		acc.results = []searchResult{}
+	}
+	return acc.results, acc.total
+}
 
-		// Try match-line (':' separator): file:line[:col]:text
-		// The rest after the first ':' must start with a digit.
-		if idx := strings.Index(line, ":"); idx > 0 {
-			rest := line[idx+1:]
-			if lineNum, after, ok := splitLeadingInt(rest); ok {
-				file := line[:idx]
-				if pending != nil {
-					results = append(results, *pending)
-					pending = nil
-				}
-				total++
-				r := searchResult{File: file, Line: lineNum}
-				// after is ":text" or ":col:text".
-				// Strip leading ':' then check for optional column number.
-				if len(after) > 0 && after[0] == ':' {
-					after = after[1:]
-					if col, text, ok := splitLeadingInt(after); ok && len(text) > 0 && text[0] == ':' {
-						r.Column = col
-						r.Text = truncateLine(text[1:], 200)
-					} else {
-						r.Text = truncateLine(after, 200)
-					}
-				} else {
-					r.Text = truncateLine(after, 200)
-				}
-				// Attach buffered context-before lines in top-to-bottom order.
-				if preContext != nil && preContextFile == file {
-					var sb strings.Builder
-					for _, s := range preContext {
-						sb.WriteString(s)
-						sb.WriteByte('\n')
-					}
-					r.ContextBefore = sb.String()
-				}
-				preContext = nil
-				preContextFile = ""
-				// Only append when under cap (cap<=0 means unlimited).
-				if cap <= 0 || len(results) < cap {
-					pending = &r
-				}
-				continue
-			}
-		}
+// searchAccumulator holds the streaming state while parseSearchResults walks
+// output lines: the in-progress match awaiting context and any context-before
+// lines buffered before their match arrives.
+type searchAccumulator struct {
+	cap            int
+	results        []searchResult
+	total          int
+	pending        *searchResult // current match awaiting context lines
+	preContext     []string      // context-before lines seen before their match
+	preContextFile string
+}
 
-		// Context line ('-' separator): file-NUM-text
-		if idx := strings.Index(line, "-"); idx > 0 {
-			rest := line[idx+1:]
-			lineNum, text, ok := splitLeadingInt(rest)
-			if !ok {
-				continue
-			}
-			// Strip the leading '-' separator between linenum and text.
-			text = strings.TrimPrefix(text, "-")
-			file := line[:idx]
-			if pending != nil && pending.File == file {
-				if lineNum < pending.Line {
-					// rare: interleaved context line for earlier line number.
-					pending.ContextBefore = text + "\n" + pending.ContextBefore
-				} else {
-					pending.ContextAfter += text + "\n"
-				}
-			} else {
-				// No pending match yet — buffer as context-before.
-				preContext = append(preContext, text)
-				preContextFile = file
-			}
+// flush commits any pending match and drops buffered context-before lines.
+// Called on group separators / blank lines and at end of input.
+func (a *searchAccumulator) flush() {
+	if a.pending != nil {
+		a.results = append(a.results, *a.pending)
+		a.pending = nil
+	}
+	a.preContext = nil
+	a.preContextFile = ""
+}
+
+// addMatchLine parses line as a match line and, on success, records it as the
+// new pending match (subject to the cap). Returns false when line is not a
+// match line so the caller can try context-line parsing.
+func (a *searchAccumulator) addMatchLine(line string) bool {
+	r, ok := parseMatchLine(line)
+	if !ok {
+		return false
+	}
+	if a.pending != nil {
+		a.results = append(a.results, *a.pending)
+		a.pending = nil
+	}
+	a.total++
+	// Attach buffered context-before lines in top-to-bottom order.
+	if a.preContext != nil && a.preContextFile == r.File {
+		r.ContextBefore = joinLines(a.preContext)
+	}
+	a.preContext = nil
+	a.preContextFile = ""
+	// Only retain as pending when under cap (cap<=0 means unlimited).
+	if a.cap <= 0 || len(a.results) < a.cap {
+		rr := r
+		a.pending = &rr
+	}
+	return true
+}
+
+// addContextLine parses line as a context line ("file-NUM-text") and attaches
+// it to the pending match, or buffers it as context-before when no match for
+// the same file is pending yet. Non-context lines are ignored.
+func (a *searchAccumulator) addContextLine(line string) {
+	c, ok := parseContextLine(line)
+	if !ok {
+		return
+	}
+	if a.pending != nil && a.pending.File == c.file {
+		if c.lineNum < a.pending.Line {
+			// rare: interleaved context line for earlier line number.
+			a.pending.ContextBefore = c.text + "\n" + a.pending.ContextBefore
+		} else {
+			a.pending.ContextAfter += c.text + "\n"
+		}
+		return
+	}
+	// No pending match yet — buffer as context-before.
+	a.preContext = append(a.preContext, c.text)
+	a.preContextFile = c.file
+}
+
+// parseMatchLine parses a match line "file:line:text" or "file:line:col:text".
+// The substring after the first ':' must begin with the line number; otherwise
+// the line is not a match line and ok is false.
+func parseMatchLine(line string) (searchResult, bool) {
+	idx := strings.Index(line, ":")
+	if idx <= 0 {
+		return searchResult{}, false
+	}
+	lineNum, after, ok := splitLeadingInt(line[idx+1:])
+	if !ok {
+		return searchResult{}, false
+	}
+	r := searchResult{File: line[:idx], Line: lineNum}
+	// after is ":text" or ":col:text". Strip leading ':' then check for an
+	// optional column number (col followed by another ':').
+	if len(after) > 0 && after[0] == ':' {
+		after = after[1:]
+		if col, text, ok := splitLeadingInt(after); ok && len(text) > 0 && text[0] == ':' {
+			r.Column = col
+			r.Text = truncateLine(text[1:], 200)
+			return r, true
 		}
 	}
-	if pending != nil {
-		results = append(results, *pending)
+	r.Text = truncateLine(after, 200)
+	return r, true
+}
+
+// contextLine is a parsed "file-NUM-text" context line.
+type contextLine struct {
+	file    string
+	text    string
+	lineNum int
+}
+
+// parseContextLine parses a context line "file-NUM-text" emitted with the '-'
+// separator. ok is false when the segment after the first '-' lacks a line number.
+func parseContextLine(line string) (contextLine, bool) {
+	idx := strings.Index(line, "-")
+	if idx <= 0 {
+		return contextLine{}, false
 	}
-	if results == nil {
-		results = []searchResult{}
+	lineNum, text, ok := splitLeadingInt(line[idx+1:])
+	if !ok {
+		return contextLine{}, false
 	}
-	return results, total
+	// Strip the leading '-' separator between linenum and text.
+	text = strings.TrimPrefix(text, "-")
+	return contextLine{file: line[:idx], text: text, lineNum: lineNum}, true
+}
+
+// joinLines concatenates lines with a trailing newline after each.
+func joinLines(lines []string) string {
+	var sb strings.Builder
+	for _, s := range lines {
+		sb.WriteString(s)
+		sb.WriteByte('\n')
+	}
+	return sb.String()
 }
 
 // splitLeadingInt splits "42:rest" into (42, "rest", true).

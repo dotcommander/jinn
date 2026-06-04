@@ -60,78 +60,102 @@ func (e *Engine) detectProject(args map[string]any) (string, error) {
 
 	result := projectInfo{}
 	for _, p := range probes {
-		if _, statErr := os.Stat(filepath.Join(resolved, p.configFile)); statErr == nil {
-			result.ConfigFiles = append(result.ConfigFiles, p.configFile)
-			if p.language != "" {
-				result.Languages = append(result.Languages, p.language)
-			}
-			if result.BuildTool == "" && p.buildTool != "" {
-				result.BuildTool = p.buildTool
-				result.TestCommand = p.testCmd
-				result.Linter = p.linter
-			}
-		}
+		probeMarker(resolved, p, &result)
 	}
 
-	// Secondary signals
-	if _, statErr := os.Stat(filepath.Join(resolved, "tsconfig.json")); statErr == nil {
-		for i, lang := range result.Languages {
-			if lang == "JavaScript" {
-				result.Languages[i] = "TypeScript"
-			}
-		}
-	}
-
-	// Read package.json scripts if present
-	pkgPath := filepath.Join(resolved, "package.json")
-	if data, rErr := os.ReadFile(pkgPath); rErr == nil {
-		var pkg struct {
-			Scripts map[string]string `json:"scripts"`
-		}
-		if json.Unmarshal(data, &pkg) == nil {
-			if _, ok := pkg.Scripts["test"]; ok {
-				result.TestCommand = "npm run test"
-			}
-			if _, ok := pkg.Scripts["lint"]; ok {
-				result.Linter = "npm run lint"
-			}
-			if _, ok := pkg.Scripts["build"]; ok {
-				result.BuildTool = "npm run build"
-			}
-		}
-	}
-
-	// Prefer committed just recipes when present; they are usually the repo's
-	// strongest source of truth for build/test commands.
-	if name, data, ok := readJustfile(resolved); ok {
-		if !slices.Contains(result.ConfigFiles, name) {
-			result.ConfigFiles = append(result.ConfigFiles, name)
-		}
-		recipes := parseJustRecipes(string(data))
-		if recipes["build"] {
-			result.BuildTool = "just build"
-		}
-		if recipes["test"] {
-			result.TestCommand = "just test"
-		}
-		if recipes["lint"] {
-			result.Linter = "just lint"
-		}
-	}
-
-	// Framework detection: accept either config extension, add once.
-	for _, cfg := range []string{"next.config.js", "next.config.mjs"} {
-		if _, statErr := os.Stat(filepath.Join(resolved, cfg)); statErr == nil {
-			result.Frameworks = append(result.Frameworks, "Next.js")
-			break
-		}
-	}
+	applyTypeScriptSignal(resolved, &result)
+	applyPackageScripts(resolved, &result)
+	applyJustfile(resolved, &result)
+	applyFrameworks(resolved, &result)
 
 	out, err := json.Marshal(result)
 	if err != nil {
 		return "", err
 	}
 	return string(out), nil
+}
+
+// probeMarker records a marker file's signals when it exists in dir.
+func probeMarker(dir string, p probe, result *projectInfo) {
+	if _, statErr := os.Stat(filepath.Join(dir, p.configFile)); statErr != nil {
+		return
+	}
+	result.ConfigFiles = append(result.ConfigFiles, p.configFile)
+	if p.language != "" {
+		result.Languages = append(result.Languages, p.language)
+	}
+	if result.BuildTool == "" && p.buildTool != "" {
+		result.BuildTool = p.buildTool
+		result.TestCommand = p.testCmd
+		result.Linter = p.linter
+	}
+}
+
+// applyTypeScriptSignal upgrades JavaScript to TypeScript when tsconfig.json exists.
+func applyTypeScriptSignal(dir string, result *projectInfo) {
+	if _, statErr := os.Stat(filepath.Join(dir, "tsconfig.json")); statErr != nil {
+		return
+	}
+	for i, lang := range result.Languages {
+		if lang == "JavaScript" {
+			result.Languages[i] = "TypeScript"
+		}
+	}
+}
+
+// applyPackageScripts reads package.json scripts and overrides build/test/lint.
+func applyPackageScripts(dir string, result *projectInfo) {
+	data, rErr := os.ReadFile(filepath.Join(dir, "package.json"))
+	if rErr != nil {
+		return
+	}
+	var pkg struct {
+		Scripts map[string]string `json:"scripts"`
+	}
+	if json.Unmarshal(data, &pkg) != nil {
+		return
+	}
+	if _, ok := pkg.Scripts["test"]; ok {
+		result.TestCommand = "npm run test"
+	}
+	if _, ok := pkg.Scripts["lint"]; ok {
+		result.Linter = "npm run lint"
+	}
+	if _, ok := pkg.Scripts["build"]; ok {
+		result.BuildTool = "npm run build"
+	}
+}
+
+// applyJustfile prefers committed just recipes as the repo's source of truth
+// for build/test commands.
+func applyJustfile(dir string, result *projectInfo) {
+	name, data, ok := readJustfile(dir)
+	if !ok {
+		return
+	}
+	if !slices.Contains(result.ConfigFiles, name) {
+		result.ConfigFiles = append(result.ConfigFiles, name)
+	}
+	recipes := parseJustRecipes(string(data))
+	if recipes["build"] {
+		result.BuildTool = "just build"
+	}
+	if recipes["test"] {
+		result.TestCommand = "just test"
+	}
+	if recipes["lint"] {
+		result.Linter = "just lint"
+	}
+}
+
+// applyFrameworks detects frameworks by config files; accepts either extension, adds once.
+func applyFrameworks(dir string, result *projectInfo) {
+	for _, cfg := range []string{"next.config.js", "next.config.mjs"} {
+		if _, statErr := os.Stat(filepath.Join(dir, cfg)); statErr == nil {
+			result.Frameworks = append(result.Frameworks, "Next.js")
+			break
+		}
+	}
 }
 
 func readJustfile(dir string) (string, []byte, bool) {

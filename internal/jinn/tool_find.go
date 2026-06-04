@@ -66,21 +66,8 @@ func (e *Engine) findFiles(ctx context.Context, args map[string]interface{}) (st
 		raw, backend, runErr = e.findViaFind(ctx, pattern, searchPath)
 	}
 
-	// Distinguish timeout from no-match: a stalled walk must not look like
-	// an empty result set to the caller.
-	if errors.Is(runErr, context.DeadlineExceeded) {
-		return "", &ErrWithSuggestion{
-			Err:        fmt.Errorf("find_files timed out after %s (backend=%s)", findTimeout, backend),
-			Suggestion: "narrow 'path' or use a more specific glob to reduce walk scope",
-			Code:       ErrCodeTimeout,
-		}
-	}
-	if errors.Is(runErr, context.Canceled) {
-		return "", &ErrWithSuggestion{
-			Err:        fmt.Errorf("find_files canceled (backend=%s)", backend),
-			Suggestion: "retry the file search if cancellation was unintended",
-			Code:       ErrCodeCanceled,
-		}
+	if runErr := classifyFindRunErr(runErr, backend); runErr != nil {
+		return "", runErr
 	}
 
 	raw = strings.TrimSpace(raw)
@@ -90,32 +77,7 @@ func (e *Engine) findFiles(ctx context.Context, args map[string]interface{}) (st
 		return string(b), nil
 	}
 
-	// Relativize paths: fd outputs paths relative to searchPath,
-	// find outputs paths starting with searchPath.
-	// Normalize everything to clean relative paths from workDir.
-	lines := strings.Split(raw, "\n")
-	relativized := make([]string, 0, len(lines))
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		// Handle paths like "./foo.go" — strip leading "./"
-		for strings.HasPrefix(line, "./") {
-			line = line[2:]
-		}
-		// If path is absolute or relative to cwd, make relative to workDir.
-		if filepath.IsAbs(line) {
-			if rel, err := filepath.Rel(e.workDir, line); err == nil {
-				line = rel
-			}
-		}
-		line = filepath.ToSlash(line)
-		if line == "" {
-			continue
-		}
-		relativized = append(relativized, line)
-	}
+	relativized := e.relativizeFindOutput(raw)
 
 	total := len(relativized)
 	truncated := total > limit
@@ -143,6 +105,58 @@ func (e *Engine) findFiles(ctx context.Context, args map[string]interface{}) (st
 		)
 	}
 	return result, nil
+}
+
+// classifyFindRunErr maps a backend run error to a caller-facing error.
+// Distinguishes timeout/cancellation from no-match: a stalled walk must not
+// look like an empty result set. Returns nil when there is nothing to report.
+func classifyFindRunErr(runErr error, backend string) error {
+	switch {
+	case errors.Is(runErr, context.DeadlineExceeded):
+		return &ErrWithSuggestion{
+			Err:        fmt.Errorf("find_files timed out after %s (backend=%s)", findTimeout, backend),
+			Suggestion: "narrow 'path' or use a more specific glob to reduce walk scope",
+			Code:       ErrCodeTimeout,
+		}
+	case errors.Is(runErr, context.Canceled):
+		return &ErrWithSuggestion{
+			Err:        fmt.Errorf("find_files canceled (backend=%s)", backend),
+			Suggestion: "retry the file search if cancellation was unintended",
+			Code:       ErrCodeCanceled,
+		}
+	default:
+		return nil
+	}
+}
+
+// relativizeFindOutput normalizes raw backend output into clean relative paths
+// from workDir. fd outputs paths relative to searchPath; find outputs paths
+// starting with searchPath.
+func (e *Engine) relativizeFindOutput(raw string) []string {
+	lines := strings.Split(raw, "\n")
+	relativized := make([]string, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		// Handle paths like "./foo.go" — strip leading "./"
+		for strings.HasPrefix(line, "./") {
+			line = line[2:]
+		}
+		// If path is absolute or relative to cwd, make relative to workDir.
+		if filepath.IsAbs(line) {
+			if rel, err := filepath.Rel(e.workDir, line); err == nil {
+				line = rel
+			}
+		}
+		line = filepath.ToSlash(line)
+		if line == "" {
+			continue
+		}
+		relativized = append(relativized, line)
+	}
+	return relativized
 }
 
 // findViaFd uses fd (fast, respects .gitignore) to find files.
