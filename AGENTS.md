@@ -89,7 +89,7 @@ Follow the suggestion before retrying. Common suggestions map to these error pat
 | file not found | `list_dir` on parent directory |
 | not a regular file | Use `list_dir` to enumerate; target a file not a directory |
 | file too large | Use `start_line`/`end_line` windowing or `search_files` |
-| binary file detected | Use `checksum_tree` for integrity checks |
+| binary file detected | Use `stat_file` for metadata |
 | window past end | Reduce `start_line` to within file length |
 | blocked (sensitive path) | Request the specific value from the user instead |
 | outside working directory | Supply a path inside the workdir |

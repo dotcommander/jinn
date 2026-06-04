@@ -83,19 +83,6 @@ func TestDispatch_FindFiles(t *testing.T) {
 	}
 }
 
-func TestDispatch_ChecksumTree(t *testing.T) {
-	t.Parallel()
-	e, dir := testEngine(t)
-	writeTestFile(t, dir, "a.txt", "data")
-	result, _, err := e.Dispatch(context.Background(), "checksum_tree", args())
-	if err != nil {
-		t.Fatalf("checksum_tree: %v", err)
-	}
-	if result.Text == "" {
-		t.Error("checksum_tree result should not be empty")
-	}
-}
-
 func TestDispatch_DetectProject(t *testing.T) {
 	t.Parallel()
 	e, dir := testEngine(t)

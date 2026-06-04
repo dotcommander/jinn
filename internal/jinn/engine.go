@@ -131,9 +131,6 @@ func (e *Engine) Dispatch(ctx context.Context, tool string, args map[string]inte
 			return nil, nil, fmt.Errorf("lean schema: %w", err)
 		}
 		return textResult(string(capsJSON) + "\n\n" + schema), nil, nil
-	case "checksum_tree":
-		result, err := e.checksumTree(args)
-		return textResult(result), nil, err
 	case "detect_project":
 		result, err := e.detectProject(args)
 		return textResult(result), nil, err

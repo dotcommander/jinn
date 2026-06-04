@@ -110,7 +110,7 @@ func (e *Engine) readFileContent(resolved string, args map[string]interface{}) (
 	if strings.ContainsRune(string(check), 0) {
 		return nil, &ErrWithSuggestion{
 			Err:        fmt.Errorf("binary file: %d bytes", len(data)),
-			Suggestion: "use checksum_tree for integrity or skip content reads",
+			Suggestion: "use stat_file for metadata or skip content reads",
 			Code:       ErrCodeBinaryFile,
 		}
 	}

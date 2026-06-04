@@ -14,8 +14,8 @@ func TestSchema_Valid(t *testing.T) {
 	if err := json.Unmarshal([]byte(Schema), &tools); err != nil {
 		t.Fatalf("Schema is not valid JSON: %v", err)
 	}
-	if len(tools) != 25 {
-		t.Fatalf("expected 25 tools, got %d", len(tools))
+	if len(tools) != 24 {
+		t.Fatalf("expected 24 tools, got %d", len(tools))
 	}
 }
 
@@ -32,8 +32,8 @@ func TestCompactSchema_Valid(t *testing.T) {
 	if err := json.Unmarshal([]byte(schema), &tools); err != nil {
 		t.Fatalf("compact schema is not valid JSON: %v", err)
 	}
-	if len(tools) != 25 {
-		t.Fatalf("expected 25 tools, got %d", len(tools))
+	if len(tools) != 24 {
+		t.Fatalf("expected 24 tools, got %d", len(tools))
 	}
 }
 
@@ -53,8 +53,8 @@ func TestLeanSchema_Valid(t *testing.T) {
 	if err := json.Unmarshal([]byte(schema), &tools); err != nil {
 		t.Fatalf("lean schema is not valid JSON: %v", err)
 	}
-	if len(tools) != 25 {
-		t.Fatalf("expected 25 tools, got %d", len(tools))
+	if len(tools) != 24 {
+		t.Fatalf("expected 24 tools, got %d", len(tools))
 	}
 }
 

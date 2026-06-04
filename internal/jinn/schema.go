@@ -29,7 +29,6 @@ var toolFeatures = map[string][]string{
 	"write_file":     {"dry_run"},
 	"stat_file":      {"encoding_detection", "line_ending_detection", "bom_detection"},
 	"list_dir":       {"changed_since"},
-	"checksum_tree":  {"baseline_diff"},
 	"diff_files":     {"context_lines"},
 	"search_replace": {"regex", "capture_groups", "multi_file", "glob_patterns", "replace_all", "dry_run", "case_insensitive", "multiline"},
 	"lsp_query":      {"definition", "references", "hover", "symbols", "diagnostics", "rename", "symbol_column", "context_lines"},

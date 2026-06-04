@@ -151,7 +151,7 @@ The repeated line collapse replaces 3 or more identical consecutive output lines
 |-----------|---------|
 | `.pdf` | Returns `ok: false` with `suggestion: "convert the PDF to text first (pdftotext, pdftk, or a cloud OCR service) and read the text file"` |
 | Images | Detected by content (via `http.DetectContentType` on the first 512 bytes) rather than extension alone. A PNG renamed without an extension is still identified and handled correctly. Returns a base64-encoded content block with the detected MIME type. SVG files (which read as `text/xml` by the content detector) fall back to extension-based detection and return `image/svg+xml`. |
-| Binary (null byte in first 512 bytes) | Returns `[binary file: N bytes — use checksum_tree for integrity or skip content reads]` (success, not error) |
+| Binary (null byte in first 512 bytes) | Returns `[binary file: N bytes — use stat_file for metadata or skip content reads]` (success, not error) |
 
 ## Memory Persistence
 

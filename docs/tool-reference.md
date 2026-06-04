@@ -56,7 +56,7 @@ echo '{"tool":"read_file","args":{"path":"main.go"}}' | jinn
 - Empty text files are valid and return an empty result.
 - **PDF files** return `ok: false` with `suggestion: "convert the PDF to text first (pdftotext, pdftk, or a cloud OCR service) and read the text file"`. Content is never returned.
 - **Image files** are detected by content rather than extension — a `.png` renamed without an extension is still identified as an image. Detected images return a base64-encoded content block with the correct MIME type (`image/png`, `image/jpeg`, etc.). SVG files return `image/svg+xml`. Pass the result directly to a vision model.
-- Binary files (null byte in first 512 bytes) return `[binary file: N bytes — use checksum_tree for integrity or skip content reads]` as a success result (not an error).
+- Binary files (null byte in first 512 bytes) return `[binary file: N bytes — use stat_file for metadata or skip content reads]` as a success result (not an error).
 - When output is truncated, jinn appends: `[Showing lines X-Y of Z. Use start_line=N to continue. Remainder saved to <path>.]`. The remainder file lets you pick up exactly where the window ended.
 - jinn records the file's modification time for TOCTOU protection. See [Security: TOCTOU](security.md#toctou-protection).
 
@@ -496,34 +496,6 @@ echo '{"tool":"list_tools","args":{}}' | jinn
 | `include_schema` | boolean | No | `false` | Also include the compact OpenAI tool schema for runtime discovery |
 
 Use `include_schema: true` only when the calling agent needs to discover schemas at runtime.
-
-### checksum_tree
-
-Compute SHA-256 hashes for every file in a tree.
-
-```bash
-echo '{"tool":"checksum_tree","args":{"path":"."}}' | jinn
-```
-
-**Parameters:**
-
-| Name | Type | Required | Default | Description |
-|------|------|----------|---------|-------------|
-| `path` | string | No | `"."` | Root directory to walk |
-| `pattern` | string | No | -- | Glob filter on filenames (e.g., `"*.go"`) |
-
-**Notes:**
-
-- Returns a JSON object mapping relative paths to hex digests: `{"relative/path": "sha256hex", ...}`.
-- Skips: `.git`, `node_modules`, `vendor`, `__pycache__`, `.cache`, `dist`, `build`.
-- Skips symlinks and non-regular files.
-- Individual files larger than 50 MB are skipped.
-
-Filter to Go files only:
-
-```bash
-echo '{"tool":"checksum_tree","args":{"path":".","pattern":"*.go"}}' | jinn
-```
 
 ### detect_project
 

@@ -250,8 +250,8 @@ func TestReadFile_Suggestion_Binary(t *testing.T) {
 	if !strings.Contains(result.Text, "binary file") {
 		t.Errorf("expected 'binary file' in result, got: %s", result.Text)
 	}
-	if !strings.Contains(result.Text, "checksum_tree") {
-		t.Errorf("expected 'checksum_tree' hint in binary result, got: %s", result.Text)
+	if !strings.Contains(result.Text, "stat_file") {
+		t.Errorf("expected 'stat_file' hint in binary result, got: %s", result.Text)
 	}
 }
 
