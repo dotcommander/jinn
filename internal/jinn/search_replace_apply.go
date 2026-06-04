@@ -48,12 +48,6 @@ func srApplyOne(content []byte, re *regexp.Regexp, replacement string) (searchRe
 	return searchReplaceApplyResult{updated: bom + restoreLineEndings(result, ending), matches: matches, replaced: replaced, firstLine: firstLine, lastLine: lastLine}, nil
 }
 
-// processSRCandidate validates and applies the replacement to one candidate.
-// Exactly one of the returns is meaningful:
-//   - (*searchReplacePending, nil, _): a change ready to apply
-//   - (nil, *searchReplaceFileResult, _): a per-file error or no-op to report
-//   - (nil, nil, _): no match in this file — skip silently
-//
 // srReadCandidate stats and reads a candidate file, returning its content. If the
 // file cannot be read or should be skipped (missing, too large, binary), it returns
 // nil content and a populated searchReplaceFileResult describing the skip reason.
@@ -103,6 +97,11 @@ func (e *Engine) srReadCandidate(c searchReplaceCandidate) ([]byte, *searchRepla
 	return data, nil
 }
 
+// processSRCandidate validates and applies the replacement to one candidate.
+// Exactly one of the returns is meaningful:
+//   - (*searchReplacePending, nil, _): a change ready to apply
+//   - (nil, *searchReplaceFileResult, _): a per-file error or no-op to report
+//   - (nil, nil, _): no match in this file — skip silently
 func (e *Engine) processSRCandidate(c searchReplaceCandidate, re *regexp.Regexp, replacement string) (*searchReplacePending, *searchReplaceFileResult, bool) {
 	// Stale check.
 	if err := e.tracker.checkStale(c.resolved); err != nil {
