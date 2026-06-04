@@ -92,3 +92,45 @@ func deriveUpdatedContent(filePath string, content string, chunks []updateChunk)
 	result := applyReplacements(lines, replacements)
 	return bom + strings.Join(result, "\n"), nil
 }
+
+// seekSequence finds the index in lines where pattern matches sequentially,
+// starting from start. If eof is true, searches from the end of the file.
+// Uses progressive fuzzy matching: exact → rstrip → trim → Unicode-normalized.
+func seekSequence(lines, pattern []string, start int, eof bool) int {
+	if len(pattern) == 0 {
+		return start
+	}
+	if len(pattern) > len(lines) {
+		return -1
+	}
+
+	searchStart := start
+	if eof && len(lines) >= len(pattern) {
+		searchStart = len(lines) - len(pattern)
+	}
+	searchEnd := len(lines) - len(pattern)
+
+	type eqFunc func(a, b string) bool
+	passes := []eqFunc{
+		func(a, b string) bool { return a == b },
+		func(a, b string) bool { return strings.TrimRight(a, " \t") == strings.TrimRight(b, " \t") },
+		func(a, b string) bool { return strings.TrimSpace(a) == strings.TrimSpace(b) },
+		func(a, b string) bool { return normalizeForFuzzyMatch(a) == normalizeForFuzzyMatch(b) },
+	}
+
+	for _, eq := range passes {
+		for i := searchStart; i <= searchEnd; i++ {
+			ok := true
+			for p := 0; p < len(pattern); p++ {
+				if !eq(lines[i+p], pattern[p]) {
+					ok = false
+					break
+				}
+			}
+			if ok {
+				return i
+			}
+		}
+	}
+	return -1
+}
