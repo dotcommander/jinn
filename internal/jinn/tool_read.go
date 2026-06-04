@@ -148,7 +148,7 @@ func (e *Engine) readFileContent(resolved string, args map[string]interface{}) (
 
 	// Explicit tail= arg (number of lines from end) takes precedence.
 	startLine := 1
-	endLine := startLine + readDefaultLines - 1
+	var endLine int
 	if tail > 0 {
 		startLine = total - tail + 1
 		if startLine < 1 {
