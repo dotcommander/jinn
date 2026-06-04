@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 )
 
@@ -36,19 +35,8 @@ func (e *Engine) readFile(args map[string]interface{}) (*ToolResult, error) {
 		}
 	}
 
-	ext := strings.ToLower(filepath.Ext(resolved))
-
-	// Image detection: peek at the first 512 bytes for MIME sniffing.
-	// SVG returns text/xml from DetectContentType, so check extension too.
-	isImage := false
-	var detected string
-	if data, ferr := peekFileBytes(resolved, 512); ferr == nil && len(data) > 0 {
-		detected, isImage = imageMIME(data)
-	}
-	if !isImage && ext == ".svg" {
-		isImage = true
-	}
-
+	// Image detection: single source of truth in detectIsImage.
+	detected, isImage := detectIsImage(resolved, resolved)
 	if isImage {
 		return e.readImageFile(resolved, path, detected, args)
 	}

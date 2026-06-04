@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 )
 
 // multiReadMaxFiles is the maximum number of files accepted in a single call.
@@ -134,12 +133,8 @@ func (e *Engine) readMultiReadEntry(path string, entry map[string]interface{}) (
 		return "", nil, &mrErr
 	}
 
-	// Image/binary detection via MIME sniff (same pattern as readFile).
-	isImage := sniffIsImage(resolved)
-	if !isImage && strings.HasSuffix(strings.ToLower(path), ".svg") {
-		isImage = true
-	}
-	if isImage {
+	// Image/binary detection via the shared detector (same as readFile).
+	if _, isImage := detectIsImage(resolved, path); isImage {
 		return "", nil, &multiReadError{
 			Error:      fmt.Sprintf("image file: %s", path),
 			Suggestion: "use read_file for single-image viewing",
@@ -183,14 +178,4 @@ func errToMultiRead(err error) multiReadError {
 	return multiReadError{
 		Error: err.Error(),
 	}
-}
-
-// sniffIsImage peeks at the first 512 bytes of a file to detect image MIME type.
-func sniffIsImage(path string) bool {
-	data, err := peekFileBytes(path, 512)
-	if err != nil || len(data) == 0 {
-		return false
-	}
-	_, ok := imageMIME(data)
-	return ok
 }

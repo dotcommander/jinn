@@ -3,6 +3,7 @@ package jinn
 import (
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -29,6 +30,20 @@ func peekFileBytes(path string, n int) ([]byte, error) {
 	buf := make([]byte, n)
 	read, _ := f.Read(buf)
 	return buf[:read], nil
+}
+
+// detectIsImage is the single source of truth for "is this path an image, and
+// what MIME". It peeks the first 512 bytes for MIME sniffing via imageMIME, and
+// falls back to the .svg extension (DetectContentType reports text/xml for SVG).
+// On the .svg fallback path the returned mime is empty; callers default it.
+func detectIsImage(resolved, path string) (mime string, isImage bool) {
+	if data, err := peekFileBytes(resolved, 512); err == nil && len(data) > 0 {
+		mime, isImage = imageMIME(data)
+	}
+	if !isImage && strings.EqualFold(filepath.Ext(path), ".svg") {
+		isImage = true
+	}
+	return mime, isImage
 }
 
 // imageMIME runs http.DetectContentType, strips any "; charset=..." suffix,
