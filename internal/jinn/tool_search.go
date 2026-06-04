@@ -111,16 +111,16 @@ func (e *Engine) searchFilesContext(ctx context.Context, args map[string]interfa
 		}
 		cmdArgs = append(cmdArgs, "-c", "--", pattern, searchPath)
 
-		stdout, stderr, exitCode, runErr := e.runGrep(ctx, cmd, cmdArgs)
+		gr, runErr := e.runGrep(ctx, cmd, cmdArgs)
 		if runErr != nil {
 			return "", runErr
 		}
 		// Exit code 1 with empty stdout = no matches (not an error).
 		// Any other non-zero exit with empty stdout is an error.
-		if stdout == "" && exitCode != 0 && exitCode != 1 {
-			return "", fmt.Errorf("search failed: %s", stderr)
+		if gr.stdout == "" && gr.exitCode != 0 && gr.exitCode != 1 {
+			return "", fmt.Errorf("search failed: %s", gr.stderr)
 		}
-		return parseFilenamesOutput(stdout, maxMatches), nil
+		return parseFilenamesOutput(gr.stdout, maxMatches), nil
 	}
 
 	// Pass -m as a safety cap so grep stops scanning extremely large files
@@ -137,10 +137,11 @@ func (e *Engine) searchFilesContext(ctx context.Context, args map[string]interfa
 	}
 	cmdArgs = append(cmdArgs, "--", pattern, searchPath)
 
-	raw, errOutput, _, runErr := e.runGrep(ctx, cmd, cmdArgs)
+	gr, runErr := e.runGrep(ctx, cmd, cmdArgs)
 	if runErr != nil {
 		return "", runErr
 	}
+	raw := gr.stdout
 	if maxResults > 0 {
 		raw += fmt.Sprintf("\n(results capped at max_results=%d, more matches may exist)", maxResults)
 	}
@@ -151,7 +152,7 @@ func (e *Engine) searchFilesContext(ctx context.Context, args map[string]interfa
 
 		resp := searchFilesResult{Results: shown, Truncated: truncated, TotalCount: total}
 		if total == 0 {
-			resp.ZeroMatchReason = e.classifyZeroMatch(pattern, searchPath, literal, errOutput)
+			resp.ZeroMatchReason = e.classifyZeroMatch(pattern, searchPath, literal)
 		}
 		jsonBytes, err := json.Marshal(resp)
 		if err != nil {
@@ -183,16 +184,23 @@ func (e *Engine) searchFilesContext(ctx context.Context, args map[string]interfa
 		result += "\n" + formatTruncatedHint(maxMatches, count, "'max_matches' or a more specific pattern")
 	}
 	if count == 0 {
-		reason := e.classifyZeroMatch(pattern, searchPath, literal, errOutput)
+		reason := e.classifyZeroMatch(pattern, searchPath, literal)
 		result += "[no matches: " + reason + "]"
 	}
 	return result, nil
 }
 
+// grepResult holds the bounded output of a single grep/rg run.
+type grepResult struct {
+	stdout   string
+	stderr   string
+	exitCode int
+}
+
 // runGrep runs cmd with cmdArgs under searchTimeout, bounded to 1 MB of output.
-// Returns (stdout, stderr, exitCode, error). error is non-nil only on
-// cancellation or timeout; non-zero grep/rg exits are returned via exitCode.
-func (e *Engine) runGrep(ctx context.Context, cmd string, cmdArgs []string) (stdout, stderr string, exitCode int, err error) {
+// Returns a grepResult and an error. error is non-nil only on cancellation or
+// timeout; non-zero grep/rg exits are returned via grepResult.exitCode.
+func (e *Engine) runGrep(ctx context.Context, cmd string, cmdArgs []string) (grepResult, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -200,7 +208,7 @@ func (e *Engine) runGrep(ctx context.Context, cmd string, cmdArgs []string) (std
 	errBuf := &boundedWriter{limit: 1 << 20}
 	cmdCtx, cancel := context.WithTimeout(ctx, searchTimeout)
 	defer cancel()
-	c := exec.CommandContext(cmdCtx, cmd, cmdArgs...)
+	c := exec.CommandContext(cmdCtx, cmd, cmdArgs...) //nolint:gosec // G204: cmd is the resolved rg/grep binary; cmdArgs built internally
 	c.Dir = e.workDir
 	c.Stdout = outBuf
 	c.Stderr = errBuf
@@ -209,13 +217,13 @@ func (e *Engine) runGrep(ctx context.Context, cmd string, cmdArgs []string) (std
 
 	switch {
 	case errors.Is(cmdCtx.Err(), context.Canceled):
-		return "", "", 0, &ErrWithSuggestion{
+		return grepResult{}, &ErrWithSuggestion{
 			Err:        errors.New("search_files canceled"),
 			Suggestion: "retry the search if cancellation was unintended",
 			Code:       ErrCodeCanceled,
 		}
 	case errors.Is(cmdCtx.Err(), context.DeadlineExceeded):
-		return "", "", 0, &ErrWithSuggestion{
+		return grepResult{}, &ErrWithSuggestion{
 			Err:        fmt.Errorf("search_files timed out after %s", searchTimeout),
 			Suggestion: "narrow 'path' or add a more specific 'include' glob to reduce scan scope",
 			Code:       ErrCodeTimeout,
@@ -227,6 +235,7 @@ func (e *Engine) runGrep(ctx context.Context, cmd string, cmdArgs []string) (std
 		out += "\n[output truncated at 1 MB]"
 	}
 
+	var exitCode int
 	if runErr != nil {
 		var exitErr *exec.ExitError
 		if errors.As(runErr, &exitErr) {
@@ -235,11 +244,11 @@ func (e *Engine) runGrep(ctx context.Context, cmd string, cmdArgs []string) (std
 			exitCode = 1
 		}
 	}
-	return out, errBuf.String(), exitCode, nil
+	return grepResult{stdout: out, stderr: errBuf.String(), exitCode: exitCode}, nil
 }
 
 // classifyZeroMatch determines why a grep returned zero results.
-func (e *Engine) classifyZeroMatch(pattern, searchPath string, literal bool, stderr string) string {
+func (e *Engine) classifyZeroMatch(pattern, searchPath string, literal bool) string {
 	if !literal {
 		if _, err := regexp.Compile(pattern); err != nil {
 			return "invalid_regex"

@@ -195,10 +195,10 @@ func generateDiff(old, newText, label string, contextLines int) DiffResult {
 
 // unifiedDiff generates a unified diff with a "[dry-run]" prefix for tool previews.
 // Returns "[dry-run] no changes" if old and new are identical.
-func unifiedDiff(old, newText, label string, contextLines int) string {
+func unifiedDiff(old, newText, label string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "[dry-run] diff for %s:\n", label)
-	ok, _ := renderDiffBody(old, newText, contextLines, &b)
+	ok, _ := renderDiffBody(old, newText, 3, &b)
 	if !ok {
 		return "[dry-run] no changes"
 	}
@@ -208,7 +208,7 @@ func unifiedDiff(old, newText, label string, contextLines int) string {
 // formatEditPreview shows a before/after preview for an edit_file dry run.
 // It uses unified diff on the full file content to show the change with context.
 func formatEditPreview(old, updated, path string, fuzzy bool) string {
-	diff := unifiedDiff(old, updated, path, 3)
+	diff := unifiedDiff(old, updated, path)
 	if fuzzy {
 		diff += " (fuzzy match)\n"
 	}

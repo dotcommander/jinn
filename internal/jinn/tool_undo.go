@@ -107,7 +107,7 @@ func (e *Engine) undoPreview(args map[string]interface{}) (string, error) {
 		current = []byte{}
 	}
 
-	diff := unifiedDiff(string(current), string(preContent), ent.DisplayPath, 3)
+	diff := unifiedDiff(string(current), string(preContent), ent.DisplayPath)
 	return fmt.Sprintf("[undo preview] id=%s op=%s ts=%s\n%s",
 		ent.ID, ent.Op, ent.Timestamp.Format(time.RFC3339), diff), nil
 }

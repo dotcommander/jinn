@@ -7,7 +7,7 @@ import (
 
 func TestUnifiedDiff_Identical(t *testing.T) {
 	t.Parallel()
-	result := unifiedDiff("same\ncontent\n", "same\ncontent\n", "test.txt", 3)
+	result := unifiedDiff("same\ncontent\n", "same\ncontent\n", "test.txt")
 	if result != "[dry-run] no changes" {
 		t.Errorf("identical files should return no changes, got: %s", result)
 	}
@@ -17,7 +17,7 @@ func TestUnifiedDiff_Additions(t *testing.T) {
 	t.Parallel()
 	old := "line1\nline2\n"
 	newText := "line1\nline2\nline3\nline4\n"
-	result := unifiedDiff(old, newText, "test.txt", 3)
+	result := unifiedDiff(old, newText, "test.txt")
 	if result == "[dry-run] no changes" {
 		t.Fatal("expected diff for additions")
 	}
@@ -36,7 +36,7 @@ func TestUnifiedDiff_Deletions(t *testing.T) {
 	t.Parallel()
 	old := "line1\nline2\nline3\n"
 	newText := "line1\n"
-	result := unifiedDiff(old, newText, "test.txt", 3)
+	result := unifiedDiff(old, newText, "test.txt")
 	if result == "[dry-run] no changes" {
 		t.Fatal("expected diff for deletions")
 	}
@@ -52,7 +52,7 @@ func TestUnifiedDiff_Replacement(t *testing.T) {
 	t.Parallel()
 	old := "header\nold content\nfooter\n"
 	newText := "header\nnew content\nfooter\n"
-	result := unifiedDiff(old, newText, "test.txt", 3)
+	result := unifiedDiff(old, newText, "test.txt")
 	if result == "[dry-run] no changes" {
 		t.Fatal("expected diff for replacement")
 	}
@@ -68,7 +68,7 @@ func TestUnifiedDiff_HunkHeader(t *testing.T) {
 	t.Parallel()
 	old := "a\nb\nc\n"
 	newText := "a\nX\nc\n"
-	result := unifiedDiff(old, newText, "test.txt", 3)
+	result := unifiedDiff(old, newText, "test.txt")
 	if !strings.Contains(result, "@@") {
 		t.Errorf("diff should contain hunk header (@@), got:\n%s", result)
 	}

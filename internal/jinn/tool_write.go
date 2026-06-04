@@ -62,7 +62,7 @@ func (e *Engine) writeFile(args map[string]interface{}) (string, error) {
 		if rErr != nil {
 			return fmt.Sprintf("[dry-run] would create %s (%d bytes)", path, len(content)), nil //nolint:nilerr // unreadable/missing file in dry-run means the write would create it
 		}
-		return unifiedDiff(string(existing), content, path, 3), nil
+		return unifiedDiff(string(existing), content, path), nil
 	}
 
 	// Capture pre-state for undo history (nil = file did not exist).

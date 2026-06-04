@@ -183,35 +183,45 @@ func looksLikeGlob(pattern string) bool {
 	return strings.ContainsAny(pattern, "*?[")
 }
 
+// srApplyResult holds the outcome of applying a regex replacement to one file.
+// updated is empty when there were no matches or the replacement was a no-op.
+type srApplyResult struct {
+	updated   string
+	matches   int
+	replaced  int
+	firstLine int
+	lastLine  int
+}
+
 // srApplyOne applies the regex replacement to a single file.
 // Returns the result content (if changed), match count, replace count, and any error.
-func srApplyOne(content []byte, re *regexp.Regexp, replacement string, multiline bool) (updated string, matches int, replaced int, firstLine int, lastLine int, err error) {
+func srApplyOne(content []byte, re *regexp.Regexp, replacement string) (srApplyResult, error) { //nolint:unparam // error return reserved: caller handles per-file failures uniformly via applyErr branch
 	raw, bom := stripBom(string(content))
 	ending := detectLineEnding(raw)
 	raw = normalizeToLF(raw)
 
 	// Count matches before replacing.
 	locs := re.FindAllStringIndex(raw, -1)
-	matches = len(locs)
+	matches := len(locs)
 	if matches == 0 {
-		return "", 0, 0, 0, 0, nil
+		return srApplyResult{}, nil
 	}
 
 	// Apply replacement.
 	result := re.ReplaceAllString(raw, replacement)
-	replaced = matches // ReplaceAll replaces every match
+	replaced := matches // ReplaceAll replaces every match
 
 	if result == raw {
-		return "", matches, 0, 0, 0, nil // replacement was a no-op
+		return srApplyResult{matches: matches}, nil // replacement was a no-op
 	}
 
 	// Find first and last changed lines.
 	firstMatch := locs[0]
 	lastMatch := locs[len(locs)-1]
-	firstLine = strings.Count(raw[:firstMatch[0]], "\n") + 1
-	lastLine = strings.Count(raw[:lastMatch[1]], "\n") + 1
+	firstLine := strings.Count(raw[:firstMatch[0]], "\n") + 1
+	lastLine := strings.Count(raw[:lastMatch[1]], "\n") + 1
 
-	return bom + restoreLineEndings(result, ending), matches, replaced, firstLine, lastLine, nil
+	return srApplyResult{updated: bom + restoreLineEndings(result, ending), matches: matches, replaced: replaced, firstLine: firstLine, lastLine: lastLine}, nil
 }
 
 // searchReplace is the tool handler for search_replace.
@@ -351,7 +361,7 @@ func (e *Engine) searchReplace(ctx context.Context, args map[string]interface{})
 			continue
 		}
 
-		updated, matches, replaced, firstLine, lastLine, applyErr := srApplyOne(data, re, replacement, multiline)
+		res, applyErr := srApplyOne(data, re, replacement)
 		if applyErr != nil {
 			fileResults = append(fileResults, srFileResult{
 				Path:      c.path,
@@ -361,32 +371,32 @@ func (e *Engine) searchReplace(ctx context.Context, args map[string]interface{})
 			continue
 		}
 
-		if matches == 0 {
+		if res.matches == 0 {
 			// No match in this file — skip silently (not an error).
 			continue
 		}
 
-		if replaced == 0 || updated == string(data) {
+		if res.replaced == 0 || res.updated == string(data) {
 			// Replacement was a no-op.
 			fileResults = append(fileResults, srFileResult{
 				Path:      c.path,
-				Matches:   matches,
+				Matches:   res.matches,
 				Replaced:  0,
 				Unchanged: true,
 				MatchType: "regex",
-				FirstLine: firstLine,
-				LastLine:  lastLine,
+				FirstLine: res.firstLine,
+				LastLine:  res.lastLine,
 			})
 			continue
 		}
 
 		pending = append(pending, srPending{
 			candidate: c,
-			updated:   updated,
-			matches:   matches,
-			replaced:  replaced,
-			firstLine: firstLine,
-			lastLine:  lastLine,
+			updated:   res.updated,
+			matches:   res.matches,
+			replaced:  res.replaced,
+			firstLine: res.firstLine,
+			lastLine:  res.lastLine,
 			preData:   data,
 		})
 	}

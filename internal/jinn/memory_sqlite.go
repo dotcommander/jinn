@@ -77,17 +77,28 @@ func (e *Engine) memDBConn(ctx context.Context) (*sql.DB, error) {
 	return db, nil
 }
 
+// memoryUpsert carries the column values for a memory-table upsert.
+type memoryUpsert struct {
+	scope     string
+	scopeID   string
+	key       string
+	value     string
+	kind      string
+	pin       bool
+	expiresAt *time.Time
+}
+
 // memoryUpsertTx upserts a value for (scope, scope_id, key) inside a transaction.
 // pin-stickiness: CASE WHEN excluded.pinned=1 THEN 1 ELSE pinned END ensures
 // a plain save (pin=false) cannot clear an existing pin.
-func memoryUpsertTx(ctx context.Context, tx *sql.Tx, scope, scopeID, key, value, kind string, pin bool, expiresAt *time.Time) error {
-	valueType := inferValueType(value)
+func memoryUpsertTx(ctx context.Context, tx *sql.Tx, m memoryUpsert) error {
+	valueType := inferValueType(m.value)
 	now := time.Now().UTC().Format(time.RFC3339)
 
 	var expiresStr interface{}
-	if expiresAt != nil {
+	if m.expiresAt != nil {
 		// SQLite datetime comparison requires "YYYY-MM-DD HH:MM:SS" format.
-		expiresStr = expiresAt.UTC().Format("2006-01-02 15:04:05")
+		expiresStr = m.expiresAt.UTC().Format("2006-01-02 15:04:05")
 	}
 
 	_, err := tx.ExecContext(ctx, `
@@ -100,23 +111,11 @@ func memoryUpsertTx(ctx context.Context, tx *sql.Tx, scope, scopeID, key, value,
 			pinned     = CASE WHEN excluded.pinned = 1 THEN 1 ELSE pinned END,
 			expires_at = excluded.expires_at,
 			updated_at = excluded.updated_at
-	`, scope, scopeID, key, value, valueType, kind, boolToInt(pin), expiresStr, now)
+	`, m.scope, m.scopeID, m.key, m.value, valueType, m.kind, boolToInt(m.pin), expiresStr, now)
 	if err != nil {
 		return fmt.Errorf("memory: upsert: %w", err)
 	}
 	return nil
-}
-
-// memorySaveScoped upserts a value for (scope, scope_id, key) against the DB
-// directly. Wraps memoryUpsertTx in a one-statement transaction.
-func (e *Engine) memorySaveScoped(ctx context.Context, scope, scopeID, key, value, kind string, pin bool, expiresAt *time.Time) error {
-	db, err := e.memDBConn(ctx)
-	if err != nil {
-		return err
-	}
-	return transact(ctx, db, func(tx *sql.Tx) error {
-		return memoryUpsertTx(ctx, tx, scope, scopeID, key, value, kind, pin, expiresAt)
-	})
 }
 
 // memoryRecallScoped fetches the value for (scope, scope_id, key). The bool is

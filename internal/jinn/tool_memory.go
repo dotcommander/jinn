@@ -100,7 +100,15 @@ func (e *Engine) memorySave(ctx context.Context, args map[string]interface{}) (s
 	}
 
 	result, err := runIdempotent(ctx, db, agent, requestID, "memory.save", func(tx *sql.Tx) (any, error) {
-		if uErr := memoryUpsertTx(ctx, tx, rs.scope, rs.scopeID, key, value, kind, pin, expiresAt); uErr != nil {
+		if uErr := memoryUpsertTx(ctx, tx, memoryUpsert{
+			scope:     rs.scope,
+			scopeID:   rs.scopeID,
+			key:       key,
+			value:     value,
+			kind:      kind,
+			pin:       pin,
+			expiresAt: expiresAt,
+		}); uErr != nil {
 			return nil, uErr
 		}
 		return "saved: " + key, nil
