@@ -174,7 +174,7 @@ func (e *Engine) findViaFd(ctx context.Context, pattern, searchPath string) (out
 	out := &boundedWriter{limit: 1 << 20}
 	ctx, cancel := context.WithTimeout(ctx, findTimeout)
 	defer cancel()
-	c := exec.CommandContext(ctx, e.fdPath, args...)
+	c := exec.CommandContext(ctx, e.fdPath, args...) //nolint:gosec // G204: fd path is resolved internally; args are built from validated find params, not raw user input
 	c.Dir = e.workDir
 	c.Stdout = out
 	c.Stderr = out
@@ -201,7 +201,7 @@ func (e *Engine) findViaFind(ctx context.Context, pattern, searchPath string) (o
 	out := &boundedWriter{limit: 1 << 20}
 	ctx, cancel := context.WithTimeout(ctx, findTimeout)
 	defer cancel()
-	c := exec.CommandContext(ctx, "find", findArgs...)
+	c := exec.CommandContext(ctx, "find", findArgs...) //nolint:gosec // G204: fixed "find" binary; findArgs built internally from validated params
 	c.Dir = e.workDir
 	c.Stdout = out
 	c.Stderr = out

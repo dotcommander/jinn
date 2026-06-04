@@ -92,7 +92,7 @@ func (e *Engine) runShell(ctx context.Context, args map[string]interface{}) (str
 	if ctx == nil {
 		panic("runShell: nil ctx")
 	}
-	c := exec.CommandContext(ctx, "bash", "-c", cmd)
+	c := exec.CommandContext(ctx, "bash", "-c", cmd) //nolint:gosec // G204: the shell tool intentionally executes agent-provided commands (its documented purpose)
 	c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 	capture := newShellOutputCapture(1 << 20) // 1 MB response tail + full spill on overflow
