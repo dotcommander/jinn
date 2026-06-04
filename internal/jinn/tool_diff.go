@@ -3,7 +3,6 @@ package jinn
 import (
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 )
 
@@ -29,26 +28,12 @@ func (e *Engine) diffFiles(args map[string]interface{}) (*ToolResult, error) {
 		return nil, err
 	}
 
-	contentA, err := os.ReadFile(resolvedA)
+	contentA, err := readFileForOp(pathA, resolvedA)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, &ErrWithSuggestion{
-				Err:        fmt.Errorf("file not found: %s", pathA),
-				Suggestion: "check the file path",
-				Code:       ErrCodeFileNotFound,
-			}
-		}
 		return nil, err
 	}
-	contentB, err := os.ReadFile(resolvedB)
+	contentB, err := readFileForOp(pathB, resolvedB)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, &ErrWithSuggestion{
-				Err:        fmt.Errorf("file not found: %s", pathB),
-				Suggestion: "check the file path",
-				Code:       ErrCodeFileNotFound,
-			}
-		}
 		return nil, err
 	}
 

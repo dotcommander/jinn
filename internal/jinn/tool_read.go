@@ -127,6 +127,28 @@ func statForRead(resolved string) (os.FileInfo, error) {
 	return info, nil
 }
 
+// readFileForOp reads resolved (the sandbox-resolved path) and maps the common
+// filesystem errors onto the canonical jinn errors, using path (the display
+// path) in messages. Not-found and permission-denied share their suggestion
+// text with statForRead and the other readable-file guards.
+func readFileForOp(path, resolved string) ([]byte, error) {
+	data, err := os.ReadFile(resolved)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, &ErrWithSuggestion{
+				Err:        fmt.Errorf("file not found: %s", path),
+				Suggestion: "verify the path exists with list_dir on the parent, or check for typos",
+				Code:       ErrCodeFileNotFound,
+			}
+		}
+		if os.IsPermission(err) {
+			return nil, permissionDeniedErr(path)
+		}
+		return nil, err
+	}
+	return data, nil
+}
+
 // readAndClassify reads the file, records it in the tracker, and rejects PDF
 // and binary content before any text processing.
 func (e *Engine) readAndClassify(resolved string, info os.FileInfo) ([]byte, error) {
