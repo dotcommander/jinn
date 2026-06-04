@@ -315,7 +315,7 @@ func TestSearchReplace_LineRangeInMeta(t *testing.T) {
 	}
 
 	// Check meta contains files array with line info.
-	metaFiles, ok := result.Meta["files"].([]srFileResult)
+	metaFiles, ok := result.Meta["files"].([]searchReplaceFileResult)
 	if !ok {
 		t.Fatalf("expected files in meta, got: %T", result.Meta["files"])
 	}

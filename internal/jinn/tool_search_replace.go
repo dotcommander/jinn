@@ -12,8 +12,8 @@ const (
 	srMaxFileSize = 10 << 20 // 10 MiB
 )
 
-// srFileResult describes what happened in one file.
-type srFileResult struct {
+// searchReplaceFileResult describes what happened in one file.
+type searchReplaceFileResult struct {
 	Path       string `json:"path"`
 	Matches    int    `json:"matches"`
 	Replaced   int    `json:"replaced"`
@@ -26,15 +26,15 @@ type srFileResult struct {
 	Suggestion string `json:"suggestion,omitempty"`
 }
 
-// srCandidate holds a file path that matched the glob (and optional path filter).
-type srCandidate struct {
+// searchReplaceCandidate holds a file path that matched the glob (and optional path filter).
+type searchReplaceCandidate struct {
 	path     string // display path
 	resolved string // absolute path after security check
 }
 
-// srPending holds a validated, applied search-replace ready for atomic write.
-type srPending struct {
-	candidate srCandidate
+// searchReplacePending holds a validated, applied search-replace ready for atomic write.
+type searchReplacePending struct {
+	candidate searchReplaceCandidate
 	updated   string
 	matches   int
 	replaced  int
@@ -87,8 +87,8 @@ func (e *Engine) searchReplace(ctx context.Context, args map[string]interface{})
 
 	// --- Phase 1: Validate all files (collect-then-report) ---
 
-	var pending []srPending
-	var fileResults []srFileResult
+	var pending []searchReplacePending
+	var fileResults []searchReplaceFileResult
 
 	for _, c := range candidates {
 		p, fr, ok := e.processSRCandidate(c, re, replacement)

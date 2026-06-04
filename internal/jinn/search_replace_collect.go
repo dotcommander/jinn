@@ -12,14 +12,14 @@ import (
 
 // collectSRFiles resolves the files argument into a list of candidates.
 // Supports: single path, glob pattern, or array of paths/globs.
-func (e *Engine) collectSRFiles(ctx context.Context, args map[string]interface{}) ([]srCandidate, error) {
+func (e *Engine) collectSRFiles(ctx context.Context, args map[string]interface{}) ([]searchReplaceCandidate, error) {
 	patterns, err := parseSRPatterns(args["files"])
 	if err != nil {
 		return nil, err
 	}
 
 	seen := make(map[string]bool)
-	var candidates []srCandidate
+	var candidates []searchReplaceCandidate
 
 	for _, pat := range patterns {
 		if err := e.collectSRPattern(ctx, pat, seen, &candidates); err != nil {
@@ -77,7 +77,7 @@ func parseSRPatterns(filesArg interface{}) ([]string, error) {
 
 // collectSRPattern resolves a single pattern (path, directory, or glob) and appends
 // its matching, sandbox-safe, non-directory files to candidates (deduped via seen).
-func (e *Engine) collectSRPattern(ctx context.Context, pat string, seen map[string]bool, candidates *[]srCandidate) error {
+func (e *Engine) collectSRPattern(ctx context.Context, pat string, seen map[string]bool, candidates *[]searchReplaceCandidate) error {
 	resolved, err := e.checkPath(pat)
 	if err == nil {
 		// It's a real path — check if it's a directory.
@@ -86,7 +86,7 @@ func (e *Engine) collectSRPattern(ctx context.Context, pat string, seen map[stri
 		case statErr == nil && !info.IsDir():
 			if !seen[resolved] {
 				seen[resolved] = true
-				*candidates = append(*candidates, srCandidate{path: pat, resolved: resolved})
+				*candidates = append(*candidates, searchReplaceCandidate{path: pat, resolved: resolved})
 			}
 			return nil
 		case statErr == nil:
@@ -122,7 +122,7 @@ func (e *Engine) collectSRPattern(ctx context.Context, pat string, seen map[stri
 
 // appendSRCandidate adds f to candidates if it resolves inside the sandbox, is a
 // regular (non-directory) file, and has not already been seen.
-func (e *Engine) appendSRCandidate(f string, seen map[string]bool, candidates *[]srCandidate) {
+func (e *Engine) appendSRCandidate(f string, seen map[string]bool, candidates *[]searchReplaceCandidate) {
 	resolved, err := e.checkPath(f)
 	if err != nil {
 		return // skip files outside sandbox
@@ -133,7 +133,7 @@ func (e *Engine) appendSRCandidate(f string, seen map[string]bool, candidates *[
 	}
 	if !seen[resolved] {
 		seen[resolved] = true
-		*candidates = append(*candidates, srCandidate{path: f, resolved: resolved})
+		*candidates = append(*candidates, searchReplaceCandidate{path: f, resolved: resolved})
 	}
 }
 
@@ -200,12 +200,12 @@ func compileSRRegex(pattern string, args map[string]interface{}) (*regexp.Regexp
 
 // filterSRInclude applies the optional "include" glob filter to candidates.
 // Returns candidates unchanged when no include filter is set.
-func filterSRInclude(candidates []srCandidate, args map[string]interface{}) ([]srCandidate, error) {
+func filterSRInclude(candidates []searchReplaceCandidate, args map[string]interface{}) ([]searchReplaceCandidate, error) {
 	include, ok := args["include"].(string)
 	if !ok || include == "" {
 		return candidates, nil
 	}
-	var filtered []srCandidate
+	var filtered []searchReplaceCandidate
 	for _, c := range candidates {
 		// Simple suffix/glob match on the display path.
 		if globMatch(include, c.path) {

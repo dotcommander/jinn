@@ -7,9 +7,9 @@ import (
 	"strings"
 )
 
-// srApplyResult holds the outcome of applying a regex replacement to one file.
+// searchReplaceApplyResult holds the outcome of applying a regex replacement to one file.
 // updated is empty when there were no matches or the replacement was a no-op.
-type srApplyResult struct {
+type searchReplaceApplyResult struct {
 	updated   string
 	matches   int
 	replaced  int
@@ -19,7 +19,7 @@ type srApplyResult struct {
 
 // srApplyOne applies the regex replacement to a single file.
 // Returns the result content (if changed), match count, replace count, and any error.
-func srApplyOne(content []byte, re *regexp.Regexp, replacement string) (srApplyResult, error) { //nolint:unparam // error return reserved: caller handles per-file failures uniformly via applyErr branch
+func srApplyOne(content []byte, re *regexp.Regexp, replacement string) (searchReplaceApplyResult, error) { //nolint:unparam // error return reserved: caller handles per-file failures uniformly via applyErr branch
 	raw, bom := stripBom(string(content))
 	ending := detectLineEnding(raw)
 	raw = normalizeToLF(raw)
@@ -28,7 +28,7 @@ func srApplyOne(content []byte, re *regexp.Regexp, replacement string) (srApplyR
 	locs := re.FindAllStringIndex(raw, -1)
 	matches := len(locs)
 	if matches == 0 {
-		return srApplyResult{}, nil
+		return searchReplaceApplyResult{}, nil
 	}
 
 	// Apply replacement.
@@ -36,7 +36,7 @@ func srApplyOne(content []byte, re *regexp.Regexp, replacement string) (srApplyR
 	replaced := matches // ReplaceAll replaces every match
 
 	if result == raw {
-		return srApplyResult{matches: matches}, nil // replacement was a no-op
+		return searchReplaceApplyResult{matches: matches}, nil // replacement was a no-op
 	}
 
 	// Find first and last changed lines.
@@ -45,22 +45,22 @@ func srApplyOne(content []byte, re *regexp.Regexp, replacement string) (srApplyR
 	firstLine := strings.Count(raw[:firstMatch[0]], "\n") + 1
 	lastLine := strings.Count(raw[:lastMatch[1]], "\n") + 1
 
-	return srApplyResult{updated: bom + restoreLineEndings(result, ending), matches: matches, replaced: replaced, firstLine: firstLine, lastLine: lastLine}, nil
+	return searchReplaceApplyResult{updated: bom + restoreLineEndings(result, ending), matches: matches, replaced: replaced, firstLine: firstLine, lastLine: lastLine}, nil
 }
 
 // processSRCandidate validates and applies the replacement to one candidate.
 // Exactly one of the returns is meaningful:
-//   - (*srPending, nil, _): a change ready to apply
-//   - (nil, *srFileResult, _): a per-file error or no-op to report
+//   - (*searchReplacePending, nil, _): a change ready to apply
+//   - (nil, *searchReplaceFileResult, _): a per-file error or no-op to report
 //   - (nil, nil, _): no match in this file — skip silently
 //
 // srReadCandidate stats and reads a candidate file, returning its content. If the
 // file cannot be read or should be skipped (missing, too large, binary), it returns
-// nil content and a populated srFileResult describing the skip reason.
-func (e *Engine) srReadCandidate(c srCandidate) ([]byte, *srFileResult) {
+// nil content and a populated searchReplaceFileResult describing the skip reason.
+func (e *Engine) srReadCandidate(c searchReplaceCandidate) ([]byte, *searchReplaceFileResult) {
 	info, statErr := os.Stat(c.resolved)
 	if statErr != nil {
-		return nil, &srFileResult{
+		return nil, &searchReplaceFileResult{
 			Path:      c.path,
 			Error:     statErr.Error(),
 			ErrorCode: ErrCodeFileNotFound,
@@ -69,7 +69,7 @@ func (e *Engine) srReadCandidate(c srCandidate) ([]byte, *srFileResult) {
 
 	// Skip binary files.
 	if info.Size() > srMaxFileSize {
-		return nil, &srFileResult{
+		return nil, &searchReplaceFileResult{
 			Path:       c.path,
 			Error:      fmt.Sprintf("file too large (%d bytes, max %d)", info.Size(), srMaxFileSize),
 			ErrorCode:  ErrCodeFileTooLarge,
@@ -79,7 +79,7 @@ func (e *Engine) srReadCandidate(c srCandidate) ([]byte, *srFileResult) {
 
 	data, readErr := os.ReadFile(c.resolved)
 	if readErr != nil {
-		return nil, &srFileResult{
+		return nil, &searchReplaceFileResult{
 			Path:      c.path,
 			Error:     readErr.Error(),
 			ErrorCode: ErrCodeFileNotFound,
@@ -92,7 +92,7 @@ func (e *Engine) srReadCandidate(c srCandidate) ([]byte, *srFileResult) {
 		checkLen = 8192
 	}
 	if isBinaryContent(data[:checkLen]) {
-		return nil, &srFileResult{
+		return nil, &searchReplaceFileResult{
 			Path:       c.path,
 			Error:      "binary file detected, skipping",
 			ErrorCode:  ErrCodeBinaryFile,
@@ -103,10 +103,10 @@ func (e *Engine) srReadCandidate(c srCandidate) ([]byte, *srFileResult) {
 	return data, nil
 }
 
-func (e *Engine) processSRCandidate(c srCandidate, re *regexp.Regexp, replacement string) (*srPending, *srFileResult, bool) {
+func (e *Engine) processSRCandidate(c searchReplaceCandidate, re *regexp.Regexp, replacement string) (*searchReplacePending, *searchReplaceFileResult, bool) {
 	// Stale check.
 	if err := e.tracker.checkStale(c.resolved); err != nil {
-		return nil, &srFileResult{
+		return nil, &searchReplaceFileResult{
 			Path:       c.path,
 			Error:      err.Error(),
 			ErrorCode:  ErrCodeStaleFile,
@@ -121,7 +121,7 @@ func (e *Engine) processSRCandidate(c srCandidate, re *regexp.Regexp, replacemen
 
 	res, applyErr := srApplyOne(data, re, replacement)
 	if applyErr != nil {
-		return nil, &srFileResult{
+		return nil, &searchReplaceFileResult{
 			Path:      c.path,
 			Error:     applyErr.Error(),
 			ErrorCode: ErrCodeEditNotFound,
@@ -135,7 +135,7 @@ func (e *Engine) processSRCandidate(c srCandidate, re *regexp.Regexp, replacemen
 
 	if res.replaced == 0 || res.updated == string(data) {
 		// Replacement was a no-op.
-		return nil, &srFileResult{
+		return nil, &searchReplaceFileResult{
 			Path:      c.path,
 			Matches:   res.matches,
 			Replaced:  0,
@@ -146,7 +146,7 @@ func (e *Engine) processSRCandidate(c srCandidate, re *regexp.Regexp, replacemen
 		}, false
 	}
 
-	return &srPending{
+	return &searchReplacePending{
 		candidate: c,
 		updated:   res.updated,
 		matches:   res.matches,
@@ -160,8 +160,8 @@ func (e *Engine) processSRCandidate(c srCandidate, re *regexp.Regexp, replacemen
 // srCheckAllFailed returns a terminal result/error when there is nothing to
 // apply: either all candidates errored (error) or none matched (empty result).
 // Returns (nil, nil) when there is pending work to continue with.
-func srCheckAllFailed(fileResults []srFileResult, pending []srPending) (*ToolResult, error) {
-	var errorFiles []srFileResult
+func srCheckAllFailed(fileResults []searchReplaceFileResult, pending []searchReplacePending) (*ToolResult, error) {
+	var errorFiles []searchReplaceFileResult
 	for _, fr := range fileResults {
 		if fr.ErrorCode != "" && fr.ErrorCode != ErrCodeBinaryFile {
 			errorFiles = append(errorFiles, fr)
@@ -193,7 +193,7 @@ func srCheckAllFailed(fileResults []srFileResult, pending []srPending) (*ToolRes
 }
 
 // srDryRunResult renders the [dry-run] preview without touching the filesystem.
-func srDryRunResult(fileResults []srFileResult, pending []srPending) *ToolResult {
+func srDryRunResult(fileResults []searchReplaceFileResult, pending []searchReplacePending) *ToolResult {
 	var previews []string
 	for _, p := range pending {
 		dr := generateDiff(string(p.preData), p.updated, p.candidate.path, 3)
@@ -204,7 +204,7 @@ func srDryRunResult(fileResults []srFileResult, pending []srPending) *ToolResult
 		}
 		previews = append(previews, line)
 	}
-	allResults := make([]srFileResult, 0, len(fileResults)+len(pending))
+	allResults := make([]searchReplaceFileResult, 0, len(fileResults)+len(pending))
 	allResults = append(allResults, fileResults...)
 	allResults = append(allResults, srResultsFromPending(pending)...)
 	return &ToolResult{
@@ -217,7 +217,7 @@ func srDryRunResult(fileResults []srFileResult, pending []srPending) *ToolResult
 
 // srApplyWrites performs the per-file atomic writes (Phase 2) and builds the
 // final success result.
-func (e *Engine) srApplyWrites(fileResults []srFileResult, pending []srPending) (*ToolResult, error) {
+func (e *Engine) srApplyWrites(fileResults []searchReplaceFileResult, pending []searchReplacePending) (*ToolResult, error) {
 	var applied []string
 	for _, p := range pending {
 		if err := e.snapshotAndWrite(p.candidate.resolved, p.candidate.path, "search_replace", p.preData, p.updated); err != nil {
@@ -228,7 +228,7 @@ func (e *Engine) srApplyWrites(fileResults []srFileResult, pending []srPending) 
 			p.candidate.path, p.replaced, p.firstLine, p.lastLine))
 	}
 
-	allResults := make([]srFileResult, 0, len(fileResults)+len(pending))
+	allResults := make([]searchReplaceFileResult, 0, len(fileResults)+len(pending))
 	allResults = append(allResults, fileResults...)
 	allResults = append(allResults, srResultsFromPending(pending)...)
 	totalReplaced := 0
@@ -249,10 +249,10 @@ func (e *Engine) srApplyWrites(fileResults []srFileResult, pending []srPending) 
 }
 
 // srResultsFromPending converts pending edits to file results for the response.
-func srResultsFromPending(pending []srPending) []srFileResult {
-	results := make([]srFileResult, len(pending))
+func srResultsFromPending(pending []searchReplacePending) []searchReplaceFileResult {
+	results := make([]searchReplaceFileResult, len(pending))
 	for i, p := range pending {
-		results[i] = srFileResult{
+		results[i] = searchReplaceFileResult{
 			Path:      p.candidate.path,
 			Matches:   p.matches,
 			Replaced:  p.replaced,
