@@ -20,16 +20,8 @@ type diffOp struct {
 // computeEditScript builds an LCS-based edit script between two strings,
 // in forward order.
 func computeEditScript(old, newText string) []diffOp {
-	oldLines := strings.Split(old, "\n")
-	newLines := strings.Split(newText, "\n")
-
-	// Remove trailing empty element from final newline.
-	if len(oldLines) > 0 && oldLines[len(oldLines)-1] == "" && strings.HasSuffix(old, "\n") {
-		oldLines = oldLines[:len(oldLines)-1]
-	}
-	if len(newLines) > 0 && newLines[len(newLines)-1] == "" && strings.HasSuffix(newText, "\n") {
-		newLines = newLines[:len(newLines)-1]
-	}
+	oldLines := splitDiffLines(old)
+	newLines := splitDiffLines(newText)
 
 	// Build LCS table.
 	m, n := len(oldLines), len(newLines)
