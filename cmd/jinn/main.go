@@ -87,17 +87,6 @@ func main() {
 		}
 		os.Exit(1)
 	}
-	if req.Client == "" {
-		req.Client = os.Getenv("JINN_CLIENT")
-	}
-	if req.Client != "" && req.Tool == "related_context" {
-		if req.Args == nil {
-			req.Args = make(map[string]interface{})
-		}
-		if _, ok := req.Args["client"]; !ok {
-			req.Args["client"] = req.Client
-		}
-	}
 	if req.RequestID != "" {
 		if req.Args == nil {
 			req.Args = make(map[string]interface{})

@@ -161,9 +161,6 @@ func (e *Engine) Dispatch(ctx context.Context, tool string, args map[string]inte
 	case "search_replace":
 		result, err := e.searchReplace(ctx, args)
 		return result, nil, err
-	case "related_context":
-		result, err := e.relatedContext(ctx, args)
-		return textResult(result), nil, err
 	default:
 		return nil, nil, fmt.Errorf("unknown tool: %s", tool)
 	}

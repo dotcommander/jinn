@@ -8,8 +8,6 @@ echo '{"tool":"read_file","args":{"path":"main.go"}}' | jinn
 
 Every tool returns `{"ok": true, "result": "..."}` on success or `{"ok": false, "error": "..."}` on failure.
 
-Requests may include top-level `client` (`claude`, `codex`, or `pi`). `related_context` uses it to select the matching built-in skill locations without mixing client-specific skills.
-
 ## Response Envelope
 
 The full response type includes optional fields that carry structured metadata:
@@ -526,43 +524,6 @@ echo '{"tool":"detect_project","args":{"path":"."}}' | jinn
 
 - Probes for: `go.mod`, `package.json`, `bun.lockb`, `Cargo.toml`, `pyproject.toml`, `setup.py`, `requirements.txt`, `composer.json`, `Makefile`, `Taskfile.yml`.
 - Secondary detection: `tsconfig.json` upgrades JS to TypeScript. `package.json` scripts override build/test/lint commands. `next.config.js` or `next.config.mjs` triggers Next.js detection.
-
-### related_context
-
-Rank local KB entries, skills, agents, and commands for a prompt or tool failure.
-
-```bash
-echo '{"tool":"related_context","args":{"query":"fix goroutine data race","types":["kb","skill"]}}' | jinn
-```
-
-**Parameters:**
-
-| Name | Type | Required | Default | Description |
-|------|------|----------|---------|-------------|
-| `query` | string | Yes | -- | Prompt, task, error text, or failed tool output |
-| `types` | array | No | all | Filter to `kb`, `skill`, `agent`, or `command` |
-| `limit` | int | No | `5` | Max ranked results (`20` cap) |
-| `client` | string | No | top-level `client` | Override client selection for this call: `claude`, `codex`, `pi`, or `all` |
-| `rebuild` | bool | No | `false` | Force rebuilding the local context index |
-
-**Notes:**
-
-- Fully offline and read-only.
-- Always scans shared context such as `~/.claude/kb` and configured `related_context.paths`.
-- Scans client-specific skills only for the declared client: Claude uses `~/.claude/skills`, `~/.claude/agents`, `~/.claude/commands`, and installed Claude plugin component dirs; Codex uses `~/.codex/skills`; Pi uses `~/.pi/agent/skills`.
-- If no client is provided, client-specific skill directories are skipped.
-- Add extra directories in `~/.config/jinn/config.json` (or `$JINN_CONFIG_DIR/jinn/config.json`):
-
-```json
-{
-  "related_context": {
-    "paths": ["~/notes/agent-kb", "/opt/team/runbooks"]
-  }
-}
-```
-
-- Returns ranked metadata and paths only; use `read_file` when you need full content and the path is inside the workspace.
-- Cache is stored per client at `~/.config/jinn/context-index-<client>.json`, or `$JINN_CONFIG_DIR/jinn/context-index-<client>.json`.
 
 ### memory
 

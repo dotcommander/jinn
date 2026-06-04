@@ -7,6 +7,14 @@ and jinn adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Removed
+
+- `checksum_tree` tool: low-value for coding agents; `git` and
+  `list_dir` (`changed_since`) cover its use cases.
+- `related_context` tool and its `config.json` (`related_context.paths`)
+  support: value was gated on a local KB/skills corpus that most callers
+  lack. The request envelope `client` field is now inert.
+
 ## [0.9.1] - 2026-05-30
 
 ### Fixed

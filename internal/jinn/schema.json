@@ -282,23 +282,6 @@
   {
     "type": "function",
     "function": {
-      "name": "related_context",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "query": {"type": "string"},
-          "types": {"type": "array", "items": {"type": "string"}},
-          "limit": {"type": "integer"},
-          "client": {"type": "string", "enum": ["claude","codex","pi","all"]},
-          "rebuild": {"type": "boolean"}
-        },
-        "required": ["query"]
-      }
-    }
-  },
-  {
-    "type": "function",
-    "function": {
       "name": "lsp_query",
       "description": "Query a language server for semantic info. Supports: gopls (.go), rust-analyzer (.rs), pylsp (.py), typescript-language-server (.ts/.tsx/.js/.jsx), clangd (.c/.h/.cpp/.cc/.cxx/.hpp), jdtls (.java), lua-language-server (.lua), zls (.zig). Auto-detects from file extension.",
       "parameters": {

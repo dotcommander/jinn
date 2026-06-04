@@ -20,8 +20,6 @@ echo '{"tool":"read_file","args":{"path":"../.ssh/id_rsa"}}' | jinn
 
 `..` traversal, symlink escapes, and absolute paths that point outside the working directory are all blocked. The working directory is the root of all file access.
 
-`related_context` has a narrow read-only exception: it scans shared local context directories such as `~/.claude/kb`, directories listed in `related_context.paths` in `~/.config/jinn/config.json` (or `$JINN_CONFIG_DIR/jinn/config.json`), and client-specific skill directories for the declared request client (`claude`, `codex`, or `pi`). It returns metadata and paths only, skips sensitive path segments, and does not weaken `checkPath` for file-reading or mutation tools.
-
 ## Sensitive Paths
 
 `checkPath` rejects any path containing these segments:
