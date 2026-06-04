@@ -34,17 +34,11 @@ type pendingEdit struct {
 	resolved    string
 	oldText     string // for fast-path diff (line count of removed region)
 	newText     string // for fast-path diff (line count of added region)
-	fuzzyIndent bool
 	updated     string
 	fuzzy       bool
 	matchInfo   matchInfo
 	showContext int
 	preContent  []byte // pre-mutation bytes for undo snapshot
-	// matchOffset/matchLength are set only when oldText was found in the
-	// original (pre-any-edit) file; used for overlap detection.
-	matchOffset     int
-	matchLength     int
-	matchInOriginal bool
 }
 
 // parseAndResolveEdits iterates the raw edits array, validates each entry

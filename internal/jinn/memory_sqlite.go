@@ -205,22 +205,6 @@ func (e *Engine) memoryListScopedWithValues(ctx context.Context, scope, scopeID 
 	return entries, rows.Err()
 }
 
-// memoryForgetScoped deletes (scope, scope_id, key). Zero rows affected is not an error.
-func (e *Engine) memoryForgetScoped(ctx context.Context, scope, scopeID, key string) error {
-	db, err := e.memDBConn(ctx)
-	if err != nil {
-		return err
-	}
-	_, err = db.ExecContext(ctx,
-		"DELETE FROM memory WHERE scope=? AND scope_id=? AND key=?",
-		scope, scopeID, key,
-	)
-	if err != nil {
-		return fmt.Errorf("memory: forget: %w", err)
-	}
-	return nil
-}
-
 // memoryGCTx deletes expired, non-pinned memory rows within an existing transaction.
 // When scope is non-empty only that scope is swept; otherwise all scopes are swept.
 func (e *Engine) memoryGCTx(ctx context.Context, tx *sql.Tx, scope string) (int, error) {
@@ -270,20 +254,4 @@ func idempotencyGCTx(ctx context.Context, tx *sql.Tx, retention time.Duration) (
 		return 0, fmt.Errorf("idempotency: gc rows: %w", err)
 	}
 	return int(n), nil
-}
-
-// memoryGC deletes expired, non-pinned memory rows. When scope is non-empty
-// only that scope is swept; otherwise all scopes are swept.
-func (e *Engine) memoryGC(ctx context.Context, scope string) (int, error) {
-	db, err := e.memDBConn(ctx)
-	if err != nil {
-		return 0, err
-	}
-	var n int
-	txErr := transact(ctx, db, func(tx *sql.Tx) error {
-		var gcErr error
-		n, gcErr = e.memoryGCTx(ctx, tx, scope)
-		return gcErr
-	})
-	return n, txErr
 }

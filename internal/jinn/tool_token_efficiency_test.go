@@ -27,21 +27,6 @@ func estimateTokens(s string) float64 {
 	return float64(utf8.RuneCountInString(s)) / charRatio
 }
 
-// tokenBudget tracks token economics for a test case.
-type tokenBudget struct {
-	InputTokens  float64
-	OutputTokens float64
-	RawTokens    float64 // uncompressed size (for compression ratio)
-}
-
-// ratio returns output/raw ratio (lower is better compression).
-func (tb tokenBudget) ratio() float64 {
-	if tb.RawTokens == 0 {
-		return 1.0
-	}
-	return tb.OutputTokens / tb.RawTokens
-}
-
 // overheadRatio returns the fraction of output lines that are structural
 // metadata (lines starting with [, empty lines, pure braces, truncation keys).
 func overheadRatio(output string) float64 {
@@ -926,15 +911,6 @@ func TestTokenEfficiency_FindFiles_ExactLimitBoundary(t *testing.T) {
 	}
 	if res.TotalCount != findDefaultLimit {
 		t.Errorf("expected total_count=%d, got %d", findDefaultLimit, res.TotalCount)
-	}
-}
-
-// Helper to create many files in a subdirectory (used by search boundary tests)
-func createManyFiles(t *testing.T, dir, prefix string, count int, contentLine string) {
-	t.Helper()
-	for i := range count {
-		name := fmt.Sprintf("%s%04d.txt", prefix, i)
-		writeTestFile(t, dir, name, contentLine+"\n")
 	}
 }
 

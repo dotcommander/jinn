@@ -6,10 +6,6 @@ import (
 	"path/filepath"
 )
 
-// globalScope is the reserved cross-project sentinel. Real scopes are absolute
-// paths, so this string can never collide with one.
-const globalScope = "global"
-
 // normalizeScopePath resolves p to a canonical absolute path. EvalSymlinks is
 // best-effort; on error it falls back to Clean(abs). Mirrors the resolution
 // pattern in engine.go's New and security.go.
