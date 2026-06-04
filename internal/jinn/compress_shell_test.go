@@ -18,7 +18,6 @@ func TestLastSegmentVerb(t *testing.T) {
 		{"", ""},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.cmd, func(t *testing.T) {
 			t.Parallel()
 			got := lastSegmentVerb(tc.cmd)
@@ -131,7 +130,6 @@ func TestLastSegmentArgs(t *testing.T) {
 		{"ls", nil},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.cmd, func(t *testing.T) {
 			t.Parallel()
 			got := lastSegmentArgs(tc.cmd)
@@ -161,7 +159,6 @@ func TestSubcommand(t *testing.T) {
 		{[]string{}, dockerValueFlags, ""},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
 			t.Parallel()
 			got := subcommand(tc.args, tc.valueFlags)
@@ -187,7 +184,6 @@ func TestHasShortFlagL(t *testing.T) {
 		{[]string{"--long"}, false},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
 			t.Parallel()
 			got := hasShortFlagL(tc.args)

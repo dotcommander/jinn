@@ -273,7 +273,6 @@ func TestLSP_MissingArgs(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			e, _ := testEngine(t)
@@ -584,7 +583,6 @@ func TestFormatWorkspaceEdit_Empty(t *testing.T) {
 		{"empty changes", &lspWorkspaceEdit{Changes: map[string][]lspTextEdit{}}},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			out := formatWorkspaceEdit(tc.edit, "/work")
@@ -727,7 +725,6 @@ func TestLspServerForExt_KnownExtensions(t *testing.T) {
 	// install hint when the binary is absent, which is a different error path.
 	knownExts := []string{".c", ".cpp", ".java", ".lua", ".zig", ".go", ".rs", ".py", ".ts", ".js"}
 	for _, ext := range knownExts {
-		ext := ext
 		t.Run(ext, func(t *testing.T) {
 			t.Parallel()
 			_, err := lspServerForExt(ext)

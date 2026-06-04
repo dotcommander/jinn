@@ -19,7 +19,6 @@ func TestExtractSubshellContent_DollarParen(t *testing.T) {
 		{"echo $(ls", "ls"},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.input, func(t *testing.T) {
 			t.Parallel()
 			got := extractSubshellContent(tc.input)
@@ -44,7 +43,6 @@ func TestExtractSubshellContent_Backtick(t *testing.T) {
 		{"no subshell here", ""},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.input, func(t *testing.T) {
 			t.Parallel()
 			got := extractSubshellContent(tc.input)
@@ -71,7 +69,6 @@ func TestStripSubshells_DollarParen(t *testing.T) {
 		{"ls -la", "ls -la"},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.input, func(t *testing.T) {
 			t.Parallel()
 			got := stripSubshells(tc.input)
@@ -96,7 +93,6 @@ func TestStripSubshells_Backtick(t *testing.T) {
 		{"plain cmd", "plain cmd"},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.input, func(t *testing.T) {
 			t.Parallel()
 			got := stripSubshells(tc.input)
@@ -126,7 +122,6 @@ func TestFirstVerb_SkipsEnvAssignments(t *testing.T) {
 		{"", ""},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.input, func(t *testing.T) {
 			t.Parallel()
 			got := firstVerb(tc.input)

@@ -23,7 +23,6 @@ func TestLspServerForExt_NewExtensions(t *testing.T) {
 	//       (meaning the table entry exists but the binary is absent).
 	newExts := []string{".tsx", ".jsx", ".h", ".cc", ".cxx", ".hpp"}
 	for _, ext := range newExts {
-		ext := ext
 		t.Run(ext, func(t *testing.T) {
 			t.Parallel()
 			_, err := lspServerForExt(ext)
@@ -66,7 +65,6 @@ func TestLangIDForExt_AllLanguages(t *testing.T) {
 		{".unknown_xyz", "text"}, // fallback
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.ext, func(t *testing.T) {
 			t.Parallel()
 			got := langIDForExt(tc.ext)
@@ -152,7 +150,6 @@ func TestSymbolKindName(t *testing.T) {
 		{26, "TypeParameter"},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.want, func(t *testing.T) {
 			t.Parallel()
 			got := symbolKindName(tc.k)

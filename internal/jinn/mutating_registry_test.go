@@ -81,7 +81,6 @@ func dispatchMutating(t *testing.T, e *Engine, ctx context.Context, a mutatingAc
 // byte-identical result.
 func TestMutatingRegistryReplay(t *testing.T) {
 	for _, a := range mutatingActions {
-		a := a
 		t.Run(a.Command, func(t *testing.T) {
 			e, ctx := newIdempotencyEngine(t)
 
