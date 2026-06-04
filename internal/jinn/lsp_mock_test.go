@@ -2,6 +2,7 @@ package jinn
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -46,7 +47,7 @@ func newMockLauncher(slow bool) lspLauncher {
 
 // newMockLauncherCfg returns a launcher configured by cfg.
 func newMockLauncherCfg(cfg mockConfig) lspLauncher {
-	return func(_ []string) (io.WriteCloser, io.ReadCloser, func() error, error) {
+	return func(_ context.Context, _ []string) (lspProc, error) {
 		// clientW → serverR: client writes requests, server reads them.
 		// serverW → clientR: server writes replies, client reads them.
 		serverR, clientW := io.Pipe()
@@ -59,7 +60,7 @@ func newMockLauncherCfg(cfg mockConfig) lspLauncher {
 			_ = serverW.Close()
 			return nil
 		}
-		return clientW, clientR, kill, nil
+		return lspProc{stdin: clientW, stdout: clientR, kill: kill}, nil
 	}
 }
 
@@ -270,8 +271,8 @@ func writeMockFrame(w io.Writer, msg lspRPCMsg) {
 // fakeLauncherError returns a launcher that immediately fails with err.
 // Used to simulate a missing server binary.
 func fakeLauncherError(err error) lspLauncher {
-	return func(_ []string) (io.WriteCloser, io.ReadCloser, func() error, error) {
-		return nil, nil, nil, err
+	return func(_ context.Context, _ []string) (lspProc, error) {
+		return lspProc{}, err
 	}
 }
 

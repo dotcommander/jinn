@@ -1,6 +1,7 @@
 package jinn
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os/exec"
@@ -72,12 +73,12 @@ func langIDForExt(ext string) string {
 	return "text"
 }
 
-func (e *Engine) lspQuery(args map[string]interface{}) (string, error) {
-	return e.lspQueryWithLauncher(args, nil)
+func (e *Engine) lspQuery(ctx context.Context, args map[string]interface{}) (string, error) {
+	return e.lspQueryWithLauncher(ctx, args, nil)
 }
 
 // lspQueryWithLauncher is the testable variant — tests inject a fake launcher.
-func (e *Engine) lspQueryWithLauncher(args map[string]interface{}, launcher lspLauncher) (string, error) {
+func (e *Engine) lspQueryWithLauncher(ctx context.Context, args map[string]interface{}, launcher lspLauncher) (string, error) {
 	action, _ := args["action"].(string)
 	path, _ := args["path"].(string)
 	line := intArg(args, "line", 0)
@@ -156,7 +157,7 @@ func (e *Engine) lspQueryWithLauncher(args map[string]interface{}, launcher lspL
 	done := make(chan result, 1)
 
 	client := newLSPClient(launcher)
-	if err := client.start(argv); err != nil {
+	if err := client.start(ctx, argv); err != nil {
 		return "", err
 	}
 

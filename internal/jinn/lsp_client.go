@@ -2,6 +2,7 @@ package jinn
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,26 +15,33 @@ import (
 	"sync/atomic"
 )
 
+// lspProc is the result of launching an LSP server: the pipes to drive it and
+// a kill func to terminate the process. Returned by lspLauncher.
+type lspProc struct {
+	stdin  io.WriteCloser
+	stdout io.ReadCloser
+	kill   func() error
+}
+
 // lspLauncher launches an LSP server and returns its stdin write end, stdout
 // read end, and a kill function. Tests inject a fake launcher over pipes.
-type lspLauncher func(argv []string) (stdin io.WriteCloser, stdout io.ReadCloser, kill func() error, err error)
+type lspLauncher func(ctx context.Context, argv []string) (lspProc, error)
 
-func realLauncher(argv []string) (io.WriteCloser, io.ReadCloser, func() error, error) {
-	cmd := exec.Command(argv[0], argv[1:]...) //nolint:gosec
-	cmd.Stderr = io.Discard                   // suppress LSP server stderr noise
+func realLauncher(ctx context.Context, argv []string) (lspProc, error) {
+	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...) //nolint:gosec // G204: argv built internally from a fixed server table
+	cmd.Stderr = io.Discard                               // suppress LSP server stderr noise
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("lsp stdin pipe: %w", err)
+		return lspProc{}, fmt.Errorf("lsp stdin pipe: %w", err)
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("lsp stdout pipe: %w", err)
+		return lspProc{}, fmt.Errorf("lsp stdout pipe: %w", err)
 	}
 	if err := cmd.Start(); err != nil {
-		return nil, nil, nil, fmt.Errorf("lsp start: %w", err)
+		return lspProc{}, fmt.Errorf("lsp start: %w", err)
 	}
-	kill := func() error { return cmd.Process.Kill() }
-	return stdin, stdout, kill, nil
+	return lspProc{stdin: stdin, stdout: stdout, kill: func() error { return cmd.Process.Kill() }}, nil
 }
 
 // lspClient drives one LSP session. All calls are synchronous and single-threaded;
@@ -121,19 +129,19 @@ func newLSPClient(launcher lspLauncher) *lspClient {
 	return &lspClient{launcher: launcher}
 }
 
-func (c *lspClient) start(argv []string) error {
+func (c *lspClient) start(ctx context.Context, argv []string) error {
 	launch := c.launcher
 	if launch == nil {
 		launch = realLauncher
 	}
-	stdin, stdout, kill, err := launch(argv)
+	proc, err := launch(ctx, argv)
 	if err != nil {
 		return err
 	}
-	c.stdin = stdin
-	c.stdoutRaw = stdout
-	c.stdout = bufio.NewReader(stdout)
-	c.kill = kill
+	c.stdin = proc.stdin
+	c.stdoutRaw = proc.stdout
+	c.stdout = bufio.NewReader(proc.stdout)
+	c.kill = proc.kill
 	return nil
 }
 

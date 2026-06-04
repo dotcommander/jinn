@@ -6,6 +6,7 @@ package jinn
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -255,7 +256,7 @@ func TestLSP_MissingCharacterAndSymbol(t *testing.T) {
 	e, dir := testEngine(t)
 	writeLSPFile(t, dir, "src.go")
 
-	_, err := e.lspQueryWithLauncher(lspArgs(
+	_, err := e.lspQueryWithLauncher(context.Background(), lspArgs(
 		"action", "definition",
 		"path", "src.go",
 		"line", 1,
@@ -280,7 +281,7 @@ func TestLSP_Definition_NullResponse(t *testing.T) {
 	e, dir := testEngine(t)
 	writeLSPFile(t, dir, "src.go")
 
-	out, err := e.lspQueryWithLauncher(lspArgs(
+	out, err := e.lspQueryWithLauncher(context.Background(), lspArgs(
 		"action", "definition",
 		"path", "src.go",
 		"line", 1,
@@ -301,7 +302,7 @@ func TestLSP_References_NullResponse(t *testing.T) {
 	e, dir := testEngine(t)
 	writeLSPFile(t, dir, "src.go")
 
-	out, err := e.lspQueryWithLauncher(lspArgs(
+	out, err := e.lspQueryWithLauncher(context.Background(), lspArgs(
 		"action", "references",
 		"path", "src.go",
 		"line", 1,
@@ -322,7 +323,7 @@ func TestLSP_References_Truncation(t *testing.T) {
 	e, dir := testEngine(t)
 	writeLSPFile(t, dir, "src.go")
 
-	out, err := e.lspQueryWithLauncher(lspArgs(
+	out, err := e.lspQueryWithLauncher(context.Background(), lspArgs(
 		"action", "references",
 		"path", "src.go",
 		"line", 1,
@@ -343,7 +344,7 @@ func TestLSP_Hover_NullResponse(t *testing.T) {
 	e, dir := testEngine(t)
 	writeLSPFile(t, dir, "src.go")
 
-	out, err := e.lspQueryWithLauncher(lspArgs(
+	out, err := e.lspQueryWithLauncher(context.Background(), lspArgs(
 		"action", "hover",
 		"path", "src.go",
 		"line", 1,
@@ -364,7 +365,7 @@ func TestLSP_Hover_PlainString(t *testing.T) {
 	e, dir := testEngine(t)
 	writeLSPFile(t, dir, "src.go")
 
-	out, err := e.lspQueryWithLauncher(lspArgs(
+	out, err := e.lspQueryWithLauncher(context.Background(), lspArgs(
 		"action", "hover",
 		"path", "src.go",
 		"line", 1,
@@ -385,7 +386,7 @@ func TestLSP_Symbols_NullResponse(t *testing.T) {
 	e, dir := testEngine(t)
 	writeLSPFile(t, dir, "src.go")
 
-	out, err := e.lspQueryWithLauncher(lspArgs(
+	out, err := e.lspQueryWithLauncher(context.Background(), lspArgs(
 		"action", "symbols",
 		"path", "src.go",
 	), newMockLauncherCfg(mockConfig{nullSymbols: true}))
@@ -404,7 +405,7 @@ func TestLSP_Symbols_FlatFormat(t *testing.T) {
 	e, dir := testEngine(t)
 	writeLSPFile(t, dir, "src.go")
 
-	out, err := e.lspQueryWithLauncher(lspArgs(
+	out, err := e.lspQueryWithLauncher(context.Background(), lspArgs(
 		"action", "symbols",
 		"path", "src.go",
 	), newMockLauncherCfg(mockConfig{flatSymbols: true}))
@@ -428,7 +429,7 @@ func TestLSP_Rename_NullResponse(t *testing.T) {
 	e, dir := testEngine(t)
 	writeLSPFile(t, dir, "src.go")
 
-	out, err := e.lspQueryWithLauncher(lspArgs(
+	out, err := e.lspQueryWithLauncher(context.Background(), lspArgs(
 		"action", "rename",
 		"path", "src.go",
 		"line", 1,
@@ -450,7 +451,7 @@ func TestLSP_Rename_MalformedJSON(t *testing.T) {
 	e, dir := testEngine(t)
 	writeLSPFile(t, dir, "src.go")
 
-	_, err := e.lspQueryWithLauncher(lspArgs(
+	_, err := e.lspQueryWithLauncher(context.Background(), lspArgs(
 		"action", "rename",
 		"path", "src.go",
 		"line", 1,
@@ -487,7 +488,7 @@ func TestLSP_TimeoutDefault_ZeroBecomesTen(t *testing.T) {
 	// set to 0 first (which would produce "timed out after 0s" if the guard were
 	// absent), then set to 1. The guard in tool_lsp.go: if timeout <= 0 { timeout = 10 }.
 	// A regression would be timeout=0 producing an instant non-timeout error or panic.
-	_, err := e.lspQueryWithLauncher(lspArgs(
+	_, err := e.lspQueryWithLauncher(context.Background(), lspArgs(
 		"action", "definition",
 		"path", "src.go",
 		"line", 1,

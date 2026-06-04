@@ -141,7 +141,7 @@ func (e *Engine) Dispatch(ctx context.Context, tool string, args map[string]inte
 		result, err := e.undoTool(args)
 		return textResult(result), nil, err
 	case "lsp_query":
-		result, err := e.lspQuery(args)
+		result, err := e.lspQuery(ctx, args)
 		return textResult(result), nil, err
 	case "search_replace":
 		result, err := e.searchReplace(ctx, args)

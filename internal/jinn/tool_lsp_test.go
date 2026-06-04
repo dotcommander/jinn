@@ -1,6 +1,7 @@
 package jinn
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -44,7 +45,7 @@ func TestLSP_InitializeIncludesWorkspaceFolder(t *testing.T) {
 	writeLSPFile(t, dir, "src.go")
 
 	initParams := make(chan map[string]any, 1)
-	_, err := e.lspQueryWithLauncher(lspArgs(
+	_, err := e.lspQueryWithLauncher(context.Background(), lspArgs(
 		"action", "diagnostics",
 		"path", "src.go",
 	), newMockLauncherCfg(mockConfig{initializeParams: initParams}))
@@ -87,7 +88,7 @@ func TestLSP_Definition_Succeeds(t *testing.T) {
 	e, dir := testEngine(t)
 	writeLSPFile(t, dir, "src.go")
 
-	out, err := e.lspQueryWithLauncher(lspArgs(
+	out, err := e.lspQueryWithLauncher(context.Background(), lspArgs(
 		"action", "definition",
 		"path", "src.go",
 		"line", 1,
@@ -111,7 +112,7 @@ func TestLSP_References_Returns3Locations(t *testing.T) {
 	e, dir := testEngine(t)
 	writeLSPFile(t, dir, "src.go")
 
-	out, err := e.lspQueryWithLauncher(lspArgs(
+	out, err := e.lspQueryWithLauncher(context.Background(), lspArgs(
 		"action", "references",
 		"path", "src.go",
 		"line", 1,
@@ -138,7 +139,7 @@ func TestLSP_Hover_ReturnsMarkdown(t *testing.T) {
 	e, dir := testEngine(t)
 	writeLSPFile(t, dir, "src.go")
 
-	out, err := e.lspQueryWithLauncher(lspArgs(
+	out, err := e.lspQueryWithLauncher(context.Background(), lspArgs(
 		"action", "hover",
 		"path", "src.go",
 		"line", 1,
@@ -158,7 +159,7 @@ func TestLSP_Symbols_FormattedTable(t *testing.T) {
 	e, dir := testEngine(t)
 	writeLSPFile(t, dir, "src.go")
 
-	out, err := e.lspQueryWithLauncher(lspArgs(
+	out, err := e.lspQueryWithLauncher(context.Background(), lspArgs(
 		"action", "symbols",
 		"path", "src.go",
 	), newMockLauncher(false))
@@ -191,7 +192,7 @@ func TestLSP_Diagnostics_ReturnsItems(t *testing.T) {
 	e, dir := testEngine(t)
 	writeLSPFile(t, dir, "src.go")
 
-	out, err := e.lspQueryWithLauncher(lspArgs(
+	out, err := e.lspQueryWithLauncher(context.Background(), lspArgs(
 		"action", "diagnostics",
 		"path", "src.go",
 	), newMockLauncher(false))
@@ -214,7 +215,7 @@ func TestLSP_Diagnostics_NullResponse(t *testing.T) {
 	e, dir := testEngine(t)
 	writeLSPFile(t, dir, "src.go")
 
-	out, err := e.lspQueryWithLauncher(lspArgs(
+	out, err := e.lspQueryWithLauncher(context.Background(), lspArgs(
 		"action", "diagnostics",
 		"path", "src.go",
 	), newMockLauncherCfg(mockConfig{nullDiagnostics: true}))
@@ -233,7 +234,7 @@ func TestLSP_UnknownExtension_ErrWithSuggestion(t *testing.T) {
 	e, dir := testEngine(t)
 	writeLSPFile(t, dir, "src.xyz")
 
-	_, err := e.lspQueryWithLauncher(lspArgs(
+	_, err := e.lspQueryWithLauncher(context.Background(), lspArgs(
 		"action", "definition",
 		"path", "src.xyz",
 		"line", 1,
@@ -275,7 +276,7 @@ func TestLSP_MissingArgs(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			e, _ := testEngine(t)
-			_, err := e.lspQueryWithLauncher(tc.argMap, newMockLauncher(false))
+			_, err := e.lspQueryWithLauncher(context.Background(), tc.argMap, newMockLauncher(false))
 			if err == nil {
 				t.Fatal("expected error, got nil")
 			}
@@ -305,7 +306,7 @@ func TestLSP_MissingServerBinary(t *testing.T) {
 	notFound := &exec.Error{Name: "gopls", Err: exec.ErrNotFound}
 	launcher := fakeLauncherError(notFound)
 
-	_, err := e.lspQueryWithLauncher(lspArgs(
+	_, err := e.lspQueryWithLauncher(context.Background(), lspArgs(
 		"action", "definition",
 		"path", "src.go",
 		"line", 1,
@@ -331,7 +332,7 @@ func TestLSP_Timeout(t *testing.T) {
 	e.LSPTimeoutSec = 1
 	writeLSPFile(t, dir, "src.go")
 
-	_, err := e.lspQueryWithLauncher(lspArgs(
+	_, err := e.lspQueryWithLauncher(context.Background(), lspArgs(
 		"action", "definition",
 		"path", "src.go",
 		"line", 1,
@@ -354,7 +355,7 @@ func TestLSP_ShutdownCleanPipeClose(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := e.lspQueryWithLauncher(lspArgs(
+		_, err := e.lspQueryWithLauncher(context.Background(), lspArgs(
 			"action", "hover",
 			"path", "src.go",
 			"line", 1,
@@ -673,7 +674,7 @@ func TestLSP_Rename_WithNewName(t *testing.T) {
 	e, dir := testEngine(t)
 	writeLSPFile(t, dir, "src.go")
 
-	out, err := e.lspQueryWithLauncher(lspArgs(
+	out, err := e.lspQueryWithLauncher(context.Background(), lspArgs(
 		"action", "rename",
 		"path", "src.go",
 		"line", 1,
@@ -696,7 +697,7 @@ func TestLSP_Rename_MissingNewName(t *testing.T) {
 	e, dir := testEngine(t)
 	writeLSPFile(t, dir, "src.go")
 
-	_, err := e.lspQueryWithLauncher(lspArgs(
+	_, err := e.lspQueryWithLauncher(context.Background(), lspArgs(
 		"action", "rename",
 		"path", "src.go",
 		"line", 1,
@@ -779,7 +780,7 @@ func TestLSP_DidOpenSizeGuard(t *testing.T) {
 	}
 	_ = f.Close()
 
-	_, err = e.lspQueryWithLauncher(lspArgs(
+	_, err = e.lspQueryWithLauncher(context.Background(), lspArgs(
 		"action", "hover",
 		"path", "big.go",
 		"line", 1,

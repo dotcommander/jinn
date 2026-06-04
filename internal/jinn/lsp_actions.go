@@ -49,6 +49,12 @@ func (c *lspClient) definition(absPath string, line, char int, workDir string, p
 		return "no definition found", nil
 	}
 
+	return renderLocations(locs, workDir, pathOK, 2), nil
+}
+
+// renderLocations formats a list of LSP locations as "file:line:col" headers with
+// surrounding source context (contextRadius lines on each side).
+func renderLocations(locs []lspLocation, workDir string, pathOK func(string) (string, error), contextRadius int) string {
 	fileCache := make(map[string][]string)
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "%d location(s) found:\n\n", len(locs))
@@ -66,12 +72,12 @@ func (c *lspClient) definition(absPath string, line, char int, workDir string, p
 			continue // server-supplied location escapes sandbox — skip context, keep the file:line header
 		}
 		lines := lspCachedLines(fileCache, safePath)
-		if ctx := lspFormatContext(lines, loc.Range.Start.Line, 2); ctx != "" {
+		if ctx := lspFormatContext(lines, loc.Range.Start.Line, contextRadius); ctx != "" {
 			sb.WriteString(ctx)
 			sb.WriteByte('\n')
 		}
 	}
-	return strings.TrimRight(sb.String(), "\n"), nil
+	return strings.TrimRight(sb.String(), "\n")
 }
 
 func (c *lspClient) references(absPath string, line, char int, workDir string, pathOK func(string) (string, error)) (string, error) {
@@ -99,29 +105,7 @@ func (c *lspClient) references(absPath string, line, char int, workDir string, p
 		locs = locs[:refCap]
 	}
 
-	fileCache := make(map[string][]string)
-	var sb strings.Builder
-	fmt.Fprintf(&sb, "%d location(s) found:\n\n", len(locs))
-	for _, loc := range locs {
-		path := strings.TrimPrefix(loc.URI, "file://")
-		rel := path
-		if workDir != "" {
-			if r, err := filepath.Rel(workDir, path); err == nil {
-				rel = r
-			}
-		}
-		fmt.Fprintf(&sb, "%s:%d:%d\n", rel, loc.Range.Start.Line+1, loc.Range.Start.Character+1)
-		safePath, perr := pathOK(path)
-		if perr != nil {
-			continue // server-supplied location escapes sandbox — skip context, keep the file:line header
-		}
-		lines := lspCachedLines(fileCache, safePath)
-		if ctx := lspFormatContext(lines, loc.Range.Start.Line, 1); ctx != "" {
-			sb.WriteString(ctx)
-			sb.WriteByte('\n')
-		}
-	}
-	result := strings.TrimRight(sb.String(), "\n")
+	result := renderLocations(locs, workDir, pathOK, 1)
 	if truncated {
 		result += fmt.Sprintf("\n[truncated: showing %d of %d]", refCap, total)
 	}
