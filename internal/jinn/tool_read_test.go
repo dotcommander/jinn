@@ -309,7 +309,7 @@ func TestReadFile_LargeFile_Suggestion(t *testing.T) {
 	// Can't easily create a 50MB file in a test; test the error path via the
 	// ErrWithSuggestion struct directly to verify suggestion text is correct.
 	sErr := &ErrWithSuggestion{
-		Err:        fmt.Errorf("file too large: 55 MB (max 50 MB)"),
+		Err:        errors.New("file too large: 55 MB (max 50 MB)"),
 		Suggestion: "file is too large to read in one shot; use start_line/end_line to window, or search_files for a pattern",
 	}
 	if !strings.Contains(sErr.Suggestion, "start_line/end_line") {

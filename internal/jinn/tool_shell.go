@@ -55,7 +55,7 @@ func (e *Engine) runShell(ctx context.Context, args map[string]interface{}) (str
 	cmd, _ := args["command"].(string)
 	if strings.TrimSpace(cmd) == "" {
 		return "", nil, &ErrWithSuggestion{
-			Err:        fmt.Errorf("command is required"),
+			Err:        errors.New("command is required"),
 			Suggestion: "provide a non-empty shell command",
 			Code:       ErrCodeInvalidArgs,
 		}

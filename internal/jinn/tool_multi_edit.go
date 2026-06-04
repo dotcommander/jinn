@@ -1,6 +1,7 @@
 package jinn
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -297,7 +298,7 @@ func (e *Engine) multiEdit(args map[string]interface{}) (*ToolResult, error) {
 	editsRaw, ok := args["edits"].([]interface{})
 	if !ok || len(editsRaw) == 0 {
 		return nil, &ErrWithSuggestion{
-			Err:        fmt.Errorf("edits must be a non-empty array"),
+			Err:        errors.New("edits must be a non-empty array"),
 			Suggestion: "provide a JSON array of edit objects, each with path, old_text, and new_text",
 			Code:       ErrCodeInvalidArgs,
 		}

@@ -37,7 +37,7 @@ func (e *Engine) findFiles(ctx context.Context, args map[string]interface{}) (st
 	pattern, _ := args["pattern"].(string)
 	if pattern == "" {
 		return "", &ErrWithSuggestion{
-			Err:        fmt.Errorf("pattern is required"),
+			Err:        errors.New("pattern is required"),
 			Suggestion: "provide a glob pattern like '*.go' or '**/*.test.ts'",
 		}
 	}

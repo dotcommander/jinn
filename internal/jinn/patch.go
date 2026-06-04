@@ -199,7 +199,7 @@ func parseUpdateChunk(lines []string, startIdx, lastContentLine int, allowMissin
 
 done:
 	if parsed == 0 {
-		return updateChunk{}, i, fmt.Errorf("update hunk does not contain any lines")
+		return updateChunk{}, i, errors.New("update hunk does not contain any lines")
 	}
 
 	return updateChunk{context: ctx, oldLines: oldLines, newLines: newLines, isEOF: isEOF}, i, nil

@@ -207,7 +207,7 @@ func (e *Engine) runGrep(ctx context.Context, cmd string, cmdArgs []string) (std
 	switch {
 	case errors.Is(cmdCtx.Err(), context.Canceled):
 		return "", "", 0, &ErrWithSuggestion{
-			Err:        fmt.Errorf("search_files canceled"),
+			Err:        errors.New("search_files canceled"),
 			Suggestion: "retry the search if cancellation was unintended",
 			Code:       ErrCodeCanceled,
 		}

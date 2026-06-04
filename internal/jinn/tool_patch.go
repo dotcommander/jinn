@@ -1,6 +1,7 @@
 package jinn
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,7 +14,7 @@ import (
 func (e *Engine) applyPatch(args map[string]interface{}) (*ToolResult, error) {
 	patchText, _ := args["patch"].(string)
 	if patchText == "" {
-		return nil, fmt.Errorf("patch parameter is required")
+		return nil, errors.New("patch parameter is required")
 	}
 
 	ops, err := parsePatch(patchText)

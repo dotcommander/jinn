@@ -1,6 +1,7 @@
 package jinn
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -88,7 +89,7 @@ func applyEdit(content []byte, oldText, newText string, fuzzyIndent bool) (strin
 	}
 
 	if count == 0 {
-		return "", false, info, fmt.Errorf("old_text not found in file")
+		return "", false, info, errors.New("old_text not found in file")
 	}
 	if count > 1 {
 		return "", false, info, multiMatchError(count, raw, oldText)
@@ -193,7 +194,7 @@ func (e *Engine) editFile(args map[string]interface{}) (*ToolResult, error) {
 
 	if oldText == "" {
 		return nil, &ErrWithSuggestion{
-			Err:        fmt.Errorf("old_text cannot be empty"),
+			Err:        errors.New("old_text cannot be empty"),
 			Suggestion: "provide a non-empty string to match — to insert at file start, include the existing first line in old_text and prepend in new_text",
 			Code:       ErrCodeOldTextEmpty,
 		}
@@ -250,7 +251,7 @@ func (e *Engine) editFile(args map[string]interface{}) (*ToolResult, error) {
 
 	if updated == string(data) {
 		return nil, &ErrWithSuggestion{
-			Err:        fmt.Errorf("edit produced no changes"),
+			Err:        errors.New("edit produced no changes"),
 			Suggestion: "old_text and new_text are equivalent (possibly after fuzzy normalization) — verify the intended change",
 			Code:       ErrCodeEditNoChange,
 		}

@@ -1,6 +1,7 @@
 package jinn
 
 import (
+	"errors"
 	"fmt"
 	"os/exec"
 	"path/filepath"
@@ -86,13 +87,13 @@ func (e *Engine) lspQueryWithLauncher(args map[string]interface{}, launcher lspL
 
 	if action == "" {
 		return "", &ErrWithSuggestion{
-			Err:        fmt.Errorf("lsp_query: 'action' is required"),
+			Err:        errors.New("lsp_query: 'action' is required"),
 			Suggestion: "set action to one of: definition, references, hover, symbols, diagnostics, rename",
 		}
 	}
 	if path == "" {
 		return "", &ErrWithSuggestion{
-			Err:        fmt.Errorf("lsp_query: 'path' is required"),
+			Err:        errors.New("lsp_query: 'path' is required"),
 			Suggestion: "provide the path to the source file to query",
 		}
 	}

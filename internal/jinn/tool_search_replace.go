@@ -61,7 +61,7 @@ func (e *Engine) collectSRFiles(ctx context.Context, args map[string]interface{}
 			s, ok := item.(string)
 			if !ok {
 				return nil, &ErrWithSuggestion{
-					Err:        fmt.Errorf("files array must contain only strings"),
+					Err:        errors.New("files array must contain only strings"),
 					Suggestion: "provide file paths or glob patterns as strings",
 					Code:       ErrCodeInvalidArgs,
 				}
@@ -70,7 +70,7 @@ func (e *Engine) collectSRFiles(ctx context.Context, args map[string]interface{}
 		}
 	default:
 		return nil, &ErrWithSuggestion{
-			Err:        fmt.Errorf("files is required (string or array of strings)"),
+			Err:        errors.New("files is required (string or array of strings)"),
 			Suggestion: "provide a file path, glob pattern, or array of paths",
 			Code:       ErrCodeInvalidArgs,
 		}
@@ -134,7 +134,7 @@ func (e *Engine) collectSRFiles(ctx context.Context, args map[string]interface{}
 
 	if len(candidates) == 0 {
 		return nil, &ErrWithSuggestion{
-			Err:        fmt.Errorf("no files matched"),
+			Err:        errors.New("no files matched"),
 			Suggestion: "check file paths or glob patterns — use find_files to locate files first",
 			Code:       ErrCodeFileNotFound,
 		}
@@ -220,7 +220,7 @@ func (e *Engine) searchReplace(ctx context.Context, args map[string]interface{})
 	pattern, _ := args["pattern"].(string)
 	if pattern == "" {
 		return nil, &ErrWithSuggestion{
-			Err:        fmt.Errorf("pattern is required"),
+			Err:        errors.New("pattern is required"),
 			Suggestion: "provide a regex pattern to search for",
 			Code:       ErrCodeInvalidArgs,
 		}

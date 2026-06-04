@@ -1,6 +1,7 @@
 package jinn
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -92,7 +93,7 @@ func (e *Engine) readFileContent(resolved string, args map[string]interface{}) (
 	// Either the content detector or the extension is sufficient evidence.
 	if detected == "application/pdf" || ext == ".pdf" {
 		return nil, &ErrWithSuggestion{
-			Err:        fmt.Errorf("pdf extraction not supported in zero-dep mode"),
+			Err:        errors.New("pdf extraction not supported in zero-dep mode"),
 			Suggestion: "convert the PDF to text first (pdftotext, pdftk, or a cloud OCR service) and read the text file",
 			Code:       ErrCodeBinaryFile,
 		}

@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -81,7 +82,7 @@ func (e *Engine) undoPreview(args map[string]interface{}) (string, error) {
 	id, _ := args["id"].(string)
 	if id == "" {
 		return "", &ErrWithSuggestion{
-			Err:        fmt.Errorf("id is required for preview"),
+			Err:        errors.New("id is required for preview"),
 			Suggestion: `use action="list" to see available snapshot IDs`,
 		}
 	}
@@ -116,7 +117,7 @@ func (e *Engine) undoRestore(args map[string]interface{}) (string, error) {
 	id, _ := args["id"].(string)
 	if id == "" {
 		return "", &ErrWithSuggestion{
-			Err:        fmt.Errorf("id is required for restore"),
+			Err:        errors.New("id is required for restore"),
 			Suggestion: `use action="list" to see available snapshot IDs`,
 		}
 	}

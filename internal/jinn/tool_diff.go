@@ -1,6 +1,7 @@
 package jinn
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -13,7 +14,7 @@ func (e *Engine) diffFiles(args map[string]interface{}) (*ToolResult, error) {
 
 	if pathA == "" || pathB == "" {
 		return nil, &ErrWithSuggestion{
-			Err:        fmt.Errorf("diff_files requires both path_a and path_b"),
+			Err:        errors.New("diff_files requires both path_a and path_b"),
 			Suggestion: "provide two file paths to compare",
 			Code:       ErrCodeInvalidArgs,
 		}
