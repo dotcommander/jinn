@@ -72,25 +72,34 @@ func extractSubshellContent(cmdline string) string {
 	return cmdline[first+1 : first+1+second]
 }
 
+// findMatchingParen returns the index of the ) that matches the ( reached
+// while scanning from start, tracking nesting. start points at the '$' of a
+// "$(" opener; depth increments on each '(' and decrements on each ')', so the
+// match is the ) that brings depth back to 0. Returns start (the initial scan
+// position) when no matching ) is found — mirroring the unmatched fallthrough
+// of the original inline loop.
+func findMatchingParen(cmdline string, start int) int {
+	depth := 0
+	for i := start; i < len(cmdline); i++ {
+		switch cmdline[i] {
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 {
+				return i
+			}
+		}
+	}
+	return start
+}
+
 // stripSubshells removes $(...) and backtick expressions so the outer verb
 // is visible to classifySegment.
 func stripSubshells(cmdline string) string {
 	for strings.Contains(cmdline, "$(") {
 		start := strings.Index(cmdline, "$(")
-		depth, end := 0, start
-		for i := start; i < len(cmdline); i++ {
-			switch cmdline[i] {
-			case '(':
-				depth++
-			case ')':
-				depth--
-				if depth == 0 {
-					end = i
-					goto doneParens
-				}
-			}
-		}
-	doneParens:
+		end := findMatchingParen(cmdline, start)
 		cmdline = cmdline[:start] + cmdline[end+1:]
 	}
 	for {
