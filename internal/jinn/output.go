@@ -162,27 +162,3 @@ func truncateOutputTail(raw string, limit int) struct {
 	result.ShownLines = limit
 	return result
 }
-
-// truncateTail keeps the last `limit` lines. Better for shell output
-// where errors and results appear at the end.
-func truncateTail(raw string, limit int) string {
-	if raw == "" {
-		return ""
-	}
-	lines := strings.Split(raw, "\n")
-	if len(lines) > 0 && lines[len(lines)-1] == "" {
-		lines = lines[:len(lines)-1]
-	}
-	count := len(lines)
-	if count <= limit {
-		return raw
-	}
-	var b strings.Builder
-	fmt.Fprintf(&b, "[truncated: %d lines → showing last %d]\n", count, limit)
-	fmt.Fprintf(&b, "[... %d lines omitted ...]\n", count-limit)
-	for _, l := range lines[count-limit:] {
-		b.WriteString(l)
-		b.WriteByte('\n')
-	}
-	return strings.TrimRight(b.String(), "\n")
-}

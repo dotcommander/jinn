@@ -27,58 +27,6 @@ func splitLines(s string) []string {
 	return lines
 }
 
-// truncateHeadDetailed truncates output keeping the first N lines/bytes,
-// whichever limit is hit first. Returns both the content and structured
-// metadata about the truncation. Suitable for file lists where the
-// beginning matters (alphabetical order).
-func truncateHeadDetailed(raw string, maxLines, maxBytes int) (string, TruncationResult) {
-	totalBytes := len(raw)
-	lines := splitLines(raw)
-	totalLines := len(lines)
-
-	result := TruncationResult{
-		TotalLines: totalLines,
-		TotalBytes: totalBytes,
-		MaxLines:   maxLines,
-		MaxBytes:   maxBytes,
-	}
-
-	if totalLines <= maxLines && totalBytes <= maxBytes {
-		result.OutputLines = totalLines
-		result.OutputBytes = totalBytes
-		return raw, result
-	}
-
-	// Collect complete lines from the start that fit both limits.
-	var kept []string
-	keptBytes := 0
-	truncatedBy := "lines"
-
-	for i := 0; i < len(lines) && len(kept) < maxLines; i++ {
-		lineBytes := len(lines[i])
-		if len(kept) > 0 {
-			lineBytes++ // newline separator
-		}
-		if keptBytes+lineBytes > maxBytes {
-			truncatedBy = "bytes"
-			break
-		}
-		kept = append(kept, lines[i])
-		keptBytes += lineBytes
-	}
-
-	if len(kept) >= maxLines && keptBytes <= maxBytes {
-		truncatedBy = "lines"
-	}
-
-	content := strings.Join(kept, "\n")
-	result.Truncated = true
-	result.TruncatedBy = truncatedBy
-	result.OutputLines = len(kept)
-	result.OutputBytes = len(content)
-	return content, result
-}
-
 // truncateTailDetailed truncates output keeping the last N lines/bytes,
 // whichever limit is hit first. Returns both the content and structured
 // metadata about the truncation.

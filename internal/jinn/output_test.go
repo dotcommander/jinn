@@ -60,46 +60,6 @@ func TestTruncateOutput_Empty(t *testing.T) {
 	}
 }
 
-// --- truncateTail ---
-
-func TestTruncateTail_Short(t *testing.T) {
-	t.Parallel()
-	input := "line1\nline2\nline3\n"
-	got := truncateTail(input, 10)
-	if got != input {
-		t.Error("short input should pass through unchanged")
-	}
-}
-
-func TestTruncateTail_Long(t *testing.T) {
-	t.Parallel()
-	var lines []string
-	for i := range 100 {
-		lines = append(lines, fmt.Sprintf("line%d", i))
-	}
-	input := strings.Join(lines, "\n")
-	got := truncateTail(input, 20)
-	if !strings.Contains(got, "[truncated:") {
-		t.Error("should contain truncation header")
-	}
-	if !strings.Contains(got, "showing last 20") {
-		t.Error("should indicate tail-only truncation")
-	}
-	if !strings.Contains(got, "line99") {
-		t.Error("should contain last line")
-	}
-	if strings.Contains(got, "line0\n") {
-		t.Error("should NOT contain first line")
-	}
-}
-
-func TestTruncateTail_Empty(t *testing.T) {
-	t.Parallel()
-	if got := truncateTail("", 10); got != "" {
-		t.Errorf("empty input should return empty, got %q", got)
-	}
-}
-
 // --- boundedWriter ---
 
 func TestBoundedWriter_UnderLimit(t *testing.T) {
