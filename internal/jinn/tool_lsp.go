@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -40,6 +41,18 @@ var lspExtTable = map[string]lspExtEntry{ //nolint:gochecknoglobals
 	".zig":  {[]string{"zls"}, "zig", "install zls (https://github.com/zigtools/zls)"},
 }
 
+// supportedLSPExts returns the sorted, comma-separated list of extensions
+// known to lspExtTable — the single source of truth — so the suggestion
+// message cannot drift from the actual table.
+func supportedLSPExts() string {
+	exts := make([]string, 0, len(lspExtTable))
+	for ext := range lspExtTable {
+		exts = append(exts, ext)
+	}
+	sort.Strings(exts)
+	return strings.Join(exts, ", ")
+}
+
 // lspServerForExt returns the LSP server argv for ext.
 // Returns ErrWithSuggestion when the extension is unknown or the binary is absent.
 func lspServerForExt(ext string) ([]string, error) {
@@ -47,7 +60,7 @@ func lspServerForExt(ext string) ([]string, error) {
 	if !ok {
 		return nil, &ErrWithSuggestion{
 			Err:        fmt.Errorf("no LSP server known for extension %s", ext),
-			Suggestion: "supported extensions: .go, .rs, .py, .ts, .tsx, .js, .jsx, .c, .h, .cpp, .cc, .cxx, .hpp, .java, .lua, .zig",
+			Suggestion: "supported extensions: " + supportedLSPExts(),
 			Code:       ErrCodeLspUnavailable,
 		}
 	}
