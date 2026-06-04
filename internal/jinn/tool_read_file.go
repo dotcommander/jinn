@@ -51,7 +51,8 @@ func (e *Engine) readFile(args map[string]interface{}) (*ToolResult, error) {
 
 	// Conditional read: if the caller supplies if_checksum and it matches the
 	// current file's SHA-256, return a compact unchanged response (no content).
-	if res, err := readUnchangedIfMatch(resolved, path, args); err != nil || res != nil {
+	var res *ToolResult
+	if res, err = readUnchangedIfMatch(resolved, path, args); err != nil || res != nil {
 		return res, err
 	}
 
