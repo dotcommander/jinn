@@ -14,25 +14,7 @@ func (e *Engine) readFile(args map[string]interface{}) (*ToolResult, error) {
 	path, _ := args["path"].(string)
 	resolved, err := e.checkPathForRead(path)
 	if err != nil {
-		// Wrap with "blocked:" prefix for backward compat, preserving any
-		// ErrWithSuggestion so callers can surface the suggestion and Code fields.
-		var sErr *ErrWithSuggestion
-		if errors.As(err, &sErr) {
-			code := sErr.Code
-			if code == "" {
-				code = ErrCodePathOutsideSandbox
-			}
-			return nil, &ErrWithSuggestion{
-				Err:        fmt.Errorf("blocked: %w", sErr.Err),
-				Suggestion: sErr.Suggestion,
-				Code:       code,
-			}
-		}
-		return nil, &ErrWithSuggestion{
-			Err:        fmt.Errorf("blocked: %w", err),
-			Suggestion: "path is blocked by sandbox policy; supply a path inside the workdir",
-			Code:       ErrCodePathOutsideSandbox,
-		}
+		return nil, wrapBlockedReadErr(err)
 	}
 
 	// Image detection: single source of truth in detectIsImage.
@@ -48,7 +30,35 @@ func (e *Engine) readFile(args map[string]interface{}) (*ToolResult, error) {
 		return res, err
 	}
 
-	// Delegate to the shared content reader.
+	return e.readTextFile(resolved, args)
+}
+
+// wrapBlockedReadErr re-wraps a path-check error with the "blocked:" prefix for
+// backward compat, preserving any ErrWithSuggestion's suggestion and Code.
+func wrapBlockedReadErr(err error) error {
+	var sErr *ErrWithSuggestion
+	if errors.As(err, &sErr) {
+		code := sErr.Code
+		if code == "" {
+			code = ErrCodePathOutsideSandbox
+		}
+		return &ErrWithSuggestion{
+			Err:        fmt.Errorf("blocked: %w", sErr.Err),
+			Suggestion: sErr.Suggestion,
+			Code:       code,
+		}
+	}
+	return &ErrWithSuggestion{
+		Err:        fmt.Errorf("blocked: %w", err),
+		Suggestion: "path is blocked by sandbox policy; supply a path inside the workdir",
+		Code:       ErrCodePathOutsideSandbox,
+	}
+}
+
+// readTextFile delegates to the shared content reader, applies the binary
+// fallback, and assembles the final ToolResult with truncation metadata and an
+// optional checksum.
+func (e *Engine) readTextFile(resolved string, args map[string]interface{}) (*ToolResult, error) {
 	result, err := e.readFileContent(resolved, args)
 	if err != nil {
 		return binaryFallbackOrErr(resolved, args, err)
