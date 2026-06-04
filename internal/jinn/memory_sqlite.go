@@ -231,6 +231,32 @@ func (e *Engine) memoryGCTx(ctx context.Context, tx *sql.Tx, scope string) (int,
 	return int(n), nil
 }
 
+// defaultIdempotencyRetention bounds the idempotency dedup table. request_id
+// dedup only guards short-lived retries, so rows older than this are safe to
+// prune. Too short risks re-running a legitimately replayed request; too long
+// wastes space — 7 days is a generous middle ground.
+const defaultIdempotencyRetention = 7 * 24 * time.Hour
+
+// idempotencyGCTx deletes idempotency rows older than retention within an
+// existing transaction. created_at is stored via SQLite CURRENT_TIMESTAMP
+// (UTC "YYYY-MM-DD HH:MM:SS"), so the cutoff is computed with datetime('now',
+// '-N seconds') to compare in the identical stored format. Pruning is global
+// (idempotency rows are not project-scoped). Only rows strictly older than the
+// cutoff are removed, leaving recent in-flight rows untouched.
+func idempotencyGCTx(ctx context.Context, tx *sql.Tx, retention time.Duration) (int, error) {
+	cutoff := fmt.Sprintf("-%d seconds", int64(retention.Seconds()))
+	res, err := tx.ExecContext(ctx,
+		`DELETE FROM idempotency WHERE created_at < datetime('now', ?)`, cutoff)
+	if err != nil {
+		return 0, fmt.Errorf("idempotency: gc: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("idempotency: gc rows: %w", err)
+	}
+	return int(n), nil
+}
+
 // memoryGC deletes expired, non-pinned memory rows. When scope is non-empty
 // only that scope is swept; otherwise all scopes are swept.
 func (e *Engine) memoryGC(ctx context.Context, scope string) (int, error) {

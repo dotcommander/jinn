@@ -195,6 +195,56 @@ func TestIdempotency5b_MemorySaveReplayOnce(t *testing.T) {
 	}
 }
 
+// TestIdempotency5b_GCPrunesStaleIdempotency verifies that memory.gc prunes
+// idempotency rows older than the retention window while keeping recent rows,
+// and reports the pruned count.
+func TestIdempotency5b_GCPrunesStaleIdempotency(t *testing.T) {
+	e, ctx := newIdempotencyEngine(t)
+
+	db, err := e.memDBConn(ctx)
+	if err != nil {
+		t.Fatalf("memDBConn: %v", err)
+	}
+
+	// Old row: created_at well beyond the default 7d retention.
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO idempotency (agent_name, request_id, command, result_json, created_at)
+		 VALUES ('agent', 'old-idem-5b', 'memory.save', '"ok"', datetime('now', '-30 days'))`,
+	); err != nil {
+		t.Fatalf("insert old idempotency row: %v", err)
+	}
+	// Recent row: created now, must survive.
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO idempotency (agent_name, request_id, command, result_json, created_at)
+		 VALUES ('agent', 'recent-idem-5b', 'memory.save', '"ok"', datetime('now'))`,
+	); err != nil {
+		t.Fatalf("insert recent idempotency row: %v", err)
+	}
+
+	gcRaw, err := e.memoryTool(ctx, args("action", "gc", "agent", "agent"))
+	if err != nil {
+		t.Fatalf("gc: %v", err)
+	}
+
+	var gc struct {
+		Deleted            int `json:"deleted"`
+		IdempotencyDeleted int `json:"idempotency_deleted"`
+	}
+	if err := json.Unmarshal([]byte(gcRaw), &gc); err != nil {
+		t.Fatalf("decode gc result %q: %v", gcRaw, err)
+	}
+	if gc.IdempotencyDeleted != 1 {
+		t.Errorf("want idempotency_deleted=1, got %d (raw=%s)", gc.IdempotencyDeleted, gcRaw)
+	}
+
+	if n := dbCount(t, e, ctx, `SELECT COUNT(*) FROM idempotency WHERE request_id='old-idem-5b'`); n != 0 {
+		t.Errorf("want old idempotency row deleted, got %d", n)
+	}
+	if n := dbCount(t, e, ctx, `SELECT COUNT(*) FROM idempotency WHERE request_id='recent-idem-5b'`); n != 1 {
+		t.Errorf("want recent idempotency row to survive, got %d", n)
+	}
+}
+
 // TestIdempotency5b_MemoryGCReplayOnce verifies that memory.gc with the same
 // (agent, request_id) twice returns an identical deleted count and is idempotent.
 func TestIdempotency5b_MemoryGCReplayOnce(t *testing.T) {

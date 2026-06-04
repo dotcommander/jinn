@@ -183,7 +183,7 @@ func resolveAgent(args map[string]interface{}) string {
 // resolveProjectID returns the project id: args["project_id"] → e.currentProjectID().
 func (e *Engine) resolveProjectID(args map[string]interface{}) string {
 	if v := strArg(args, "project_id"); v != "" {
-		return v
+		return normalizeScopePath(v)
 	}
 	return e.currentProjectID()
 }

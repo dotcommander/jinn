@@ -229,6 +229,21 @@ func (e *Engine) memoryGCAction(ctx context.Context, args map[string]interface{}
 		gcScope = rs.scope
 	}
 
+	// idempotency_retention is optional; when absent fall back to the named
+	// default. A single gc sweep bounds both the memory and idempotency tables.
+	retention := defaultIdempotencyRetention
+	if r := strArg(args, "idempotency_retention"); r != "" {
+		d, perr := parseDurationExtended(r)
+		if perr != nil {
+			return "", &ErrWithSuggestion{
+				Err:        fmt.Errorf("invalid idempotency_retention: %w", perr),
+				Suggestion: `use a duration like "7d", "12h", or "2w"`,
+				Code:       ErrCodeInvalidArgs,
+			}
+		}
+		retention = d
+	}
+
 	agent := resolveAgent(args)
 	requestID := strArg(args, "request_id")
 
@@ -242,10 +257,15 @@ func (e *Engine) memoryGCAction(ctx context.Context, args map[string]interface{}
 		if gcErr != nil {
 			return nil, gcErr
 		}
+		idemN, idemErr := idempotencyGCTx(ctx, tx, retention)
+		if idemErr != nil {
+			return nil, idemErr
+		}
 		result := struct {
-			Deleted int    `json:"deleted"`
-			Scope   string `json:"scope,omitempty"`
-		}{n, gcScope}
+			Deleted            int    `json:"deleted"`
+			IdempotencyDeleted int    `json:"idempotency_deleted"`
+			Scope              string `json:"scope,omitempty"`
+		}{n, idemN, gcScope}
 		data, mErr := json.Marshal(result)
 		if mErr != nil {
 			return nil, fmt.Errorf("memory: gc marshal: %w", mErr)

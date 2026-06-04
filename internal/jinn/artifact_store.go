@@ -7,30 +7,39 @@ import (
 	"fmt"
 )
 
-// insertArtifactTx inserts an artifact_added event and then the artifact row
-// inside the provided transaction. Returns the populated Artifact.
-// The caller must have already validated task_id and file_path.
-func insertArtifactTx(ctx context.Context, tx *sql.Tx, agentName, taskID, projectID, filePath, contentType string) (*Artifact, error) {
+// insertArtifactTx inserts the artifact row inside the provided transaction and
+// returns the populated Artifact. The caller must have already validated task_id
+// and file_path.
+//
+// eventID selects the linkage mode:
+//   - eventID == 0: emit a dedicated artifact_added event and link to it
+//     (artifact.add path).
+//   - eventID != 0: link the artifact to the supplied pre-existing event,
+//     emitting no extra event (push batch path).
+func insertArtifactTx(ctx context.Context, tx *sql.Tx, agentName, taskID, projectID, filePath, contentType string, eventID int64) (*Artifact, error) {
 	artifactID := newID("artifact")
 
-	// Build event metadata with artifact provenance.
-	metaBytes, _ := json.Marshal(map[string]any{
-		"artifact_id":  artifactID,
-		"file_path":    filePath,
-		"content_type": contentType,
-	})
+	if eventID == 0 {
+		// Build event metadata with artifact provenance.
+		metaBytes, _ := json.Marshal(map[string]any{
+			"artifact_id":  artifactID,
+			"file_path":    filePath,
+			"content_type": contentType,
+		})
 
-	eventID, err := insertEventTx(ctx, tx, "artifact_added", agentName, projectID, taskID,
-		fmt.Sprintf("Artifact added: %s", filePath), string(metaBytes))
-	if err != nil {
-		return nil, fmt.Errorf("artifact: insert event: %w", err)
+		id, err := insertEventTx(ctx, tx, "artifact_added", agentName, projectID, taskID,
+			fmt.Sprintf("Artifact added: %s", filePath), string(metaBytes))
+		if err != nil {
+			return nil, fmt.Errorf("artifact: insert event: %w", err)
+		}
+		eventID = id
 	}
 
 	var ctVal any
 	if contentType != "" {
 		ctVal = contentType
 	}
-	_, err = tx.ExecContext(ctx, `
+	_, err := tx.ExecContext(ctx, `
 		INSERT INTO artifacts (id, task_id, project_id, event_id, file_path, content_type, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 	`, artifactID, taskID, projectID, eventID, filePath, ctVal)

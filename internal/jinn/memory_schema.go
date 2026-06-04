@@ -61,9 +61,6 @@ func ensureSchema(ctx context.Context, db *sql.DB) error {
 			kind            TEXT NOT NULL DEFAULT 'fact',
 			pinned          INTEGER NOT NULL DEFAULT 0,
 			expires_at      TIMESTAMP,
-			half_life_days  REAL,
-			source_event_id INTEGER,
-			source_task_id  TEXT,
 			created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			UNIQUE(scope, scope_id, key)

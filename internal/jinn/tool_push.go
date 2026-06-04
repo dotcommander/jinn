@@ -173,19 +173,11 @@ func (e *Engine) pushTool(ctx context.Context, args map[string]interface{}) (str
 
 		// Step 2: artifacts (all linked to eventID from step 1).
 		for _, art := range artifacts {
-			artifactID := newID("artifact")
-			var ctVal any
-			if art.ContentType != "" {
-				ctVal = art.ContentType
-			}
-			_, insErr := tx.ExecContext(ctx, `
-				INSERT INTO artifacts (id, task_id, project_id, event_id, file_path, content_type, created_at)
-				VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-			`, artifactID, taskID, projectID, eventID, art.FilePath, ctVal)
+			a, insErr := insertArtifactTx(ctx, tx, agent, taskID, projectID, art.FilePath, art.ContentType, eventID)
 			if insErr != nil {
 				return nil, fmt.Errorf("push: insert artifact %q: %w", art.FilePath, insErr)
 			}
-			result.ArtifactIDs = append(result.ArtifactIDs, artifactID)
+			result.ArtifactIDs = append(result.ArtifactIDs, a.ID)
 		}
 
 		// Step 3: memories via the shared memoryUpsertTx.

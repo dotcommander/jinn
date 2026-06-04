@@ -45,7 +45,7 @@ func (e *Engine) artifactAdd(ctx context.Context, args map[string]interface{}) (
 		if projErr := ensureProject(ctx, tx, projectID); projErr != nil {
 			return nil, projErr
 		}
-		a, insErr := insertArtifactTx(ctx, tx, agent, taskID, projectID, filePath, contentType)
+		a, insErr := insertArtifactTx(ctx, tx, agent, taskID, projectID, filePath, contentType, 0)
 		if insErr != nil {
 			return nil, insErr
 		}
