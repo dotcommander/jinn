@@ -59,7 +59,7 @@ func (e *Engine) diffFiles(args map[string]interface{}) (*ToolResult, error) {
 		return &ToolResult{
 			Text: "files are identical",
 			Meta: map[string]any{
-				"is_identical":      true,
+				"is_identical":       true,
 				"first_changed_line": 0,
 			},
 		}, nil
@@ -68,7 +68,7 @@ func (e *Engine) diffFiles(args map[string]interface{}) (*ToolResult, error) {
 	return &ToolResult{
 		Text: strings.TrimRight(b.String(), "\n"),
 		Meta: map[string]any{
-			"is_identical":      false,
+			"is_identical":       false,
 			"first_changed_line": firstLine,
 		},
 	}, nil

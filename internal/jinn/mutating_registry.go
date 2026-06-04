@@ -8,8 +8,9 @@ package jinn
 // (mutating_registry_test.go) fails loudly if the two ever drift.
 //
 // Read-only actions are intentionally ABSENT and must stay absent:
-//   task.get, task.list, memory.recall, memory.list, event.list,
-//   artifact.list, and resume peek (resumePeek performs zero writes).
+//
+//	task.get, task.list, memory.recall, memory.list, event.list,
+//	artifact.list, and resume peek (resumePeek performs zero writes).
 type mutatingAction struct {
 	Tool    string // Dispatch tool name (engine.go switch)
 	Action  string // sub-action value (args["action"]); "" when the tool has no action fan-out
