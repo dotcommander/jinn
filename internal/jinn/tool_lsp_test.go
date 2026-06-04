@@ -774,9 +774,9 @@ func TestLSP_DidOpenSizeGuard(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Seek past the limit and write one byte to create a sparse file of the right size.
-	if _, err := f.WriteAt([]byte{0}, maxLSPFileSize+1); err != nil {
+	if _, wErr := f.WriteAt([]byte{0}, maxLSPFileSize+1); wErr != nil {
 		f.Close()
-		t.Fatal(err)
+		t.Fatal(wErr)
 	}
 	f.Close()
 

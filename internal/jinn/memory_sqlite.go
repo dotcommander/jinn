@@ -54,8 +54,8 @@ func (e *Engine) memDBConn(ctx context.Context) (*sql.DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return nil, fmt.Errorf("memory: mkdir: %w", err)
+	if mkErr := os.MkdirAll(filepath.Dir(path), 0o700); mkErr != nil {
+		return nil, fmt.Errorf("memory: mkdir: %w", mkErr)
 	}
 
 	// modernc.org/sqlite recognizes _pragma=name(value) and _txlock=immediate

@@ -476,7 +476,7 @@ func TestApplyPatch_MixedOperations(t *testing.T) {
 		t.Fatalf("add failed: %q, %v", string(data), err)
 	}
 	// Verify delete.
-	if _, err := os.Stat(deleteTarget); !os.IsNotExist(err) {
+	if _, statErr := os.Stat(deleteTarget); !os.IsNotExist(statErr) {
 		t.Fatal("delete failed")
 	}
 	// Verify update.

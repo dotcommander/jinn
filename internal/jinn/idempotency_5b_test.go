@@ -74,18 +74,18 @@ func TestIdempotency5b_GCPrunesStaleIdempotency(t *testing.T) {
 	}
 
 	// Old row: created_at well beyond the default 7d retention.
-	if _, err := db.ExecContext(ctx,
+	if _, insErr := db.ExecContext(ctx,
 		`INSERT INTO idempotency (agent_name, request_id, command, result_json, created_at)
 		 VALUES ('agent', 'old-idem-5b', 'memory.save', '"ok"', datetime('now', '-30 days'))`,
-	); err != nil {
-		t.Fatalf("insert old idempotency row: %v", err)
+	); insErr != nil {
+		t.Fatalf("insert old idempotency row: %v", insErr)
 	}
 	// Recent row: created now, must survive.
-	if _, err := db.ExecContext(ctx,
+	if _, insErr := db.ExecContext(ctx,
 		`INSERT INTO idempotency (agent_name, request_id, command, result_json, created_at)
 		 VALUES ('agent', 'recent-idem-5b', 'memory.save', '"ok"', datetime('now'))`,
-	); err != nil {
-		t.Fatalf("insert recent idempotency row: %v", err)
+	); insErr != nil {
+		t.Fatalf("insert recent idempotency row: %v", insErr)
 	}
 
 	gcRaw, err := e.memoryTool(ctx, args("action", "gc", "agent", "agent"))
@@ -121,11 +121,11 @@ func TestIdempotency5b_MemoryGCReplayOnce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("memDBConn: %v", err)
 	}
-	if _, err := db.ExecContext(ctx,
+	if _, insErr := db.ExecContext(ctx,
 		`INSERT INTO memory (scope, scope_id, key, value, value_type, kind, pinned, expires_at)
 		 VALUES ('global', '', 'expired-gc-5b', 'bye', 'string', 'fact', 0, datetime('now', '-1 hour'))`,
-	); err != nil {
-		t.Fatalf("insert expired row: %v", err)
+	); insErr != nil {
+		t.Fatalf("insert expired row: %v", insErr)
 	}
 
 	gcArgs := args(

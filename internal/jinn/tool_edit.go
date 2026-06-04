@@ -203,8 +203,8 @@ func (e *Engine) editFile(args map[string]interface{}) (*ToolResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := e.tracker.checkStale(resolved); err != nil {
-		return nil, err
+	if staleErr := e.tracker.checkStale(resolved); staleErr != nil {
+		return nil, staleErr
 	}
 
 	data, err := os.ReadFile(resolved)
@@ -285,8 +285,8 @@ func (e *Engine) editFile(args map[string]interface{}) (*ToolResult, error) {
 
 	_ = e.recordSnapshot(resolved, path, "edit_file", data)
 
-	if err := e.atomicWriteFile(resolved, updated); err != nil {
-		return nil, err
+	if writeErr := e.atomicWriteFile(resolved, updated); writeErr != nil {
+		return nil, writeErr
 	}
 
 	oldLines := strings.Count(oldText, "\n") + 1

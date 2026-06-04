@@ -151,9 +151,9 @@ func (e *Engine) memoryList(ctx context.Context, args map[string]interface{}) (s
 		return "", err
 	}
 	if boolArg(args, "include_values") {
-		entries, err := e.memoryListScopedWithValues(ctx, rs.scope, rs.scopeID)
-		if err != nil {
-			return "", err
+		entries, listErr := e.memoryListScopedWithValues(ctx, rs.scope, rs.scopeID)
+		if listErr != nil {
+			return "", listErr
 		}
 		if entries == nil {
 			entries = []memoryEntry{}
@@ -162,9 +162,9 @@ func (e *Engine) memoryList(ctx context.Context, args map[string]interface{}) (s
 			Entries []memoryEntry `json:"entries"`
 			Count   int           `json:"count"`
 		}{entries, len(entries)}
-		data, err := json.Marshal(result)
-		if err != nil {
-			return "", fmt.Errorf("memory: list marshal: %w", err)
+		data, mErr := json.Marshal(result)
+		if mErr != nil {
+			return "", fmt.Errorf("memory: list marshal: %w", mErr)
 		}
 		return string(data), nil
 	}

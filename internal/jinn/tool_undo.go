@@ -143,14 +143,14 @@ func (e *Engine) undoRestore(args map[string]interface{}) (string, error) {
 	}
 
 	// TOCTOU stale check before overwriting.
-	if err := e.tracker.checkStale(resolved); err != nil {
-		return "", err
+	if staleErr := e.tracker.checkStale(resolved); staleErr != nil {
+		return "", staleErr
 	}
 
 	if ent.Created {
 		// File was created by the op — undo means delete it.
-		if err := os.Remove(resolved); err != nil && !os.IsNotExist(err) {
-			return "", fmt.Errorf("restore: remove %s: %w", ent.DisplayPath, err)
+		if rmErr := os.Remove(resolved); rmErr != nil && !os.IsNotExist(rmErr) {
+			return "", fmt.Errorf("restore: remove %s: %w", ent.DisplayPath, rmErr)
 		}
 		return fmt.Sprintf("restored: deleted %s (undid %q)", ent.DisplayPath, ent.Op), nil
 	}

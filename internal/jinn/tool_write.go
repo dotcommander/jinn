@@ -105,13 +105,13 @@ func (e *Engine) writeFile(args map[string]interface{}) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := e.tracker.checkStale(resolved); err != nil {
-		return "", err
+	if staleErr := e.tracker.checkStale(resolved); staleErr != nil {
+		return "", staleErr
 	}
 
 	if dryRun, ok := args["dry_run"].(bool); ok && dryRun {
-		existing, err := os.ReadFile(resolved)
-		if err != nil {
+		existing, rErr := os.ReadFile(resolved)
+		if rErr != nil {
 			return fmt.Sprintf("[dry-run] would create %s (%d bytes)", path, len(content)), nil
 		}
 		return unifiedDiff(string(existing), content, path, 3), nil

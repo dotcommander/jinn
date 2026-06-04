@@ -60,7 +60,7 @@ func (e *Engine) detectProject(args map[string]any) (string, error) {
 
 	result := projectInfo{}
 	for _, p := range probes {
-		if _, err := os.Stat(filepath.Join(resolved, p.configFile)); err == nil {
+		if _, statErr := os.Stat(filepath.Join(resolved, p.configFile)); statErr == nil {
 			result.ConfigFiles = append(result.ConfigFiles, p.configFile)
 			if p.language != "" {
 				result.Languages = append(result.Languages, p.language)
@@ -74,7 +74,7 @@ func (e *Engine) detectProject(args map[string]any) (string, error) {
 	}
 
 	// Secondary signals
-	if _, err := os.Stat(filepath.Join(resolved, "tsconfig.json")); err == nil {
+	if _, statErr := os.Stat(filepath.Join(resolved, "tsconfig.json")); statErr == nil {
 		for i, lang := range result.Languages {
 			if lang == "JavaScript" {
 				result.Languages[i] = "TypeScript"
@@ -84,7 +84,7 @@ func (e *Engine) detectProject(args map[string]any) (string, error) {
 
 	// Read package.json scripts if present
 	pkgPath := filepath.Join(resolved, "package.json")
-	if data, err := os.ReadFile(pkgPath); err == nil {
+	if data, rErr := os.ReadFile(pkgPath); rErr == nil {
 		var pkg struct {
 			Scripts map[string]string `json:"scripts"`
 		}
@@ -121,7 +121,7 @@ func (e *Engine) detectProject(args map[string]any) (string, error) {
 
 	// Framework detection: accept either config extension, add once.
 	for _, cfg := range []string{"next.config.js", "next.config.mjs"} {
-		if _, err := os.Stat(filepath.Join(resolved, cfg)); err == nil {
+		if _, statErr := os.Stat(filepath.Join(resolved, cfg)); statErr == nil {
 			result.Frameworks = append(result.Frameworks, "Next.js")
 			break
 		}
