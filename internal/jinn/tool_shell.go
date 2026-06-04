@@ -13,7 +13,27 @@ import (
 )
 
 // shellAllowList is the set of environment variables passed to shell subprocesses.
-// All other host variables (API keys, credentials, tokens) are excluded.
+// The list is an explicit allowlist (not a denylist) so the default for any
+// unrecognized host variable is "excluded". Before adding an entry, decide which
+// category it falls into:
+//
+//	(a) Included — minimal-unix essentials. These are non-secret and required for
+//	    commands to run correctly: PATH (binary resolution), HOME (home dir),
+//	    LANG/LC_ALL/TZ (locale & time formatting), TERM (terminal capabilities),
+//	    USER/LOGNAME (identity for tools that branch on it), TMPDIR (scratch space),
+//	    SHELL (shell selection). Add a var here only if it is non-secret AND a
+//	    common command will misbehave without it.
+//
+//	(b) Intentionally EXCLUDED — credential-bearing patterns. Never add anything
+//	    matching API keys, tokens, secrets, or auth material (e.g. *_API_KEY,
+//	    *_TOKEN, *_SECRET, AWS_*, GITHUB_TOKEN, OPENAI_API_KEY, SSH_AUTH_SOCK,
+//	    GPG_*). The whole point of this allowlist is to keep host secrets out of
+//	    subprocesses; a single such addition defeats it.
+//
+//	(c) Intentionally EXCLUDED — non-essential XDG / convenience dirs. Variables
+//	    like XDG_CONFIG_HOME, XDG_CACHE_HOME, XDG_DATA_HOME, XDG_RUNTIME_DIR are
+//	    omitted because they are not required for correctness and can leak host
+//	    paths / state into the subprocess. Omit unless a concrete need is proven.
 var shellAllowList = []string{"PATH", "HOME", "LANG", "LC_ALL", "TERM", "USER", "LOGNAME", "TMPDIR", "TZ", "SHELL"}
 
 // shellEnv returns a minimal environment for shell commands, preventing
