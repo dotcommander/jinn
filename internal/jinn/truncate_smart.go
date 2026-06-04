@@ -36,18 +36,8 @@ func isCSyntaxExt(ext string) bool {
 //
 // Braces inside string literals (both double-quoted and backtick-quoted) and
 // line comments (//) are ignored during depth counting.
-func truncateOutputSmart(raw string, limit int, ext string) struct {
-	Content    string
-	Truncated  bool
-	TotalLines int
-	ShownLines int
-} {
-	result := struct {
-		Content    string
-		Truncated  bool
-		TotalLines int
-		ShownLines int
-	}{}
+func truncateOutputSmart(raw string, limit int, ext string) truncateResult {
+	result := truncateResult{}
 
 	if raw == "" {
 		return result

@@ -33,12 +33,7 @@ func oversizedLineResult(resolved string, lines []string, startLine, total int) 
 // assembleReadResult builds the final readContentResult, attaching a
 // continuation hint and remainder temp file when the window or the truncation
 // strategy dropped lines.
-func assembleReadResult(resolved string, lines []string, w readWindow, tr struct {
-	Content    string
-	Truncated  bool
-	TotalLines int
-	ShownLines int
-}) *readContentResult {
+func assembleReadResult(resolved string, lines []string, w readWindow, tr truncateResult) *readContentResult {
 	// Determine if the file itself is longer than the window requested.
 	windowTruncated := w.total > w.endLine
 
@@ -170,18 +165,8 @@ func renderWindow(lines []string, startLine, endLine int, lineNumbers bool) stri
 }
 
 // applyTruncateStrategy collapses the windowed chunk per the chosen mode.
-func applyTruncateStrategy(rawContent, truncateMode, ext string) struct {
-	Content    string
-	Truncated  bool
-	TotalLines int
-	ShownLines int
-} {
-	var tr struct {
-		Content    string
-		Truncated  bool
-		TotalLines int
-		ShownLines int
-	}
+func applyTruncateStrategy(rawContent, truncateMode, ext string) truncateResult {
+	var tr truncateResult
 	switch truncateMode {
 	case "head":
 		tr = truncateOutputHead(rawContent, readTruncLines)

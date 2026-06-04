@@ -25,6 +25,15 @@ func truncateOutput(raw string, limit int) string {
 	return truncateOutputDetailed(raw, limit).Content
 }
 
+// truncateResult is the shared shape returned by the line-truncation helpers:
+// the rendered content plus metadata about how many lines were shown.
+type truncateResult struct {
+	Content    string
+	Truncated  bool
+	TotalLines int
+	ShownLines int
+}
+
 // truncationInfo describes how output was truncated.
 type truncationInfo struct {
 	Truncated   bool `json:"truncated"`
@@ -34,26 +43,10 @@ type truncationInfo struct {
 
 // truncateOutputDetailed truncates output and returns both the content
 // and structured metadata about the truncation.
-func truncateOutputDetailed(raw string, limit int) struct {
-	Content    string
-	Truncated  bool
-	TotalLines int
-	ShownLines int
-} {
-	result := struct {
-		Content    string
-		Truncated  bool
-		TotalLines int
-		ShownLines int
-	}{}
+func truncateOutputDetailed(raw string, limit int) truncateResult {
+	result := truncateResult{}
 
-	if raw == "" {
-		return result
-	}
-	lines := strings.Split(raw, "\n")
-	if len(lines) > 0 && lines[len(lines)-1] == "" {
-		lines = lines[:len(lines)-1]
-	}
+	lines := splitLines(raw)
 	count := len(lines)
 	result.TotalLines = count
 
@@ -84,80 +77,47 @@ func truncateOutputDetailed(raw string, limit int) struct {
 
 // truncateOutputHead keeps the first limit lines and appends a pagination hint.
 // The hint format matches pi's convention: agents use start_line=N+1 to continue.
-func truncateOutputHead(raw string, limit int) struct {
-	Content    string
-	Truncated  bool
-	TotalLines int
-	ShownLines int
-} {
-	result := struct {
-		Content    string
-		Truncated  bool
-		TotalLines int
-		ShownLines int
-	}{}
-	if raw == "" {
-		return result
-	}
-	lines := strings.Split(raw, "\n")
-	if len(lines) > 0 && lines[len(lines)-1] == "" {
-		lines = lines[:len(lines)-1]
-	}
-	count := len(lines)
-	result.TotalLines = count
-	if count < limit {
-		result.Content = raw
-		result.ShownLines = count
-		return result
-	}
-	kept := lines[:limit]
-	var b strings.Builder
-	for _, l := range kept {
-		b.WriteString(l)
-		b.WriteByte('\n')
-	}
-	fmt.Fprintf(&b, "[truncated: showing first %d of %d lines — use start_line=%d to continue]", limit, count, limit+1)
-	result.Content = b.String()
-	result.Truncated = true
-	result.ShownLines = limit
-	return result
+func truncateOutputHead(raw string, limit int) truncateResult {
+	return truncateOutputEnd(raw, limit, false)
 }
 
 // truncateOutputTail keeps the last limit lines and prepends a marker.
-func truncateOutputTail(raw string, limit int) struct {
-	Content    string
-	Truncated  bool
-	TotalLines int
-	ShownLines int
-} {
-	result := struct {
-		Content    string
-		Truncated  bool
-		TotalLines int
-		ShownLines int
-	}{}
-	if raw == "" {
-		return result
-	}
-	lines := strings.Split(raw, "\n")
-	if len(lines) > 0 && lines[len(lines)-1] == "" {
-		lines = lines[:len(lines)-1]
-	}
+func truncateOutputTail(raw string, limit int) truncateResult {
+	return truncateOutputEnd(raw, limit, true)
+}
+
+// truncateOutputEnd keeps limit lines from one end of raw. When tail is false it
+// keeps the first limit lines and appends a continuation hint; when tail is true
+// it keeps the last limit lines and prepends a marker. Behavior and output
+// strings match the original head/tail implementations exactly.
+func truncateOutputEnd(raw string, limit int, tail bool) truncateResult {
+	result := truncateResult{}
+	lines := splitLines(raw)
 	count := len(lines)
 	result.TotalLines = count
-	if count <= limit {
+	// Head returns raw when count < limit; tail when count <= limit.
+	if (tail && count <= limit) || (!tail && count < limit) {
 		result.Content = raw
 		result.ShownLines = count
 		return result
 	}
-	kept := lines[count-limit:]
+
 	var b strings.Builder
-	fmt.Fprintf(&b, "[truncated: showing last %d of %d lines]\n", limit, count)
-	for _, l := range kept {
-		b.WriteString(l)
-		b.WriteByte('\n')
+	if tail {
+		fmt.Fprintf(&b, "[truncated: showing last %d of %d lines]\n", limit, count)
+		for _, l := range lines[count-limit:] {
+			b.WriteString(l)
+			b.WriteByte('\n')
+		}
+		result.Content = strings.TrimRight(b.String(), "\n")
+	} else {
+		for _, l := range lines[:limit] {
+			b.WriteString(l)
+			b.WriteByte('\n')
+		}
+		fmt.Fprintf(&b, "[truncated: showing first %d of %d lines — use start_line=%d to continue]", limit, count, limit+1)
+		result.Content = b.String()
 	}
-	result.Content = strings.TrimRight(b.String(), "\n")
 	result.Truncated = true
 	result.ShownLines = limit
 	return result
