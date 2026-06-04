@@ -99,7 +99,7 @@ func (e *Engine) memorySave(ctx context.Context, args map[string]interface{}) (s
 		return "", err
 	}
 
-	result, err := runIdempotent(ctx, db, agent, requestID, "memory.save", func(tx *sql.Tx) (any, error) {
+	result, err := runIdempotent(ctx, db, idempotentRequest{agent: agent, requestID: requestID, command: "memory.save", fn: func(tx *sql.Tx) (any, error) {
 		if uErr := memoryUpsertTx(ctx, tx, memoryUpsert{
 			scope:     rs.scope,
 			scopeID:   rs.scopeID,
@@ -112,7 +112,7 @@ func (e *Engine) memorySave(ctx context.Context, args map[string]interface{}) (s
 			return nil, uErr
 		}
 		return "saved: " + key, nil
-	})
+	}})
 	if err != nil {
 		return "", err
 	}
@@ -199,7 +199,7 @@ func (e *Engine) memoryForget(ctx context.Context, args map[string]interface{}) 
 		return "", err
 	}
 
-	result, err := runIdempotent(ctx, db, agent, requestID, "memory.forget", func(tx *sql.Tx) (any, error) {
+	result, err := runIdempotent(ctx, db, idempotentRequest{agent: agent, requestID: requestID, command: "memory.forget", fn: func(tx *sql.Tx) (any, error) {
 		if _, delErr := tx.ExecContext(ctx,
 			"DELETE FROM memory WHERE scope=? AND scope_id=? AND key=?",
 			rs.scope, rs.scopeID, key,
@@ -207,7 +207,7 @@ func (e *Engine) memoryForget(ctx context.Context, args map[string]interface{}) 
 			return nil, fmt.Errorf("memory: forget: %w", delErr)
 		}
 		return "forgotten: " + key, nil
-	})
+	}})
 	if err != nil {
 		return "", err
 	}
@@ -249,7 +249,7 @@ func (e *Engine) memoryGCAction(ctx context.Context, args map[string]interface{}
 		return "", err
 	}
 
-	out, err := runIdempotent(ctx, db, agent, requestID, "memory.gc", func(tx *sql.Tx) (any, error) {
+	out, err := runIdempotent(ctx, db, idempotentRequest{agent: agent, requestID: requestID, command: "memory.gc", fn: func(tx *sql.Tx) (any, error) {
 		n, gcErr := e.memoryGCTx(ctx, tx, gcScope)
 		if gcErr != nil {
 			return nil, gcErr
@@ -268,7 +268,7 @@ func (e *Engine) memoryGCAction(ctx context.Context, args map[string]interface{}
 			return nil, fmt.Errorf("memory: gc marshal: %w", mErr)
 		}
 		return string(data), nil
-	})
+	}})
 	if err != nil {
 		return "", err
 	}

@@ -108,21 +108,26 @@ func normalizeForFuzzyMatch(s string) string {
 	return b.String()
 }
 
+// runeASCIIMap holds the discrete 1:1 substitutions for normalizeRune: smart
+// quotes \u2192 ASCII quote, Unicode dashes \u2192 '-', and the non-range special spaces
+// \u2192 ' '. The contiguous space range U+2002..U+200A is handled separately in
+// normalizeRune.
+var runeASCIIMap = map[rune]byte{
+	'\u2018': '\'', '\u2019': '\'', '\u201A': '\'', '\u201B': '\'',
+	'\u201C': '"', '\u201D': '"', '\u201E': '"', '\u201F': '"',
+	'\u2010': '-', '\u2011': '-', '\u2012': '-', '\u2013': '-',
+	'\u2014': '-', '\u2015': '-', '\u2212': '-',
+	'\u00A0': ' ', '\u202F': ' ', '\u205F': ' ', '\u3000': ' ',
+}
+
 // normalizeRune maps a Unicode smart quote, dash, or special space to its ASCII
 // equivalent. The second return is false when r has no mapping (write r as-is).
 func normalizeRune(r rune) (byte, bool) {
-	switch {
-	case r == '\u2018' || r == '\u2019' || r == '\u201A' || r == '\u201B':
-		return '\'', true
-	case r == '\u201C' || r == '\u201D' || r == '\u201E' || r == '\u201F':
-		return '"', true
-	case r == '\u2010' || r == '\u2011' || r == '\u2012' || r == '\u2013' ||
-		r == '\u2014' || r == '\u2015' || r == '\u2212':
-		return '-', true
-	case r == '\u00A0' || (r >= '\u2002' && r <= '\u200A') ||
-		r == '\u202F' || r == '\u205F' || r == '\u3000':
-		return ' ', true
-	default:
-		return 0, false
+	if b, ok := runeASCIIMap[r]; ok {
+		return b, true
 	}
+	if r >= '\u2002' && r <= '\u200A' {
+		return ' ', true
+	}
+	return 0, false
 }

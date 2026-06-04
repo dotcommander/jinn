@@ -20,25 +20,36 @@ func inferValueType(value string) string {
 	if _, err := strconv.ParseFloat(v, 64); err == nil {
 		return "number"
 	}
-	if len(v) >= 2 {
-		if v[0] == '[' && v[len(v)-1] == ']' {
-			var js interface{}
-			if json.Unmarshal([]byte(v), &js) == nil {
-				if _, ok := js.([]interface{}); ok {
-					return "array"
-				}
-			}
-		}
-		if v[0] == '{' && v[len(v)-1] == '}' {
-			var js interface{}
-			if json.Unmarshal([]byte(v), &js) == nil {
-				if _, ok := js.(map[string]interface{}); ok {
-					return "json"
-				}
+	if t := inferJSONType(v); t != "" {
+		return t
+	}
+	return "string"
+}
+
+// inferJSONType returns "array" or "json" when v is a syntactically valid JSON
+// array or object respectively, else "". Mirrors inferValueType's bracket-check
+// detection (delimiters must match and the payload must unmarshal to the kind).
+func inferJSONType(v string) string {
+	if len(v) < 2 {
+		return ""
+	}
+	if v[0] == '[' && v[len(v)-1] == ']' {
+		var js interface{}
+		if json.Unmarshal([]byte(v), &js) == nil {
+			if _, ok := js.([]interface{}); ok {
+				return "array"
 			}
 		}
 	}
-	return "string"
+	if v[0] == '{' && v[len(v)-1] == '}' {
+		var js interface{}
+		if json.Unmarshal([]byte(v), &js) == nil {
+			if _, ok := js.(map[string]interface{}); ok {
+				return "json"
+			}
+		}
+	}
+	return ""
 }
 
 // boolToInt converts bool to SQLite integer (1/0).

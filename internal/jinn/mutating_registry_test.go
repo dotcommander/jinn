@@ -12,9 +12,11 @@ import (
 // t.Parallel() here — matches the convention in idempotency_test.go /
 // idempotency_5b_test.go.
 
-// runIdempotentLiteralRE captures the 5th positional argument (the command
-// string literal) of a runIdempotent(...) call.
-var runIdempotentLiteralRE = regexp.MustCompile(`runIdempotent\([^,]+,[^,]+,[^,]+,[^,]+,\s*"([^"]+)"`)
+// runIdempotentLiteralRE captures the command string literal from the
+// idempotentRequest struct literal passed to runIdempotent(...). Anchoring on
+// idempotentRequest{ ... command: scopes the match to mutating-action
+// registrations and avoids over-matching any unrelated `command:` field.
+var runIdempotentLiteralRE = regexp.MustCompile(`idempotentRequest\{[^}]*command:\s*"([^"]+)"`)
 
 // TestMutatingRegistryCompleteness asserts the set of command literals actually
 // passed to runIdempotent in the non-test source equals the set declared in

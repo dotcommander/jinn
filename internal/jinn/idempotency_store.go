@@ -20,27 +20,20 @@ import (
 // returns ErrCodeConflict so the caller can retry later.
 //
 // Replay returns the exact JSON string from the first call, byte-identical.
-func runIdempotent(ctx context.Context, db *sql.DB, agent, requestID, command string, fn func(tx *sql.Tx) (any, error)) (any, error) {
-	if requestID == "" {
-		// No idempotency — plain transact. Return the core's result as-is when
-		// it is already a string (already serialized); otherwise marshal to JSON.
-		var result any
-		err := transact(ctx, db, func(tx *sql.Tx) error {
-			r, e := fn(tx)
-			result = r
-			return e
-		})
-		if err != nil {
-			return nil, err
-		}
-		if s, ok := result.(string); ok {
-			return s, nil
-		}
-		b, marshalErr := json.Marshal(result)
-		if marshalErr != nil {
-			return nil, fmt.Errorf("marshal result: %w", marshalErr)
-		}
-		return string(b), nil
+//
+// idempotentRequest carries the data fields for runIdempotent. ctx and the
+// *sql.DB handle stay positional; everything else (including the operation fn)
+// lives here so the signature stays under the argument limit.
+type idempotentRequest struct {
+	agent     string
+	requestID string
+	command   string
+	fn        func(tx *sql.Tx) (any, error)
+}
+
+func runIdempotent(ctx context.Context, db *sql.DB, req idempotentRequest) (any, error) {
+	if req.requestID == "" {
+		return runPlainTransact(ctx, db, req.fn)
 	}
 
 	// Single transaction: begin + work + complete.
@@ -52,42 +45,78 @@ func runIdempotent(ctx context.Context, db *sql.DB, agent, requestID, command st
 	// Attempt to claim the slot.
 	_, insertErr := tx.ExecContext(ctx,
 		`INSERT INTO idempotency(agent_name, request_id, command, result_json) VALUES(?,?,?,'')`,
-		agent, requestID, command,
+		req.agent, req.requestID, req.command,
 	)
 	if insertErr != nil {
 		_ = tx.Rollback()
-		if !isUniqueConstraintErr(insertErr) {
-			return nil, fmt.Errorf("insert idempotency row: %w", insertErr)
-		}
-		// Row exists — load cached result.
-		var resultJSON string
-		if selErr := db.QueryRowContext(ctx,
-			`SELECT result_json FROM idempotency WHERE agent_name=? AND request_id=?`,
-			agent, requestID,
-		).Scan(&resultJSON); selErr != nil {
-			return nil, fmt.Errorf("load idempotency row: %w", selErr)
-		}
-		if strings.TrimSpace(resultJSON) == "" {
-			// Prior attempt crashed before completing.
-			return nil, &ErrWithSuggestion{
-				Err:        fmt.Errorf("request %q is still in progress or crashed; retry later", requestID),
-				Suggestion: "wait and retry with the same request_id",
-				Code:       ErrCodeConflict,
-			}
-		}
-		// Replay: return raw JSON string — byte-identical to first call.
-		return resultJSON, nil
+		return replayIdempotent(ctx, db, req.agent, req.requestID, insertErr)
 	}
 
 	// Slot claimed — run the work.
-	result, fnErr := fn(tx)
+	result, fnErr := req.fn(tx)
 	if fnErr != nil {
 		_ = tx.Rollback()
 		return nil, fnErr
 	}
 
-	// Serialize result for storage. String results are already serialized;
-	// non-string results (maps, structs) are marshaled to JSON.
+	return completeIdempotent(ctx, tx, req.agent, req.requestID, result)
+}
+
+// runPlainTransact runs fn in a transaction without writing an idempotency row.
+// Returns the core's result as-is when it is already a string (already
+// serialized); otherwise marshals to JSON.
+func runPlainTransact(ctx context.Context, db *sql.DB, fn func(tx *sql.Tx) (any, error)) (any, error) {
+	var result any
+	err := transact(ctx, db, func(tx *sql.Tx) error {
+		r, e := fn(tx)
+		result = r
+		return e
+	})
+	if err != nil {
+		return nil, err
+	}
+	if s, ok := result.(string); ok {
+		return s, nil
+	}
+	b, marshalErr := json.Marshal(result)
+	if marshalErr != nil {
+		return nil, fmt.Errorf("marshal result: %w", marshalErr)
+	}
+	return string(b), nil
+}
+
+// replayIdempotent handles a failed slot-claim INSERT. A non-unique error is
+// surfaced; a unique violation means the row exists, so the cached result is
+// loaded and replayed (or ErrCodeConflict if a prior attempt crashed mid-flight).
+func replayIdempotent(ctx context.Context, db *sql.DB, agent, requestID string, insertErr error) (any, error) {
+	if !isUniqueConstraintErr(insertErr) {
+		return nil, fmt.Errorf("insert idempotency row: %w", insertErr)
+	}
+	// Row exists — load cached result.
+	var resultJSON string
+	if selErr := db.QueryRowContext(ctx,
+		`SELECT result_json FROM idempotency WHERE agent_name=? AND request_id=?`,
+		agent, requestID,
+	).Scan(&resultJSON); selErr != nil {
+		return nil, fmt.Errorf("load idempotency row: %w", selErr)
+	}
+	if strings.TrimSpace(resultJSON) == "" {
+		// Prior attempt crashed before completing.
+		return nil, &ErrWithSuggestion{
+			Err:        fmt.Errorf("request %q is still in progress or crashed; retry later", requestID),
+			Suggestion: "wait and retry with the same request_id",
+			Code:       ErrCodeConflict,
+		}
+	}
+	// Replay: return raw JSON string — byte-identical to first call.
+	return resultJSON, nil
+}
+
+// completeIdempotent serializes result, writes it to the claimed row, and commits.
+// String results are already serialized; non-string results are marshaled to
+// JSON. Rolls back tx on any failure before commit. Returns the raw JSON string
+// so replay and first call are byte-identical.
+func completeIdempotent(ctx context.Context, tx *sql.Tx, agent, requestID string, result any) (any, error) {
 	var resultJSON string
 	if s, ok := result.(string); ok {
 		resultJSON = s
@@ -112,7 +141,6 @@ func runIdempotent(ctx context.Context, db *sql.DB, agent, requestID, command st
 		return nil, fmt.Errorf("commit idempotent tx: %w", commitErr)
 	}
 
-	// Return the raw JSON string so replay and first call are byte-identical.
 	return resultJSON, nil
 }
 

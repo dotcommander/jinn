@@ -66,8 +66,8 @@ func (e *Engine) findFiles(ctx context.Context, args map[string]interface{}) (st
 		raw, backend, runErr = e.findViaFind(ctx, pattern, searchPath)
 	}
 
-	if runErr := classifyFindRunErr(runErr, backend); runErr != nil {
-		return "", runErr
+	if classified := classifyFindRunErr(runErr, backend); classified != nil {
+		return "", classified
 	}
 
 	raw = strings.TrimSpace(raw)
