@@ -39,7 +39,7 @@ var probes = []probe{
 	{"Taskfile.yml", "", "task", "task test", ""},
 }
 
-func (e *Engine) detectProject(args map[string]any) (string, error) {
+func (e *Engine) detectProject(args map[string]interface{}) (string, error) {
 	detectPath := "."
 	if p, ok := args["path"].(string); ok && p != "" {
 		detectPath = p
