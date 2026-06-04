@@ -109,16 +109,16 @@ func (e *Engine) saveHistory(hf historyFile) error {
 }
 
 // recordSnapshot saves a pre-mutation snapshot of absPath.
-// Never blocks a mutation — all recoverable failures return nil.
+// Never blocks a mutation — all recoverable failures are swallowed (best-effort).
 // preContent == nil means the file did not exist before the operation.
 //
 // Blobs are compressed with adaptive gzip (adapted from agented's blob codec).
 // This reduces disk usage for text-heavy edit histories without overhead on
 // small edits or already-compressed content.
-func (e *Engine) recordSnapshot(absPath, displayPath, op string, preContent []byte) error {
+func (e *Engine) recordSnapshot(absPath, displayPath, op string, preContent []byte) {
 	if len(preContent) > historyMaxBlobBytes {
 		// File too large to snapshot — skip silently, don't block the write.
-		return nil
+		return
 	}
 
 	histMu.Lock()
@@ -126,7 +126,7 @@ func (e *Engine) recordSnapshot(absPath, displayPath, op string, preContent []by
 
 	hf, err := e.loadHistory()
 	if err != nil {
-		return nil // non-blocking
+		return // non-blocking
 	}
 
 	// Build unique entry ID from workdir+path+timestamp.
@@ -146,14 +146,14 @@ func (e *Engine) recordSnapshot(absPath, displayPath, op string, preContent []by
 		blobHash = hex.EncodeToString(h[:])
 		blobPath = filepath.Join(e.blobsDir(), id+".blob")
 		if err := os.MkdirAll(e.blobsDir(), 0o700); err != nil {
-			return nil // non-blocking
+			return // non-blocking
 		}
 		encoded, cerr := encodeBlob(preContent)
 		if cerr != nil {
-			return nil // non-blocking
+			return // non-blocking
 		}
 		if err := atomicWriteBytes(blobPath, encoded, 0o600); err != nil {
-			return nil // non-blocking
+			return // non-blocking
 		}
 		blobSize = int64(len(preContent)) // track original size for eviction
 	}
@@ -174,13 +174,12 @@ func (e *Engine) recordSnapshot(absPath, displayPath, op string, preContent []by
 	e.evictHistory(&hf)
 
 	if err := e.saveHistory(hf); err != nil {
-		// Index write failed — clean up orphaned blob, then return nil (non-blocking).
+		// Index write failed — clean up orphaned blob (non-blocking).
 		if blobPath != "" {
 			_ = os.Remove(blobPath)
 		}
-		return nil
+		return
 	}
-	return nil
 }
 
 // evictHistory trims the ring-buffer to satisfy entry count and total size limits.

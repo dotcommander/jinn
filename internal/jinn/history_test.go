@@ -55,9 +55,7 @@ func TestRecordSnapshot_BasicRoundtrip(t *testing.T) {
 
 	absPath := filepath.Join(workDir, "test.txt")
 	preContent := []byte("hello world")
-	if err := e.recordSnapshot(absPath, "test.txt", "write_file", preContent); err != nil {
-		t.Fatalf("recordSnapshot: %v", err)
-	}
+	e.recordSnapshot(absPath, "test.txt", "write_file", preContent)
 
 	histMu.Lock()
 	hf, err := e.loadHistory()
@@ -90,9 +88,7 @@ func TestRecordSnapshot_NewFile(t *testing.T) {
 	e, workDir := historyEngine(t)
 
 	absPath := filepath.Join(workDir, "new.txt")
-	if err := e.recordSnapshot(absPath, "new.txt", "write_file", nil); err != nil {
-		t.Fatalf("recordSnapshot: %v", err)
-	}
+	e.recordSnapshot(absPath, "new.txt", "write_file", nil)
 
 	histMu.Lock()
 	hf, _ := e.loadHistory()
@@ -115,7 +111,7 @@ func TestEvictHistory_ByEntryCount(t *testing.T) {
 	content := []byte("x")
 	for i := 0; i < historyMaxEntries+5; i++ {
 		time.Sleep(time.Microsecond)
-		_ = e.recordSnapshot(absPath, "f.txt", "write_file", content)
+		e.recordSnapshot(absPath, "f.txt", "write_file", content)
 	}
 
 	histMu.Lock()
@@ -137,7 +133,7 @@ func TestEvictHistory_ByTotalSize(t *testing.T) {
 	chunk := make([]byte, 4*1024*1024)
 	for i := 0; i < 6; i++ {
 		time.Sleep(time.Microsecond)
-		_ = e.recordSnapshot(absPath, "big.txt", "write_file", chunk)
+		e.recordSnapshot(absPath, "big.txt", "write_file", chunk)
 	}
 
 	histMu.Lock()
@@ -161,9 +157,7 @@ func TestRecordSnapshot_OversizeBlobSkipped(t *testing.T) {
 	absPath := filepath.Join(workDir, "huge.txt")
 	// 6 MiB > historyMaxBlobBytes (5 MiB) — should be silently skipped.
 	huge := make([]byte, 6*1024*1024)
-	if err := e.recordSnapshot(absPath, "huge.txt", "write_file", huge); err != nil {
-		t.Fatalf("recordSnapshot must not error on oversized blob: %v", err)
-	}
+	e.recordSnapshot(absPath, "huge.txt", "write_file", huge)
 
 	histMu.Lock()
 	hf, _ := e.loadHistory()
@@ -255,8 +249,8 @@ func TestRecordSnapshot_SameWorkdirTwoEngines(t *testing.T) {
 		go func(e *Engine) {
 			defer wg.Done()
 			for i := 0; i < perEngine; i++ {
-				// Distinct content per write so blobs differ; ignore best-effort errors.
-				_ = e.recordSnapshot(absPath, "shared.txt", "write_file", []byte(fmt.Sprintf("v%d", i)))
+				// Distinct content per write so blobs differ; best-effort, never errors.
+				e.recordSnapshot(absPath, "shared.txt", "write_file", []byte(fmt.Sprintf("v%d", i)))
 			}
 		}(e)
 	}

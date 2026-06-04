@@ -220,8 +220,7 @@ func srDryRunResult(fileResults []srFileResult, pending []srPending) *ToolResult
 func (e *Engine) srApplyWrites(fileResults []srFileResult, pending []srPending) (*ToolResult, error) {
 	var applied []string
 	for _, p := range pending {
-		_ = e.recordSnapshot(p.candidate.resolved, p.candidate.path, "search_replace", p.preData)
-		if err := e.atomicWriteFile(p.candidate.resolved, p.updated); err != nil {
+		if err := e.snapshotAndWrite(p.candidate.resolved, p.candidate.path, "search_replace", p.preData, p.updated); err != nil {
 			// Write failure — abort remaining but report what succeeded.
 			return nil, fmt.Errorf("%s: %w", p.candidate.path, err)
 		}

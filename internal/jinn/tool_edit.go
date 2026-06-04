@@ -217,7 +217,7 @@ func (e *Engine) editFile(args map[string]interface{}) (*ToolResult, error) {
 		}, nil
 	}
 
-	_ = e.recordSnapshot(resolved, path, "edit_file", data)
+	e.recordSnapshot(resolved, path, "edit_file", data)
 
 	if writeErr := e.atomicWriteFile(resolved, updated); writeErr != nil {
 		return nil, writeErr

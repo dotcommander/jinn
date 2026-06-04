@@ -213,8 +213,7 @@ func (e *Engine) applyAdd(r resolvedOp, pre preflightResult) (applyOpResult, err
 		return applyOpResult{}, fmt.Errorf("add %s: mkdir: %w", r.op.path, err)
 	}
 	preContent, _ := os.ReadFile(r.resolved)
-	_ = e.recordSnapshot(r.resolved, r.op.path, "apply_patch", preContent)
-	if err := e.atomicWriteFile(r.resolved, pre.newContent); err != nil {
+	if err := e.snapshotAndWrite(r.resolved, r.op.path, "apply_patch", preContent, pre.newContent); err != nil {
 		return applyOpResult{}, fmt.Errorf("add %s: %w", r.op.path, err)
 	}
 	return applyOpResult{summary: fmt.Sprintf("added %s", r.op.path)}, nil
@@ -223,7 +222,7 @@ func (e *Engine) applyAdd(r resolvedOp, pre preflightResult) (applyOpResult, err
 // applyDelete removes a file after recording an undo snapshot.
 func (e *Engine) applyDelete(r resolvedOp) (applyOpResult, error) {
 	preContent, _ := os.ReadFile(r.resolved)
-	_ = e.recordSnapshot(r.resolved, r.op.path, "apply_patch", preContent)
+	e.recordSnapshot(r.resolved, r.op.path, "apply_patch", preContent)
 	if err := os.Remove(r.resolved); err != nil {
 		return applyOpResult{}, fmt.Errorf("delete %s: %w", r.op.path, err)
 	}
@@ -236,8 +235,7 @@ func (e *Engine) applyUpdate(r resolvedOp, pre preflightResult) (applyOpResult, 
 	if err := e.tracker.checkStale(r.resolved); err != nil {
 		return applyOpResult{}, fmt.Errorf("update %s: %w", r.op.path, err)
 	}
-	_ = e.recordSnapshot(r.resolved, r.op.path, "apply_patch", []byte(pre.oldContent))
-	if err := e.atomicWriteFile(r.resolved, pre.newContent); err != nil {
+	if err := e.snapshotAndWrite(r.resolved, r.op.path, "apply_patch", []byte(pre.oldContent), pre.newContent); err != nil {
 		return applyOpResult{}, fmt.Errorf("update %s: %w", r.op.path, err)
 	}
 	dr := generateDiff(pre.oldContent, pre.newContent, r.op.path, 3)

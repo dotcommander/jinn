@@ -45,6 +45,13 @@ func (e *Engine) atomicWriteFile(resolved, content string) error {
 	return nil
 }
 
+// snapshotAndWrite records an undo snapshot then atomically writes content.
+// Combining them keeps the invariant structural: no mutating write skips history.
+func (e *Engine) snapshotAndWrite(resolved, displayPath, op string, preContent []byte, content string) error {
+	e.recordSnapshot(resolved, displayPath, op, preContent)
+	return e.atomicWriteFile(resolved, content)
+}
+
 func (e *Engine) writeFile(args map[string]interface{}) (string, error) {
 	path, _ := args["path"].(string)
 	content, _ := args["content"].(string)
@@ -72,7 +79,7 @@ func (e *Engine) writeFile(args map[string]interface{}) (string, error) {
 	} else if err != nil {
 		preContent = nil // unreadable — skip snapshot, don't block write
 	}
-	_ = e.recordSnapshot(resolved, path, "write_file", preContent)
+	e.recordSnapshot(resolved, path, "write_file", preContent)
 
 	if err := os.MkdirAll(filepath.Dir(resolved), 0o750); err != nil {
 		return "", fmt.Errorf("mkdir: %w", err)

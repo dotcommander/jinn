@@ -133,9 +133,7 @@ func TestUndoPreview_CreatedFile(t *testing.T) {
 	e, workDir := undoEngine(t)
 
 	newPath := filepath.Join(workDir, "newfile.txt")
-	if err := e.recordSnapshot(newPath, "newfile.txt", "write_file", nil); err != nil {
-		t.Fatalf("recordSnapshot: %v", err)
-	}
+	e.recordSnapshot(newPath, "newfile.txt", "write_file", nil)
 
 	id := firstSnapshotID(t, e)
 	result, err := e.undoTool(map[string]interface{}{"action": "preview", "id": id})
@@ -181,9 +179,7 @@ func TestUndoRestore_CreatedFileDeleted(t *testing.T) {
 	if err := os.WriteFile(absPath, []byte("brand new"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.recordSnapshot(absPath, "created.txt", "write_file", nil); err != nil {
-		t.Fatalf("recordSnapshot: %v", err)
-	}
+	e.recordSnapshot(absPath, "created.txt", "write_file", nil)
 
 	id := firstSnapshotID(t, e)
 	result, err := e.undoTool(map[string]interface{}{"action": "restore", "id": id})

@@ -94,10 +94,7 @@ func TestRecordSnapshot_TooLargeSkipsSilently(t *testing.T) {
 
 	absPath := filepath.Join(workDir, "large.bin")
 	big := make([]byte, historyMaxBlobBytes+1)
-	err := e.recordSnapshot(absPath, "large.bin", "write_file", big)
-	if err != nil {
-		t.Fatalf("recordSnapshot with oversized content returned error: %v", err)
-	}
+	e.recordSnapshot(absPath, "large.bin", "write_file", big)
 	// Index should be empty — snapshot was silently skipped.
 	histMu.Lock()
 	hf, _ := e.loadHistory()
