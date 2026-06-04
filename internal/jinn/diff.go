@@ -50,9 +50,14 @@ func computeEditScript(old, newText string) []diffOp {
 		}
 	}
 
-	// Walk back to produce edit script.
+	return backtrackEditScript(dp, oldLines, newLines)
+}
+
+// backtrackEditScript walks the LCS table dp from (m,n) back to (0,0),
+// producing the edit script in forward order.
+func backtrackEditScript(dp [][]int, oldLines, newLines []string) []diffOp {
 	var script []diffOp
-	i, j := m, n
+	i, j := len(oldLines), len(newLines)
 	for i > 0 || j > 0 {
 		switch {
 		case i > 0 && j > 0 && oldLines[i-1] == newLines[j-1]:

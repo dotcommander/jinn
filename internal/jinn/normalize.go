@@ -99,20 +99,30 @@ func normalizeForFuzzyMatch(s string) string {
 	var b strings.Builder
 	b.Grow(len(s))
 	for _, r := range s {
-		switch {
-		case r == '\u2018' || r == '\u2019' || r == '\u201A' || r == '\u201B':
-			b.WriteByte('\'')
-		case r == '\u201C' || r == '\u201D' || r == '\u201E' || r == '\u201F':
-			b.WriteByte('"')
-		case r == '\u2010' || r == '\u2011' || r == '\u2012' || r == '\u2013' ||
-			r == '\u2014' || r == '\u2015' || r == '\u2212':
-			b.WriteByte('-')
-		case r == '\u00A0' || (r >= '\u2002' && r <= '\u200A') ||
-			r == '\u202F' || r == '\u205F' || r == '\u3000':
-			b.WriteByte(' ')
-		default:
+		if ascii, ok := normalizeRune(r); ok {
+			b.WriteByte(ascii)
+		} else {
 			b.WriteRune(r)
 		}
 	}
 	return b.String()
+}
+
+// normalizeRune maps a Unicode smart quote, dash, or special space to its ASCII
+// equivalent. The second return is false when r has no mapping (write r as-is).
+func normalizeRune(r rune) (byte, bool) {
+	switch {
+	case r == '\u2018' || r == '\u2019' || r == '\u201A' || r == '\u201B':
+		return '\'', true
+	case r == '\u201C' || r == '\u201D' || r == '\u201E' || r == '\u201F':
+		return '"', true
+	case r == '\u2010' || r == '\u2011' || r == '\u2012' || r == '\u2013' ||
+		r == '\u2014' || r == '\u2015' || r == '\u2212':
+		return '-', true
+	case r == '\u00A0' || (r >= '\u2002' && r <= '\u200A') ||
+		r == '\u202F' || r == '\u205F' || r == '\u3000':
+		return ' ', true
+	default:
+		return 0, false
+	}
 }

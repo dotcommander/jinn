@@ -71,83 +71,122 @@ func textResult(s string) *ToolResult {
 //
 // Tools that don't set meta return a nil map. Callers should treat nil as empty.
 func (e *Engine) Dispatch(ctx context.Context, tool string, args map[string]interface{}) (*ToolResult, map[string]string, error) {
-	switch tool {
-	case "run_shell":
+	// run_shell is the only tool returning meta; handle it directly.
+	if tool == "run_shell" {
 		result, meta, err := e.runShell(ctx, args)
 		return textResult(result), meta, err
+	}
+	if tool == "list_tools" {
+		return e.dispatchListTools(args)
+	}
+	if res, ok, err := e.dispatchFileOps(args, tool); ok {
+		return res, nil, err
+	}
+	if res, ok, err := e.dispatchSearchOps(ctx, args, tool); ok {
+		return res, nil, err
+	}
+	if res, ok, err := e.dispatchMemoryMeta(ctx, args, tool); ok {
+		return res, nil, err
+	}
+	return nil, nil, fmt.Errorf("unknown tool: %s", tool)
+}
+
+// dispatchListTools handles the list_tools capability/schema reporting case.
+func (e *Engine) dispatchListTools(args map[string]interface{}) (*ToolResult, map[string]string, error) {
+	tools, err := SchemaToolNames()
+	if err != nil {
+		return nil, nil, fmt.Errorf("list tool names: %w", err)
+	}
+	caps := ToolCapabilities{
+		JinnVersion: ResolveVersion(e.version),
+		Tools:       tools,
+		Features:    toolFeatures,
+	}
+	capsJSON, err := json.Marshal(caps)
+	if err != nil {
+		return nil, nil, fmt.Errorf("marshal capabilities: %w", err)
+	}
+	includeSchema, _ := args["include_schema"].(bool)
+	if !includeSchema {
+		return textResult(string(capsJSON)), nil, nil
+	}
+	schema, err := LeanSchema()
+	if err != nil {
+		return nil, nil, fmt.Errorf("lean schema: %w", err)
+	}
+	return textResult(string(capsJSON) + "\n\n" + schema), nil, nil
+}
+
+// dispatchFileOps routes file-mutation/read tools whose handlers need no ctx.
+// ok=false means "not in this group".
+func (e *Engine) dispatchFileOps(args map[string]interface{}, tool string) (*ToolResult, bool, error) {
+	switch tool {
 	case "read_file":
 		result, err := e.readFile(args)
-		return result, nil, err
+		return result, true, err
 	case "multi_read":
 		result, err := e.multiRead(args)
-		return result, nil, err
+		return result, true, err
 	case "write_file":
 		result, err := e.writeFile(args)
-		return textResult(result), nil, err
+		return textResult(result), true, err
 	case "edit_file":
 		result, err := e.editFile(args)
-		return result, nil, err
+		return result, true, err
 	case "multi_edit":
 		result, err := e.multiEdit(args)
-		return result, nil, err
+		return result, true, err
 	case "apply_patch":
 		result, err := e.applyPatch(args)
-		return result, nil, err
+		return result, true, err
 	case "diff_files":
 		result, err := e.diffFiles(args)
-		return result, nil, err
+		return result, true, err
+	default:
+		return nil, false, nil
+	}
+}
+
+// dispatchSearchOps routes search/navigation tools.
+func (e *Engine) dispatchSearchOps(ctx context.Context, args map[string]interface{}, tool string) (*ToolResult, bool, error) {
+	switch tool {
 	case "search_files":
 		result, err := e.searchFilesContext(ctx, args)
-		return textResult(result), nil, err
+		return textResult(result), true, err
 	case "stat_file":
 		result, err := e.statFile(args)
-		return textResult(result), nil, err
+		return textResult(result), true, err
 	case "list_dir":
 		result, err := e.listDir(args)
-		return textResult(result), nil, err
+		return textResult(result), true, err
 	case "find_files":
 		result, err := e.findFiles(ctx, args)
-		return textResult(result), nil, err
-	case "list_tools":
-		tools, err := SchemaToolNames()
-		if err != nil {
-			return nil, nil, fmt.Errorf("list tool names: %w", err)
-		}
-		caps := ToolCapabilities{
-			JinnVersion: ResolveVersion(e.version),
-			Tools:       tools,
-			Features:    toolFeatures,
-		}
-		capsJSON, err := json.Marshal(caps)
-		if err != nil {
-			return nil, nil, fmt.Errorf("marshal capabilities: %w", err)
-		}
-		includeSchema, _ := args["include_schema"].(bool)
-		if !includeSchema {
-			return textResult(string(capsJSON)), nil, nil
-		}
-		schema, err := LeanSchema()
-		if err != nil {
-			return nil, nil, fmt.Errorf("lean schema: %w", err)
-		}
-		return textResult(string(capsJSON) + "\n\n" + schema), nil, nil
-	case "detect_project":
-		result, err := e.detectProject(args)
-		return textResult(result), nil, err
-	case "memory":
-		result, err := e.memoryTool(ctx, args)
-		return textResult(result), nil, err
-	case "undo":
-		result, err := e.undoTool(args)
-		return textResult(result), nil, err
+		return textResult(result), true, err
 	case "lsp_query":
 		result, err := e.lspQuery(ctx, args)
-		return textResult(result), nil, err
+		return textResult(result), true, err
 	case "search_replace":
 		result, err := e.searchReplace(ctx, args)
-		return result, nil, err
+		return result, true, err
 	default:
-		return nil, nil, fmt.Errorf("unknown tool: %s", tool)
+		return nil, false, nil
+	}
+}
+
+// dispatchMemoryMeta routes memory/project/undo metadata tools.
+func (e *Engine) dispatchMemoryMeta(ctx context.Context, args map[string]interface{}, tool string) (*ToolResult, bool, error) {
+	switch tool {
+	case "detect_project":
+		result, err := e.detectProject(args)
+		return textResult(result), true, err
+	case "memory":
+		result, err := e.memoryTool(ctx, args)
+		return textResult(result), true, err
+	case "undo":
+		result, err := e.undoTool(args)
+		return textResult(result), true, err
+	default:
+		return nil, false, nil
 	}
 }
 

@@ -726,7 +726,23 @@ func (s *gitStatusStrategy) Compress(output string) string {
 		}
 	}
 
-	// Parse file entries by section.
+	entries := parseGitEntries(lines)
+
+	if len(entries) > 0 {
+		b.WriteByte('\n')
+		b.WriteString(strings.Join(entries, "  "))
+	}
+
+	result := b.String()
+	if len(result) >= len(output) {
+		return output
+	}
+	return result
+}
+
+// parseGitEntries scans git status lines section by section, returning the
+// compact per-file entries (status-char prefix + name, or "+name" for untracked).
+func parseGitEntries(lines []string) []string {
 	var entries []string
 	section := ""
 	for _, line := range lines {
@@ -748,17 +764,7 @@ func (s *gitStatusStrategy) Compress(output string) string {
 			}
 		}
 	}
-
-	if len(entries) > 0 {
-		b.WriteByte('\n')
-		b.WriteString(strings.Join(entries, "  "))
-	}
-
-	result := b.String()
-	if len(result) >= len(output) {
-		return output
-	}
-	return result
+	return entries
 }
 
 // writeAheadBehind appends ahead/behind tracking info to the builder.
