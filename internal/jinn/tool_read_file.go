@@ -98,11 +98,7 @@ func (e *Engine) readImageFile(resolved, path, detected string, args map[string]
 	data, rerr := os.ReadFile(resolved)
 	if rerr != nil {
 		if os.IsPermission(rerr) {
-			return nil, &ErrWithSuggestion{
-				Err:        fmt.Errorf("permission denied: %s", path),
-				Suggestion: "file is not readable by the sandbox; check ownership or choose a different file",
-				Code:       ErrCodePermissionDenied,
-			}
+			return nil, permissionDeniedErr(path)
 		}
 		return nil, rerr
 	}
@@ -144,11 +140,7 @@ func readUnchangedIfMatch(resolved, path string, args map[string]interface{}) (*
 	d, rerr := os.ReadFile(resolved)
 	if rerr != nil {
 		if os.IsPermission(rerr) {
-			return nil, &ErrWithSuggestion{
-				Err:        fmt.Errorf("permission denied: %s", path),
-				Suggestion: "file is not readable by the sandbox; check ownership or choose a different file",
-				Code:       ErrCodePermissionDenied,
-			}
+			return nil, permissionDeniedErr(path)
 		}
 		return nil, rerr
 	}

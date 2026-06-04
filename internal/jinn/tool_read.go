@@ -106,11 +106,7 @@ func statForRead(resolved string) (os.FileInfo, error) {
 			}
 		}
 		if os.IsPermission(err) {
-			return nil, &ErrWithSuggestion{
-				Err:        fmt.Errorf("permission denied: %s", resolved),
-				Suggestion: "file is not readable by the sandbox; check ownership or choose a different file",
-				Code:       ErrCodePermissionDenied,
-			}
+			return nil, permissionDeniedErr(resolved)
 		}
 		return nil, err
 	}
@@ -137,11 +133,7 @@ func (e *Engine) readAndClassify(resolved string, info os.FileInfo) ([]byte, err
 	data, err := os.ReadFile(resolved)
 	if err != nil {
 		if os.IsPermission(err) {
-			return nil, &ErrWithSuggestion{
-				Err:        fmt.Errorf("permission denied: %s", resolved),
-				Suggestion: "file is not readable by the sandbox; check ownership or choose a different file",
-				Code:       ErrCodePermissionDenied,
-			}
+			return nil, permissionDeniedErr(resolved)
 		}
 		return nil, err
 	}

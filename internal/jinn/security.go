@@ -20,6 +20,16 @@ func sensitivePathErr(p string) error {
 	}
 }
 
+// permissionDeniedErr builds the standard "permission denied" error with the
+// single canonical suggestion string shared by all readable-file guards.
+func permissionDeniedErr(path string) error {
+	return &ErrWithSuggestion{
+		Err:        fmt.Errorf("permission denied: %s", path),
+		Suggestion: "file is not readable by the sandbox; check ownership or choose a different file",
+		Code:       ErrCodePermissionDenied,
+	}
+}
+
 func hasSensitivePathSegment(p string) bool {
 	clean := filepath.Clean(p)
 	for _, seg := range sensitiveSegments {
