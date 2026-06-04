@@ -31,20 +31,9 @@ type multiReadError struct {
 
 func (e *Engine) multiRead(args map[string]interface{}) (*ToolResult, error) {
 	// 1. Parse files array.
-	rawFiles, ok := args["files"].([]interface{})
-	if !ok || len(rawFiles) == 0 {
-		return nil, &ErrWithSuggestion{
-			Err:        fmt.Errorf("files must be a non-empty array (1-%d items)", multiReadMaxFiles),
-			Suggestion: "provide a 'files' array with 1-20 file request objects",
-			Code:       ErrCodeInvalidArgs,
-		}
-	}
-	if len(rawFiles) > multiReadMaxFiles {
-		return nil, &ErrWithSuggestion{
-			Err:        fmt.Errorf("too many files requested: %d (max %d)", len(rawFiles), multiReadMaxFiles),
-			Suggestion: fmt.Sprintf("split the request into batches of %d files", multiReadMaxFiles),
-			Code:       ErrCodeInvalidArgs,
-		}
+	rawFiles, err := parseMultiReadFiles(args)
+	if err != nil {
+		return nil, err
 	}
 
 	result := multiReadResult{
@@ -64,47 +53,13 @@ func (e *Engine) multiRead(args map[string]interface{}) (*ToolResult, error) {
 			continue
 		}
 
-		// Build per-file args for readFileContent.
-		perFileArgs := make(map[string]interface{})
-		for _, key := range []string{"start_line", "end_line", "tail", "line_numbers", "truncate"} {
-			if v, exists := entry[key]; exists {
-				perFileArgs[key] = v
-			}
-		}
-
-		// Sandbox validation.
-		resolved, err := e.checkPath(path)
-		if err != nil {
-			result.Errors[path] = errToMultiRead(err)
-			continue
-		}
-
-		// Image/binary detection via MIME sniff (same pattern as readFile).
-		isImage := sniffIsImage(resolved)
-		if !isImage && strings.HasSuffix(strings.ToLower(path), ".svg") {
-			isImage = true
-		}
-		if isImage {
-			result.Errors[path] = multiReadError{
-				Error:      fmt.Sprintf("image file: %s", path),
-				Suggestion: "use read_file for single-image viewing",
-				ErrorCode:  ErrCodeBinaryFile,
-			}
-			continue
-		}
-
-		// Delegate to shared content reader.
-		cr, err := e.readFileContent(resolved, perFileArgs)
-		if err != nil {
-			result.Errors[path] = errToMultiRead(err)
+		content, trunc, mrErr := e.readMultiReadEntry(path, entry)
+		if mrErr != nil {
+			result.Errors[path] = *mrErr
 			continue
 		}
 
 		// Success: check global byte budget before adding to result.
-		content := cr.Content
-		if cr.ByteHint != "" {
-			content += cr.ByteHint
-		}
 		if totalBytes+len(content) > multiReadGlobalCapBytes {
 			result.Errors[path] = multiReadError{
 				Error:      fmt.Sprintf("global cap exceeded: aggregate output reached %d bytes (limit %d)", totalBytes, multiReadGlobalCapBytes),
@@ -117,12 +72,8 @@ func (e *Engine) multiRead(args map[string]interface{}) (*ToolResult, error) {
 		totalBytes += len(content)
 		result.Files[path] = content
 
-		if cr.Truncated {
-			result.Truncation[path] = truncationInfo{
-				Truncated:   true,
-				TotalLines:  cr.TotalLines,
-				OutputLines: cr.OutputLines,
-			}
+		if trunc != nil {
+			result.Truncation[path] = *trunc
 		}
 	}
 
@@ -142,6 +93,81 @@ func (e *Engine) multiRead(args map[string]interface{}) (*ToolResult, error) {
 	}
 
 	return textResult(string(data)), nil
+}
+
+// parseMultiReadFiles validates the files argument and returns the raw entries.
+func parseMultiReadFiles(args map[string]interface{}) ([]interface{}, error) {
+	rawFiles, ok := args["files"].([]interface{})
+	if !ok || len(rawFiles) == 0 {
+		return nil, &ErrWithSuggestion{
+			Err:        fmt.Errorf("files must be a non-empty array (1-%d items)", multiReadMaxFiles),
+			Suggestion: "provide a 'files' array with 1-20 file request objects",
+			Code:       ErrCodeInvalidArgs,
+		}
+	}
+	if len(rawFiles) > multiReadMaxFiles {
+		return nil, &ErrWithSuggestion{
+			Err:        fmt.Errorf("too many files requested: %d (max %d)", len(rawFiles), multiReadMaxFiles),
+			Suggestion: fmt.Sprintf("split the request into batches of %d files", multiReadMaxFiles),
+			Code:       ErrCodeInvalidArgs,
+		}
+	}
+	return rawFiles, nil
+}
+
+// readMultiReadEntry validates one file request, performs sandbox + image checks,
+// and delegates to readFileContent. It returns the file content (with byte hint
+// appended), truncation info if any, or a per-file error to record.
+func (e *Engine) readMultiReadEntry(path string, entry map[string]interface{}) (string, *truncationInfo, *multiReadError) {
+	// Build per-file args for readFileContent.
+	perFileArgs := make(map[string]interface{})
+	for _, key := range []string{"start_line", "end_line", "tail", "line_numbers", "truncate"} {
+		if v, exists := entry[key]; exists {
+			perFileArgs[key] = v
+		}
+	}
+
+	// Sandbox validation.
+	resolved, err := e.checkPath(path)
+	if err != nil {
+		mrErr := errToMultiRead(err)
+		return "", nil, &mrErr
+	}
+
+	// Image/binary detection via MIME sniff (same pattern as readFile).
+	isImage := sniffIsImage(resolved)
+	if !isImage && strings.HasSuffix(strings.ToLower(path), ".svg") {
+		isImage = true
+	}
+	if isImage {
+		return "", nil, &multiReadError{
+			Error:      fmt.Sprintf("image file: %s", path),
+			Suggestion: "use read_file for single-image viewing",
+			ErrorCode:  ErrCodeBinaryFile,
+		}
+	}
+
+	// Delegate to shared content reader.
+	cr, err := e.readFileContent(resolved, perFileArgs)
+	if err != nil {
+		mrErr := errToMultiRead(err)
+		return "", nil, &mrErr
+	}
+
+	content := cr.Content
+	if cr.ByteHint != "" {
+		content += cr.ByteHint
+	}
+
+	var trunc *truncationInfo
+	if cr.Truncated {
+		trunc = &truncationInfo{
+			Truncated:   true,
+			TotalLines:  cr.TotalLines,
+			OutputLines: cr.OutputLines,
+		}
+	}
+	return content, trunc, nil
 }
 
 // errToMultiRead converts an error (typically ErrWithSuggestion) to a multiReadError.

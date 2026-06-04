@@ -114,11 +114,31 @@ func (e *Engine) parseAndResolveEdits(editsRaw []interface{}) (
 // edits not found in the original retain their relative order after positioned
 // edits. Returns the (possibly reordered) entries and any overlap error.
 func detectOverlaps(rawEntries []rawEntry, originalContent map[string]string) ([]rawEntry, error) {
-	type offsetEntry struct {
-		editIdx     int
-		matchOffset int
-		matchLength int
+	fileOffsets := computeFileOffsets(rawEntries, originalContent)
+	editPair := buildEditPairLookup(rawEntries)
+	for _, entries := range fileOffsets {
+		sortOffsetsAscending(entries)
+		if err := checkFileOverlaps(entries, editPair); err != nil {
+			return nil, err
+		}
 	}
+	sortRawEntriesPositional(rawEntries, fileOffsets)
+	return rawEntries, nil
+}
+
+// offsetEntry pairs an edit's index with where (and how long) its old_text
+// matched in the original file content.
+type offsetEntry struct {
+	editIdx     int
+	matchOffset int
+	matchLength int
+}
+
+// computeFileOffsets locates each edit's old_text within its file's original
+// content (falling back to fuzzy matching) and groups the located offsets by
+// file. Edits whose old_text is not found in the original are omitted — they
+// exist only in accumulated (chained) content and are skipped for overlap checks.
+func computeFileOffsets(rawEntries []rawEntry, originalContent map[string]string) map[string][]offsetEntry {
 	fileOffsets := make(map[string][]offsetEntry)
 	for _, re := range rawEntries {
 		origNorm := originalContent[re.resolved]
@@ -132,74 +152,97 @@ func detectOverlaps(rawEntries []rawEntry, originalContent map[string]string) ([
 		if offset >= 0 {
 			fileOffsets[re.resolved] = append(fileOffsets[re.resolved], offsetEntry{re.idx, offset, len(oldNorm)})
 		}
-		// offset < 0 means oldText only exists in accumulated (chained) content — skip overlap check.
 	}
-	// Build a lookup from editIdx to old_text+new_text for duplicate detection.
+	return fileOffsets
+}
+
+// buildEditPairLookup maps each edit index to its old_text+new_text signature
+// for exact-duplicate detection.
+func buildEditPairLookup(rawEntries []rawEntry) map[int]string {
 	editPair := make(map[int]string)
 	for _, re := range rawEntries {
 		editPair[re.idx] = re.oldText + "\x00" + re.newText
 	}
-	for _, entries := range fileOffsets {
-		// Sort by match offset ascending.
-		for a := 0; a < len(entries)-1; a++ {
-			for b := a + 1; b < len(entries); b++ {
-				if entries[a].matchOffset > entries[b].matchOffset {
-					entries[a], entries[b] = entries[b], entries[a]
-				}
-			}
-		}
-		for k := 0; k < len(entries)-1; k++ {
-			prev, curr := entries[k], entries[k+1]
-			// Skip overlap check for exact duplicate edits (same old_text→new_text).
-			// These will be handled by redundant edit skip in Phase 1b.
-			if editPair[prev.editIdx] == editPair[curr.editIdx] {
-				continue
-			}
-			if prev.matchOffset+prev.matchLength > curr.matchOffset {
-				i, j := prev.editIdx, curr.editIdx
-				if i > j {
-					i, j = j, i
-				}
-				return nil, &ErrWithSuggestion{
-					Err:        fmt.Errorf("edits[%d] and edits[%d] target overlapping regions", i, j),
-					Suggestion: "split into separate multi_edit calls, or combine into a single edit covering the full region",
-					Code:       ErrCodeEditOverlap,
-				}
+	return editPair
+}
+
+// sortOffsetsAscending sorts entries in place by match offset ascending.
+func sortOffsetsAscending(entries []offsetEntry) {
+	for a := 0; a < len(entries)-1; a++ {
+		for b := a + 1; b < len(entries); b++ {
+			if entries[a].matchOffset > entries[b].matchOffset {
+				entries[a], entries[b] = entries[b], entries[a]
 			}
 		}
 	}
+}
 
-	// Positional sorting: reorder rawEntries so that same-file edits are
-	// processed in top-to-bottom order (by occurrence in original content).
-	// Edits whose old_text was not found in the original (chained/dependent
-	// edits) retain their original relative order and appear after positioned edits.
-	{
-		// Build a position map: editIdx -> matchOffset (MAX_INT if not in original).
-		editPos := make(map[int]int)
-		for _, oe := range fileOffsets {
-			for _, entry := range oe {
-				editPos[entry.editIdx] = entry.matchOffset
+// checkFileOverlaps reports an overlap error if any adjacent (offset-sorted)
+// pair of edits target overlapping byte ranges. Exact-duplicate edits (same
+// old_text→new_text) are skipped — they are handled by redundant edit skip in
+// Phase 1b.
+func checkFileOverlaps(entries []offsetEntry, editPair map[int]string) error {
+	for k := 0; k < len(entries)-1; k++ {
+		prev, curr := entries[k], entries[k+1]
+		if editPair[prev.editIdx] == editPair[curr.editIdx] {
+			continue
+		}
+		if prev.matchOffset+prev.matchLength > curr.matchOffset {
+			i, j := prev.editIdx, curr.editIdx
+			if i > j {
+				i, j = j, i
+			}
+			return &ErrWithSuggestion{
+				Err:        fmt.Errorf("edits[%d] and edits[%d] target overlapping regions", i, j),
+				Suggestion: "split into separate multi_edit calls, or combine into a single edit covering the full region",
+				Code:       ErrCodeEditOverlap,
 			}
 		}
-		const notFoundOffset = int(^uint(0) >> 1) // max int
-		sort.SliceStable(rawEntries, func(a, b int) bool {
-			reA, reB := rawEntries[a], rawEntries[b]
-			if reA.resolved != reB.resolved {
-				return false // different files: keep original order
-			}
-			posA, okA := editPos[reA.idx]
-			posB, okB := editPos[reB.idx]
-			if !okA {
-				posA = notFoundOffset
-			}
-			if !okB {
-				posB = notFoundOffset
-			}
-			return posA < posB
-		})
 	}
+	return nil
+}
 
-	return rawEntries, nil
+// sortRawEntriesPositional reorders rawEntries so that same-file edits are
+// processed in top-to-bottom order (by occurrence in original content). Edits
+// whose old_text was not found in the original (chained/dependent edits) retain
+// their original relative order and appear after positioned edits.
+func sortRawEntriesPositional(rawEntries []rawEntry, fileOffsets map[string][]offsetEntry) {
+	// Build a position map: editIdx -> matchOffset (MAX_INT if not in original).
+	editPos := make(map[int]int)
+	for _, oe := range fileOffsets {
+		for _, entry := range oe {
+			editPos[entry.editIdx] = entry.matchOffset
+		}
+	}
+	const notFoundOffset = int(^uint(0) >> 1) // max int
+	sort.SliceStable(rawEntries, func(a, b int) bool {
+		reA, reB := rawEntries[a], rawEntries[b]
+		if reA.resolved != reB.resolved {
+			return false // different files: keep original order
+		}
+		posA, okA := editPos[reA.idx]
+		posB, okB := editPos[reB.idx]
+		if !okA {
+			posA = notFoundOffset
+		}
+		if !okB {
+			posB = notFoundOffset
+		}
+		return posA < posB
+	})
+}
+
+// pairKey identifies an old_text→new_text replacement for redundant-edit detection.
+type pairKey struct{ oldText, newText string }
+
+// isRedundantNotFound reports whether an applyEdit "not found" error should be
+// skipped because the same old_text→new_text pair was already applied to this file
+// (the model likely over-counted occurrences).
+func isRedundantNotFound(err error, pairs map[pairKey]int, key pairKey) bool {
+	if !strings.Contains(err.Error(), "old_text not found") {
+		return false
+	}
+	return pairs[key] > 0
 }
 
 // applyPendingEdits runs applyEdit against accumulated per-file content for
@@ -212,7 +255,6 @@ func applyPendingEdits(rawEntries []rawEntry) ([]pendingEdit, error) {
 	var statuses []editStatus
 
 	// Track applied old_text→new_text pairs per file for redundant edit detection.
-	type pairKey struct{ oldText, newText string }
 	appliedPairs := make(map[string]map[pairKey]int) // resolved -> pair -> count applied
 
 	for _, re := range rawEntries {
@@ -228,14 +270,8 @@ func applyPendingEdits(rawEntries []rawEntry) ([]pendingEdit, error) {
 			// Redundant edit skip: if the same old_text→new_text pair was already
 			// applied in this file, the model likely over-counted occurrences.
 			// Skip gracefully instead of aborting the entire batch.
-			if strings.Contains(err.Error(), "old_text not found") {
-				if pairs, ok := appliedPairs[re.resolved]; ok {
-					key := pairKey{re.oldText, re.newText}
-					if pairs[key] > 0 {
-						// This replacement was already applied — skip silently.
-						continue
-					}
-				}
+			if isRedundantNotFound(err, appliedPairs[re.resolved], pairKey{re.oldText, re.newText}) {
+				continue
 			}
 			statuses = append(statuses, editStatus{
 				File:      re.path,
@@ -324,51 +360,82 @@ func (e *Engine) multiEdit(args map[string]interface{}) (*ToolResult, error) {
 
 	// dry_run: return previews without writing.
 	if dryRun, ok := args["dry_run"].(bool); ok && dryRun {
-		var previews []string
-		for _, ed := range edits {
-			dr := generateEditDiff(string(ed.preContent), ed.updated, ed.path, ed.matchInfo, ed.oldText, ed.newText, 3)
-			if dr.Diff != "" {
-				previews = append(previews, dr.Diff)
-			}
-		}
-		return &ToolResult{
-			Text: fmt.Sprintf("[dry-run] %d edits validated:\n%s", len(edits), strings.Join(previews, "\n")),
-		}, nil
+		return dryRunResult(edits), nil
 	}
 
 	// Phase 2: apply all edits with per-file atomic writes.
-	var results []string
-	var allDiffs []string
-	var firstLine int
+	wr, err := e.writePendingEdits(edits)
+	if err != nil {
+		return nil, err
+	}
+
+	meta := map[string]any{
+		"edit": buildEditDetails(edits, wr.firstLine, wr.allDiffs),
+	}
+
+	return &ToolResult{
+		Text: fmt.Sprintf("applied %d edits:\n%s", len(edits), strings.Join(wr.results, "\n")),
+		Meta: meta,
+	}, nil
+}
+
+// writeResult aggregates the per-edit output of writePendingEdits.
+type writeResult struct {
+	results   []string
+	firstLine int
+	allDiffs  []string
+}
+
+// dryRunResult builds the [dry-run] preview ToolResult without writing files.
+func dryRunResult(edits []pendingEdit) *ToolResult {
+	var previews []string
+	for _, ed := range edits {
+		dr := generateEditDiff(string(ed.preContent), ed.updated, ed.path, ed.matchInfo, ed.oldText, ed.newText, 3)
+		if dr.Diff != "" {
+			previews = append(previews, dr.Diff)
+		}
+	}
+	return &ToolResult{
+		Text: fmt.Sprintf("[dry-run] %d edits validated:\n%s", len(edits), strings.Join(previews, "\n")),
+	}
+}
+
+// writePendingEdits records snapshots and atomically writes each edit in order,
+// returning per-edit result lines, the first changed line, and collected diffs.
+func (e *Engine) writePendingEdits(edits []pendingEdit) (writeResult, error) {
+	var wr writeResult
 	for _, ed := range edits {
 		_ = e.recordSnapshot(ed.resolved, ed.path, "multi_edit", ed.preContent)
-		if err := e.atomicWriteFile(ed.resolved, ed.updated); err != nil {
-			return nil, fmt.Errorf("%s: %w", ed.path, err)
+		if werr := e.atomicWriteFile(ed.resolved, ed.updated); werr != nil {
+			return writeResult{}, fmt.Errorf("%s: %w", ed.path, werr)
 		}
 		line := fmt.Sprintf("edited %s", ed.path)
 		if ed.fuzzy {
 			line += " (fuzzy match)"
 		}
 		if ed.showContext > 0 {
-			if data, err := os.ReadFile(ed.resolved); err == nil {
+			if data, rerr := os.ReadFile(ed.resolved); rerr == nil {
 				newLineCount := strings.Count(ed.newText, "\n") + 1
 				line += fmt.Sprintf("\n--- context ---\n%s", formatEditContext(data, ed.matchInfo, newLineCount, ed.showContext))
 			}
 		}
-		results = append(results, line)
+		wr.results = append(wr.results, line)
 
 		// Compute diff via fast-path using known matchInfo (avoids O(m×n) LCS
 		// over the full file, which freezes on large files).
 		dr := generateEditDiff(string(ed.preContent), ed.updated, ed.path, ed.matchInfo, ed.oldText, ed.newText, 3)
 		if dr.Diff != "" {
-			allDiffs = append(allDiffs, dr.Diff)
+			wr.allDiffs = append(wr.allDiffs, dr.Diff)
 		}
-		if firstLine == 0 && ed.matchInfo.startLine > 0 {
-			firstLine = ed.matchInfo.startLine
+		if wr.firstLine == 0 && ed.matchInfo.startLine > 0 {
+			wr.firstLine = ed.matchInfo.startLine
 		}
 	}
+	return wr, nil
+}
 
-	// Build aggregate editDetails from all edits.
+// buildEditDetails aggregates per-edit match info into the editDetails summary.
+func buildEditDetails(edits []pendingEdit, firstLine int, allDiffs []string) editDetails {
 	var lastLine int
 	var matchType string
 	var fuzzyNormalized string
@@ -384,19 +451,11 @@ func (e *Engine) multiEdit(args map[string]interface{}) (*ToolResult, error) {
 			matchType = "exact"
 		}
 	}
-
-	meta := map[string]any{
-		"edit": editDetails{
-			Diff:             strings.Join(allDiffs, "\n"),
-			FirstChangedLine: firstLine,
-			LastChangedLine:  lastLine,
-			MatchType:        matchType,
-			FuzzyNormalized:  fuzzyNormalized,
-		},
+	return editDetails{
+		Diff:             strings.Join(allDiffs, "\n"),
+		FirstChangedLine: firstLine,
+		LastChangedLine:  lastLine,
+		MatchType:        matchType,
+		FuzzyNormalized:  fuzzyNormalized,
 	}
-
-	return &ToolResult{
-		Text: fmt.Sprintf("applied %d edits:\n%s", len(edits), strings.Join(results, "\n")),
-		Meta: meta,
-	}, nil
 }
