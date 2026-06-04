@@ -8,17 +8,11 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"time"
 )
 
 var grepExcludeDirs = []string{".git", "node_modules", "vendor", "__pycache__", ".cache", "dist", "build"}
 
 const searchDefaultMax = 500 // tunable: config candidate
-
-// searchTimeout caps each rg/grep invocation so a slow filesystem scan cannot
-// hang an agent tool call indefinitely. Declared as var so tests may shorten
-// it; not part of the public API.
-var searchTimeout = 60 * time.Second
 
 // searchFiles is a context-less convenience shim used ONLY by tests; production
 // Dispatch calls searchFilesContext(ctx, args) directly (engine.go). Do not add

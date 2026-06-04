@@ -10,6 +10,11 @@ import (
 	"time"
 )
 
+// searchTimeout caps each rg/grep invocation so a slow filesystem scan cannot
+// hang an agent tool call indefinitely. Declared as var so tests may shorten
+// it; not part of the public API.
+var searchTimeout = 60 * time.Second
+
 // grepResult holds the bounded output of a single grep/rg run.
 type grepResult struct {
 	stdout   string
