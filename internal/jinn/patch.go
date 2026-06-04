@@ -1,6 +1,7 @@
 package jinn
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -39,7 +40,7 @@ type updateChunk struct {
 func parsePatch(text string) ([]patchOperation, error) {
 	lines := strings.Split(normalizeToLF(strings.TrimSpace(text)), "\n")
 	if len(lines) < 2 {
-		return nil, fmt.Errorf("patch is empty or invalid")
+		return nil, errors.New("patch is empty or invalid")
 	}
 	if strings.TrimSpace(lines[0]) != "*** Begin Patch" {
 		return nil, fmt.Errorf("the first line of the patch must be '*** Begin Patch'")

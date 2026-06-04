@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -315,7 +316,7 @@ func diagnosticCodeString(code any) string {
 		return v
 	case float64:
 		if v == float64(int64(v)) {
-			return fmt.Sprintf("%d", int64(v))
+			return strconv.FormatInt(int64(v), 10)
 		}
 		return fmt.Sprintf("%g", v)
 	default:

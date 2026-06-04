@@ -3,6 +3,7 @@ package jinn
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -212,7 +213,7 @@ func (c *lspClient) readFrame() ([]byte, error) {
 		}
 	}
 	if contentLen < 0 {
-		return nil, fmt.Errorf("lsp: missing Content-Length header")
+		return nil, errors.New("lsp: missing Content-Length header")
 	}
 	buf := make([]byte, contentLen)
 	if _, err := io.ReadFull(c.stdout, buf); err != nil {

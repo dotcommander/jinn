@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strconv"
 )
 
 // mockConfig controls the behavior of runMockServer for variant tests.
@@ -230,7 +231,7 @@ func runMockServer(r io.Reader, w io.WriteCloser, cfg mockConfig) {
 			if cfg.badRename {
 				// Write a well-formed frame containing malformed JSON for the result field.
 				// We craft a raw reply where "result" is not a valid lspWorkspaceEdit.
-				body := []byte(`{"jsonrpc":"2.0","id":` + fmt.Sprintf("%d", *msg.ID) + `,"result":{"broken":}`)
+				body := []byte(`{"jsonrpc":"2.0","id":` + strconv.FormatInt(*msg.ID, 10) + `,"result":{"broken":}`)
 				fmt.Fprintf(w, "Content-Length: %d\r\n\r\n%s", len(body), body) //nolint:errcheck
 				continue
 			}

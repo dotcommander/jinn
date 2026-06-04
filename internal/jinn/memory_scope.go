@@ -1,6 +1,7 @@
 package jinn
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -80,7 +81,7 @@ func (e *Engine) resolveMemoryScope(scope, scopeID string) (resolvedScope, error
 	case "global":
 		if scopeID != "" {
 			return resolvedScope{}, &ErrWithSuggestion{
-				Err:        fmt.Errorf("global scope cannot have a scope_id"),
+				Err:        errors.New("global scope cannot have a scope_id"),
 				Suggestion: `omit scope_id when using scope="global"`,
 				Code:       ErrCodeInvalidArgs,
 			}
@@ -90,7 +91,7 @@ func (e *Engine) resolveMemoryScope(scope, scopeID string) (resolvedScope, error
 	case "task":
 		if scopeID == "" {
 			return resolvedScope{}, &ErrWithSuggestion{
-				Err:        fmt.Errorf("task scope requires a scope_id (task id)"),
+				Err:        errors.New("task scope requires a scope_id (task id)"),
 				Suggestion: `pass scope_id="<task-id>" when using scope="task"`,
 				Code:       ErrCodeInvalidArgs,
 			}
@@ -100,7 +101,7 @@ func (e *Engine) resolveMemoryScope(scope, scopeID string) (resolvedScope, error
 	case "agent":
 		if scopeID == "" {
 			return resolvedScope{}, &ErrWithSuggestion{
-				Err:        fmt.Errorf("agent scope requires a scope_id (agent name)"),
+				Err:        errors.New("agent scope requires a scope_id (agent name)"),
 				Suggestion: `pass scope_id="<agent-name>" when using scope="agent"`,
 				Code:       ErrCodeInvalidArgs,
 			}

@@ -3,6 +3,7 @@ package jinn
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -54,7 +55,7 @@ func multiMatchError(count int, haystack, needle string) error {
 	lines, overflow := collectMatchLines(haystack, needle, cap)
 	nums := make([]string, len(lines))
 	for i, l := range lines {
-		nums[i] = fmt.Sprintf("%d", l)
+		nums[i] = strconv.Itoa(l)
 	}
 	lineList := strings.Join(nums, ", ")
 	msg := fmt.Sprintf("old_text matches %d locations (lines: %s)", count, lineList)
@@ -147,7 +148,7 @@ func formatEditContext(content []byte, info matchInfo, newLines int, showContext
 	if lines[total-1] == "" {
 		total--
 	}
-	width := len(fmt.Sprintf("%d", total))
+	width := len(strconv.Itoa(total))
 
 	start := info.startLine - showContext
 	if start < 1 {
