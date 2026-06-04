@@ -142,20 +142,11 @@ func (e *Engine) recordSnapshot(absPath, displayPath, op string, preContent []by
 	blobPath := ""
 	var blobSize int64
 	if !created {
-		h := sha256.Sum256(preContent)
-		blobHash = hex.EncodeToString(h[:])
-		blobPath = filepath.Join(e.blobsDir(), id+".blob")
-		if err := os.MkdirAll(e.blobsDir(), 0o700); err != nil {
+		blob, werr := e.writeBlobForSnapshot(id, preContent)
+		if werr != nil {
 			return // non-blocking
 		}
-		encoded, cerr := encodeBlob(preContent)
-		if cerr != nil {
-			return // non-blocking
-		}
-		if err := atomicWriteBytes(blobPath, encoded, 0o600); err != nil {
-			return // non-blocking
-		}
-		blobSize = int64(len(preContent)) // track original size for eviction
+		blobHash, blobPath, blobSize = blob.hash, blob.path, blob.size
 	}
 
 	entry := historyEntry{
@@ -180,6 +171,36 @@ func (e *Engine) recordSnapshot(absPath, displayPath, op string, preContent []by
 		}
 		return
 	}
+}
+
+// snapshotBlob is the result of writing a pre-edit blob to disk.
+type snapshotBlob struct {
+	hash, path string
+	size       int64
+}
+
+// writeBlobForSnapshot encodes and atomically writes the pre-edit content to a
+// blob file for snapshot id. On any failure (mkdir, encode, write) it returns a
+// non-nil error and a zero snapshotBlob, so recordSnapshot aborts the snapshot
+// exactly as the inline early-returns did (best-effort, non-blocking).
+func (e *Engine) writeBlobForSnapshot(id string, preContent []byte) (snapshotBlob, error) {
+	h := sha256.Sum256(preContent)
+	path := filepath.Join(e.blobsDir(), id+".blob")
+	if mkErr := os.MkdirAll(e.blobsDir(), 0o700); mkErr != nil {
+		return snapshotBlob{}, mkErr
+	}
+	encoded, cerr := encodeBlob(preContent)
+	if cerr != nil {
+		return snapshotBlob{}, cerr
+	}
+	if wErr := atomicWriteBytes(path, encoded, 0o600); wErr != nil {
+		return snapshotBlob{}, wErr
+	}
+	return snapshotBlob{
+		hash: hex.EncodeToString(h[:]),
+		path: path,
+		size: int64(len(preContent)), // track original size for eviction
+	}, nil
 }
 
 // evictHistory trims the ring-buffer to satisfy entry count and total size limits.
