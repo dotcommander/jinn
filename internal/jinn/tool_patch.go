@@ -8,6 +8,19 @@ import (
 	"strings"
 )
 
+// resolvedOp pairs a parsed patch operation with its checked absolute path.
+type resolvedOp struct {
+	op       patchOperation
+	resolved string
+}
+
+// preflightResult holds the validated old/new content for one operation,
+// computed during the no-write preflight phase and reused at apply time.
+type preflightResult struct {
+	oldContent string
+	newContent string
+}
+
 // applyPatch executes a parsed set of Codex-style patch operations.
 // Phase 1: validate all operations (preflight) without writing.
 // Phase 2: apply operations with per-file atomic writes and undo snapshots.
@@ -22,12 +35,27 @@ func (e *Engine) applyPatch(args map[string]interface{}) (*ToolResult, error) {
 		return nil, fmt.Errorf("parse patch: %w", err)
 	}
 
-	// Resolve all paths upfront.
-	type resolvedOp struct {
-		op       patchOperation
-		resolved string
+	resolved, err := e.resolvePatchPaths(ops)
+	if err != nil {
+		return nil, err
 	}
-	var resolved []resolvedOp
+
+	preflights, err := preflightPatch(resolved)
+	if err != nil {
+		return nil, err
+	}
+
+	if dryRun, ok := args["dry_run"].(bool); ok && dryRun {
+		return renderPatchDryRun(resolved, preflights), nil
+	}
+
+	return e.applyPatchOps(resolved, preflights)
+}
+
+// resolvePatchPaths checks every operation's path against the engine's
+// path policy, returning operations paired with their resolved absolute paths.
+func (e *Engine) resolvePatchPaths(ops []patchOperation) ([]resolvedOp, error) {
+	resolved := make([]resolvedOp, 0, len(ops))
 	for _, op := range ops {
 		resolvedPath, err := e.checkPath(op.path)
 		if err != nil {
@@ -35,12 +63,12 @@ func (e *Engine) applyPatch(args map[string]interface{}) (*ToolResult, error) {
 		}
 		resolved = append(resolved, resolvedOp{op: op, resolved: resolvedPath})
 	}
+	return resolved, nil
+}
 
-	// Phase 1: preflight — validate all operations without writing.
-	type preflightResult struct {
-		oldContent string
-		newContent string
-	}
+// preflightPatch validates all operations without writing, returning the
+// computed old/new content for each so the apply phase can reuse it.
+func preflightPatch(resolved []resolvedOp) ([]preflightResult, error) {
 	preflights := make([]preflightResult, len(resolved))
 
 	for i, r := range resolved {
@@ -81,25 +109,31 @@ func (e *Engine) applyPatch(args map[string]interface{}) (*ToolResult, error) {
 		}
 	}
 
-	// Phase 2: apply all operations.
-	if dryRun, ok := args["dry_run"].(bool); ok && dryRun {
-		var parts []string
-		for i, r := range resolved {
-			switch r.op.kind {
-			case "add":
-				parts = append(parts, fmt.Sprintf("would add %s", r.op.path))
-			case "delete":
-				parts = append(parts, fmt.Sprintf("would delete %s", r.op.path))
-			case "update":
-				dr := generateDiff(preflights[i].oldContent, preflights[i].newContent, r.op.path, 3)
-				parts = append(parts, fmt.Sprintf("would update %s:\n%s", r.op.path, dr.Diff))
-			}
-		}
-		return &ToolResult{
-			Text: fmt.Sprintf("[dry-run] patch with %d operation(s):\n%s", len(resolved), strings.Join(parts, "\n")),
-		}, nil
-	}
+	return preflights, nil
+}
 
+// renderPatchDryRun produces the no-write summary of the operations.
+func renderPatchDryRun(resolved []resolvedOp, preflights []preflightResult) *ToolResult {
+	var parts []string
+	for i, r := range resolved {
+		switch r.op.kind {
+		case "add":
+			parts = append(parts, fmt.Sprintf("would add %s", r.op.path))
+		case "delete":
+			parts = append(parts, fmt.Sprintf("would delete %s", r.op.path))
+		case "update":
+			dr := generateDiff(preflights[i].oldContent, preflights[i].newContent, r.op.path, 3)
+			parts = append(parts, fmt.Sprintf("would update %s:\n%s", r.op.path, dr.Diff))
+		}
+	}
+	return &ToolResult{
+		Text: fmt.Sprintf("[dry-run] patch with %d operation(s):\n%s", len(resolved), strings.Join(parts, "\n")),
+	}
+}
+
+// applyPatchOps performs phase 2: apply all operations with per-file atomic
+// writes and undo snapshots, accumulating diffs for the result metadata.
+func (e *Engine) applyPatchOps(resolved []resolvedOp, preflights []preflightResult) (*ToolResult, error) {
 	var results []string
 	var allDiffs []string
 	var firstLine int

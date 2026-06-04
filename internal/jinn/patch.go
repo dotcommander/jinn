@@ -99,22 +99,11 @@ func parsePatch(text string) ([]patchOperation, error) {
 				return nil, errors.New("patch move operations (*** Move to:) are not supported")
 			}
 
-			var chunks []updateChunk
-			for i <= lastContent {
-				if strings.TrimSpace(lines[i]) == "" {
-					i++
-					continue
-				}
-				if strings.HasPrefix(strings.TrimSpace(lines[i]), "*** ") {
-					break
-				}
-				chunk, nextIdx, err := parseUpdateChunk(lines, i, lastContent, len(chunks) == 0)
-				if err != nil {
-					return nil, fmt.Errorf("update %s: %w", path, err)
-				}
-				chunks = append(chunks, chunk)
-				i = nextIdx
+			chunks, nextIdx, err := collectUpdateChunks(lines, i, lastContent)
+			if err != nil {
+				return nil, fmt.Errorf("update %s: %w", path, err)
 			}
+			i = nextIdx
 
 			if len(chunks) == 0 {
 				return nil, fmt.Errorf("update file hunk for path %q is empty", path)
@@ -132,7 +121,35 @@ func parsePatch(text string) ([]patchOperation, error) {
 	return ops, nil
 }
 
+// collectUpdateChunks parses consecutive update hunks for one file, starting at
+// lines[start]. It stops at a blank-then-"*** " section boundary and returns the
+// chunks plus the index of the first unconsumed line.
+func collectUpdateChunks(lines []string, start, lastContent int) ([]updateChunk, int, error) {
+	var chunks []updateChunk
+	i := start
+	for i <= lastContent {
+		if strings.TrimSpace(lines[i]) == "" {
+			i++
+			continue
+		}
+		if strings.HasPrefix(strings.TrimSpace(lines[i]), "*** ") {
+			break
+		}
+		chunk, nextIdx, err := parseUpdateChunk(lines, i, lastContent, len(chunks) == 0)
+		if err != nil {
+			return nil, i, err
+		}
+		chunks = append(chunks, chunk)
+		i = nextIdx
+	}
+	return chunks, i, nil
+}
+
 // parseUpdateChunk parses a single hunk starting at lines[startIdx].
+//nolint:gocyclo // Single-pass hunk state machine: cursor advancement, the
+// parsed-count gating, and the goto-done exit are mutually coupled; extracting
+// the marker switch would require pointer-mutated slices plus a control-flow
+// return enum, which obscures the parse logic more than the branch count does.
 func parseUpdateChunk(lines []string, startIdx, lastContentLine int, allowMissingContext bool) (updateChunk, int, error) {
 	i := startIdx
 	var ctx string
