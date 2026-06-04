@@ -230,6 +230,20 @@ func (e *Engine) dispatchLSPAction(client *lspClient, req lspRequest) (string, e
 	}
 }
 
+// runLSPSession drives the in-session steps for an already-started client:
+// handshake → didOpen → dispatch. It does NOT close/shutdown/stop the client —
+// that cleanup is owned by the caller's goroutine defer so it runs after the
+// result is delivered. Errors short-circuit and propagate to the caller.
+func (e *Engine) runLSPSession(client *lspClient, req lspRequest) (string, error) {
+	if err := client.handshake(e.workDir); err != nil {
+		return "", err
+	}
+	if err := client.didOpen(req.absPath, langIDForExt(req.ext)); err != nil {
+		return "", err
+	}
+	return e.dispatchLSPAction(client, req)
+}
+
 // lspQueryWithLauncher is the testable variant — tests inject a fake launcher.
 func (e *Engine) lspQueryWithLauncher(ctx context.Context, args map[string]interface{}, launcher lspLauncher) (string, error) {
 	req, err := e.parseLSPArgs(args)
@@ -254,22 +268,16 @@ func (e *Engine) lspQueryWithLauncher(ctx context.Context, args map[string]inter
 	}
 
 	go func() {
+		// Cleanup stays in the closure so it runs AFTER the channel send
+		// (defer fires at closure exit, post-send) — preserving the original
+		// ordering relative to the select/timeout consumer.
 		defer func() {
 			client.didClose(req.absPath) //nolint:errcheck
 			client.shutdown()
 			client.stop()
 		}()
 
-		if err := client.handshake(e.workDir); err != nil {
-			done <- result{err: err}
-			return
-		}
-		if err := client.didOpen(req.absPath, langIDForExt(req.ext)); err != nil {
-			done <- result{err: err}
-			return
-		}
-
-		out, qErr := e.dispatchLSPAction(client, req)
+		out, qErr := e.runLSPSession(client, req)
 		done <- result{out: out, err: qErr}
 	}()
 
