@@ -775,10 +775,10 @@ func TestLSP_DidOpenSizeGuard(t *testing.T) {
 	}
 	// Seek past the limit and write one byte to create a sparse file of the right size.
 	if _, wErr := f.WriteAt([]byte{0}, maxLSPFileSize+1); wErr != nil {
-		f.Close()
+		_ = f.Close()
 		t.Fatal(wErr)
 	}
-	f.Close()
+	_ = f.Close()
 
 	_, err = e.lspQueryWithLauncher(lspArgs(
 		"action", "hover",

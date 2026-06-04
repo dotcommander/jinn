@@ -129,8 +129,8 @@ func TestBoundedWriter_OverLimit(t *testing.T) {
 func TestBoundedWriter_MultipleWrites(t *testing.T) {
 	t.Parallel()
 	w := &boundedWriter{limit: 10}
-	w.Write([]byte("abc"))
-	w.Write([]byte("defghijklmno"))
+	_, _ = w.Write([]byte("abc"))
+	_, _ = w.Write([]byte("defghijklmno"))
 	if w.String() != "abcdefghij" || !w.Truncated() {
 		t.Errorf("multi-write: String()=%q Truncated()=%v", w.String(), w.Truncated())
 	}

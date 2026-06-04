@@ -14,7 +14,7 @@ func TestLoadHistory_CorruptJSON(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(e.indexPath()), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	os.WriteFile(e.indexPath(), []byte("{bad json"), 0o600)
+	_ = os.WriteFile(e.indexPath(), []byte("{bad json"), 0o600)
 
 	_, err := e.loadHistory()
 	if err == nil {
@@ -28,7 +28,7 @@ func TestLoadHistory_ReadError(t *testing.T) {
 
 	// Place a directory at the index path so ReadFile fails.
 	indexPath := e.indexPath()
-	os.MkdirAll(indexPath, 0o755) // directory, not a file
+	_ = os.MkdirAll(indexPath, 0o755) // directory, not a file
 
 	_, err := e.loadHistory()
 	if err == nil {
@@ -45,8 +45,8 @@ func TestSaveHistory_UnwritableDir(t *testing.T) {
 	if err := os.MkdirAll(histDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	os.Chmod(histDir, 0o555)
-	t.Cleanup(func() { os.Chmod(histDir, 0o755) })
+	_ = os.Chmod(histDir, 0o555)
+	t.Cleanup(func() { _ = os.Chmod(histDir, 0o755) })
 
 	err := e.saveHistory(historyFile{Version: 1, Entries: []historyEntry{}})
 	if err == nil {
@@ -80,7 +80,7 @@ func TestAtomicWriteBytes_UnwritableDir(t *testing.T) {
 	if err := os.Chmod(dir, 0o555); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { os.Chmod(dir, 0o755) })
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
 
 	err := atomicWriteBytes(filepath.Join(dir, "data.bin"), []byte("data"), 0o600)
 	if err == nil {

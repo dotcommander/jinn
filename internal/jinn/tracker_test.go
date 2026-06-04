@@ -19,7 +19,7 @@ func TestCheckStale_Fresh(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	p := filepath.Join(dir, "f.txt")
-	os.WriteFile(p, []byte("hi"), 0o644)
+	_ = os.WriteFile(p, []byte("hi"), 0o644)
 	info, _ := os.Stat(p)
 
 	ft := newFileTracker()
@@ -34,12 +34,12 @@ func TestCheckStale_Modified(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	p := filepath.Join(dir, "f.txt")
-	os.WriteFile(p, []byte("hi"), 0o644)
+	_ = os.WriteFile(p, []byte("hi"), 0o644)
 
 	ft := newFileTracker()
 	ft.record(p, time.Now().Add(-2*time.Second))
 
-	os.WriteFile(p, []byte("changed"), 0o644)
+	_ = os.WriteFile(p, []byte("changed"), 0o644)
 	if err := ft.checkStale(p); err == nil {
 		t.Error("modified file should be stale")
 	}

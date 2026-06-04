@@ -31,7 +31,7 @@ func args(kv ...any) map[string]interface{} {
 func writeTestFile(t *testing.T, dir, name, content string) {
 	t.Helper()
 	p := filepath.Join(dir, name)
-	os.MkdirAll(filepath.Dir(p), 0o755)
+	_ = os.MkdirAll(filepath.Dir(p), 0o755)
 	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}

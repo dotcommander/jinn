@@ -69,7 +69,7 @@ func TestAtomicWriteFile_OverwritesExisting(t *testing.T) {
 	t.Parallel()
 	e, dir := testEngine(t)
 	target := filepath.Join(dir, "existing.txt")
-	os.WriteFile(target, []byte("old"), 0o644)
+	_ = os.WriteFile(target, []byte("old"), 0o644)
 	if err := e.atomicWriteFile(target, "new"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -103,7 +103,7 @@ func TestAtomicWriteFile_FailsOnReadonlyDir(t *testing.T) {
 	if err := os.Mkdir(roDir, 0o555); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { os.Chmod(roDir, 0o755) })
+	t.Cleanup(func() { _ = os.Chmod(roDir, 0o755) })
 
 	target := filepath.Join(roDir, "file.txt")
 	// Pre-create file so stat doesn't fail; but dir is read-only for writes.

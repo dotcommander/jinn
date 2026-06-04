@@ -39,7 +39,7 @@ func TestStatFile_Regular(t *testing.T) {
 func TestStatFile_Directory(t *testing.T) {
 	t.Parallel()
 	e, dir := testEngine(t)
-	os.Mkdir(filepath.Join(dir, "statdir"), 0o755)
+	_ = os.Mkdir(filepath.Join(dir, "statdir"), 0o755)
 	result, err := e.statFile(args("path", "statdir"))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -101,7 +101,7 @@ func TestStatFile_Binary(t *testing.T) {
 	e, dir := testEngine(t)
 	// Write invalid UTF-8 bytes
 	dir2 := filepath.Join(dir, "bin.dat")
-	os.WriteFile(dir2, []byte{0x80, 0x81, 0x82, 0x83}, 0o644)
+	_ = os.WriteFile(dir2, []byte{0x80, 0x81, 0x82, 0x83}, 0o644)
 	result, err := e.statFile(args("path", "bin.dat"))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

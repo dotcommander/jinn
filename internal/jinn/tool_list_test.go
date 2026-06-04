@@ -43,14 +43,14 @@ func TestListDir_DepthClamp(t *testing.T) {
 	t.Parallel()
 	e, _ := testEngine(t)
 	// depth < 1 clamps to 1, depth > 10 clamps to 10. Verify no panic.
-	e.listDir(args("depth", float64(0)))
-	e.listDir(args("depth", float64(99)))
+	_, _ = e.listDir(args("depth", float64(0)))
+	_, _ = e.listDir(args("depth", float64(99)))
 }
 
 func TestListDir_EmptySubdir(t *testing.T) {
 	t.Parallel()
 	e, dir := testEngine(t)
-	os.Mkdir(filepath.Join(dir, "emptydir"), 0o755)
+	_ = os.Mkdir(filepath.Join(dir, "emptydir"), 0o755)
 	result, err := e.listDir(args("path", "emptydir", "depth", float64(1)))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

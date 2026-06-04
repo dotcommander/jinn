@@ -265,8 +265,8 @@ func TestSearchReplace_BinaryFileSkipped(t *testing.T) {
 
 	// Write a file with null bytes.
 	binary := []byte("hello\x00world\n")
-	os.MkdirAll(dir, 0o755)
-	os.WriteFile(filepath.Join(dir, "binary.bin"), binary, 0o644)
+	_ = os.MkdirAll(dir, 0o755)
+	_ = os.WriteFile(filepath.Join(dir, "binary.bin"), binary, 0o644)
 
 	_, err := e.searchReplace(context.Background(), args(
 		"pattern", "hello",

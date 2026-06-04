@@ -65,7 +65,7 @@ func TestUndoRestore_AbsPathMismatch(t *testing.T) {
 	histMu.Lock()
 	hf, _ := e.loadHistory()
 	hf.Entries[0].AbsPath = filepath.Join(workDir, "different.txt")
-	e.saveHistory(hf)
+	_ = e.saveHistory(hf)
 	histMu.Unlock()
 
 	// Also create the differently-named file so checkPath succeeds but mismatch is caught.

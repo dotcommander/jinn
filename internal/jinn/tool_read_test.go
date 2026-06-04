@@ -48,7 +48,7 @@ func TestReadFile_NotFound(t *testing.T) {
 func TestReadFile_Directory(t *testing.T) {
 	t.Parallel()
 	e, dir := testEngine(t)
-	os.Mkdir(filepath.Join(dir, "subdir"), 0o755)
+	_ = os.Mkdir(filepath.Join(dir, "subdir"), 0o755)
 	_, err := e.readFile(args("path", "subdir"))
 	if err == nil || !strings.Contains(err.Error(), "not a regular file") {
 		t.Errorf("expected 'not a regular file' error, got: %v", err)
@@ -208,7 +208,7 @@ func TestReadFile_ContinuationHint(t *testing.T) {
 func TestReadFile_Suggestion_Directory(t *testing.T) {
 	t.Parallel()
 	e, dir := testEngine(t)
-	os.Mkdir(filepath.Join(dir, "adir"), 0o755)
+	_ = os.Mkdir(filepath.Join(dir, "adir"), 0o755)
 	_, err := e.readFile(args("path", "adir"))
 	if err == nil {
 		t.Fatal("expected error for directory path")

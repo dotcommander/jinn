@@ -215,7 +215,7 @@ func TestApplyPatch_Engine_StaleFile(t *testing.T) {
 	writeTestFile(t, dir, "stale.txt", original)
 
 	// Read the file so the tracker records its mtime.
-	e.readFile(args("path", "stale.txt"))
+	_, _ = e.readFile(args("path", "stale.txt"))
 
 	// Advance mtime without changing content — preflight will still find the
 	// patch lines, but checkStale detects the newer mtime and rejects Phase 2.

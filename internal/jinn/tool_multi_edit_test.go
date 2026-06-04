@@ -273,11 +273,11 @@ func TestMultiEdit_StaleFile(t *testing.T) {
 	writeTestFile(t, dir, "stale.txt", "original\n")
 
 	// Read the file so the tracker records its mtime.
-	e.readFile(args("path", "stale.txt"))
+	_, _ = e.readFile(args("path", "stale.txt"))
 
 	// External modification — advance mtime beyond the tracked value.
 	time.Sleep(10 * time.Millisecond)
-	os.WriteFile(fp, []byte("changed!\n"), 0o644)
+	_ = os.WriteFile(fp, []byte("changed!\n"), 0o644)
 
 	_, err := e.multiEdit(args("edits", []interface{}{
 		map[string]interface{}{"path": "stale.txt", "old_text": "original", "new_text": "NEW"},

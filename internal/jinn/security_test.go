@@ -83,7 +83,7 @@ func TestCheckPath_SymlinkEscape(t *testing.T) {
 	e, dir := testEngine(t)
 	// Create a symlink inside workdir pointing outside.
 	target := t.TempDir() // different temp dir = outside workdir
-	os.Symlink(target, filepath.Join(dir, "escape"))
+	_ = os.Symlink(target, filepath.Join(dir, "escape"))
 	_, err := e.checkPath("escape/anything")
 	if err == nil {
 		t.Error("symlink escape should be blocked")

@@ -59,8 +59,8 @@ func TestWriteFile_UpdatesTracker(t *testing.T) {
 	e, dir := testEngine(t)
 	writeTestFile(t, dir, "tracked.txt", "v1")
 
-	e.readFile(args("path", "tracked.txt"))
-	e.writeFile(args("path", "tracked.txt", "content", "v2"))
+	_, _ = e.readFile(args("path", "tracked.txt"))
+	_, _ = e.writeFile(args("path", "tracked.txt", "content", "v2"))
 
 	result, err := e.writeFile(args("path", "tracked.txt", "content", "v3"))
 	if err != nil {
@@ -82,7 +82,7 @@ func TestWriteFile_PreservesPermissions(t *testing.T) {
 	}
 
 	// Read then overwrite via writeFile.
-	e.readFile(args("path", "script.sh"))
+	_, _ = e.readFile(args("path", "script.sh"))
 	_, err := e.writeFile(args("path", "script.sh", "content", "#!/bin/sh\necho v2"))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

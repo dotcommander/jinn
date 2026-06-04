@@ -36,12 +36,12 @@ func TestMemorySchema_TablesExist(t *testing.T) {
 	for rows.Next() {
 		var n string
 		if err := rows.Scan(&n); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			t.Fatalf("scan: %v", err)
 		}
 		got[n] = true
 	}
-	rows.Close()
+	_ = rows.Close()
 	if err := rows.Err(); err != nil {
 		t.Fatalf("rows err: %v", err)
 	}

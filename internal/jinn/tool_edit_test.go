@@ -351,7 +351,7 @@ func TestMultiEdit_AmbiguousLineNumbers(t *testing.T) {
 	e, dir := testEngine(t)
 	writeTestFile(t, dir, "me.txt", "dup\nother\ndup\n")
 	// Read the file so tracker records it.
-	e.readFile(args("path", "me.txt"))
+	_, _ = e.readFile(args("path", "me.txt"))
 
 	edits := []interface{}{
 		map[string]interface{}{

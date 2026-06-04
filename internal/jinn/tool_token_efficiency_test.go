@@ -1057,7 +1057,7 @@ func TestTokenEfficiency_FindFiles_SubdirectoryPaths(t *testing.T) {
 	// Create nested files
 	for i := range 5 {
 		sub := fmt.Sprintf("pkg%d", i)
-		os.MkdirAll(filepath.Join(dir, sub), 0o755)
+		_ = os.MkdirAll(filepath.Join(dir, sub), 0o755)
 		writeTestFile(t, dir, fmt.Sprintf("%s/main.go", sub), "package main\n")
 	}
 

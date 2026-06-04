@@ -55,8 +55,8 @@ func newMockLauncherCfg(cfg mockConfig) lspLauncher {
 		go runMockServer(serverR, serverW, cfg)
 
 		kill := func() error {
-			clientW.Close()
-			serverW.Close()
+			_ = clientW.Close()
+			_ = serverW.Close()
 			return nil
 		}
 		return clientW, clientR, kill, nil
@@ -66,7 +66,7 @@ func newMockLauncherCfg(cfg mockConfig) lspLauncher {
 // runMockServer handles JSON-RPC 2.0 frames over r/w. It responds to the
 // exact methods exercised by the test suite; unrecognised methods are ignored.
 func runMockServer(r io.Reader, w io.WriteCloser, cfg mockConfig) {
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 
 	if cfg.slow {
 		// Block until the pipe is closed by the client's kill func.

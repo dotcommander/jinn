@@ -114,7 +114,7 @@ func TestDetectProject_NodeJS(t *testing.T) {
 	}
 
 	var info projectInfo
-	json.Unmarshal([]byte(result), &info)
+	_ = json.Unmarshal([]byte(result), &info)
 	found := false
 	for _, lang := range info.Languages {
 		if lang == "JavaScript" {
@@ -138,7 +138,7 @@ func TestDetectProject_TypeScript(t *testing.T) {
 	}
 
 	var info projectInfo
-	json.Unmarshal([]byte(result), &info)
+	_ = json.Unmarshal([]byte(result), &info)
 	found := false
 	for _, lang := range info.Languages {
 		if lang == "TypeScript" {
@@ -161,7 +161,7 @@ func TestDetectProject_Python(t *testing.T) {
 	}
 
 	var info projectInfo
-	json.Unmarshal([]byte(result), &info)
+	_ = json.Unmarshal([]byte(result), &info)
 	if len(info.Languages) == 0 || info.Languages[0] != "Python" {
 		t.Errorf("expected Python language, got %v", info.Languages)
 	}
@@ -178,7 +178,7 @@ func TestDetectProject_Rust(t *testing.T) {
 	}
 
 	var info projectInfo
-	json.Unmarshal([]byte(result), &info)
+	_ = json.Unmarshal([]byte(result), &info)
 	if len(info.Languages) == 0 || info.Languages[0] != "Rust" {
 		t.Errorf("expected Rust language, got %v", info.Languages)
 	}
@@ -188,7 +188,7 @@ func TestDetectProject_EmptyDir(t *testing.T) {
 	t.Parallel()
 	e, dir := testEngine(t)
 	sub := filepath.Join(dir, "empty")
-	os.MkdirAll(sub, 0755)
+	_ = os.MkdirAll(sub, 0755)
 
 	result, err := e.detectProject(args("path", "empty"))
 	if err != nil {
@@ -196,7 +196,7 @@ func TestDetectProject_EmptyDir(t *testing.T) {
 	}
 
 	var info projectInfo
-	json.Unmarshal([]byte(result), &info)
+	_ = json.Unmarshal([]byte(result), &info)
 	if len(info.Languages) != 0 {
 		t.Errorf("expected no languages for empty dir, got %v", info.Languages)
 	}
@@ -220,7 +220,7 @@ func TestDetectProject_PackageJSONScripts(t *testing.T) {
 	}
 
 	var info projectInfo
-	json.Unmarshal([]byte(result), &info)
+	_ = json.Unmarshal([]byte(result), &info)
 	if info.TestCommand != "npm run test" {
 		t.Errorf("expected 'npm run test', got %q", info.TestCommand)
 	}
