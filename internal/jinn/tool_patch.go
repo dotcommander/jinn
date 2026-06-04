@@ -66,24 +66,30 @@ func (e *Engine) resolvePatchPaths(ops []patchOperation) ([]resolvedOp, error) {
 	return resolved, nil
 }
 
+// patchOpHandlers is the single source of truth mapping each patch op kind to
+// its preflight (no-write validation) and apply (write) handlers. Unknown kinds
+// have no entry; callers treat a missing entry as a no-op, matching the prior
+// switch statements' default behavior.
+var patchOpHandlers = map[string]struct {
+	preflight func(resolvedOp) (preflightResult, error)
+	apply     func(*Engine, resolvedOp, preflightResult) (applyOpResult, error)
+}{
+	"add":    {preflightAdd, (*Engine).applyAdd},
+	"delete": {preflightDelete, (*Engine).applyDelete},
+	"update": {preflightUpdate, (*Engine).applyUpdate},
+}
+
 // preflightPatch validates all operations without writing, returning the
 // computed old/new content for each so the apply phase can reuse it.
 func preflightPatch(resolved []resolvedOp) ([]preflightResult, error) {
 	preflights := make([]preflightResult, len(resolved))
 
 	for i, r := range resolved {
-		var (
-			pre preflightResult
-			err error
-		)
-		switch r.op.kind {
-		case "add":
-			pre, err = preflightAdd(r)
-		case "delete":
-			pre, err = preflightDelete(r)
-		case "update":
-			pre, err = preflightUpdate(r)
+		h, ok := patchOpHandlers[r.op.kind]
+		if !ok {
+			continue
 		}
+		pre, err := h.preflight(r)
 		if err != nil {
 			return nil, err
 		}
@@ -168,18 +174,11 @@ func (e *Engine) applyPatchOps(resolved []resolvedOp, preflights []preflightResu
 	var firstLine int
 
 	for i, r := range resolved {
-		var (
-			res applyOpResult
-			err error
-		)
-		switch r.op.kind {
-		case "add":
-			res, err = e.applyAdd(r, preflights[i])
-		case "delete":
-			res, err = e.applyDelete(r)
-		case "update":
-			res, err = e.applyUpdate(r, preflights[i])
+		h, ok := patchOpHandlers[r.op.kind]
+		if !ok {
+			continue
 		}
+		res, err := h.apply(e, r, preflights[i])
 		if err != nil {
 			return nil, err
 		}
@@ -220,7 +219,8 @@ func (e *Engine) applyAdd(r resolvedOp, pre preflightResult) (applyOpResult, err
 }
 
 // applyDelete removes a file after recording an undo snapshot.
-func (e *Engine) applyDelete(r resolvedOp) (applyOpResult, error) {
+func (e *Engine) applyDelete(r resolvedOp, pre preflightResult) (applyOpResult, error) {
+	_ = pre // pre unused: delete needs no preflight payload
 	preContent, _ := os.ReadFile(r.resolved)
 	e.recordSnapshot(r.resolved, r.op.path, "apply_patch", preContent)
 	if err := os.Remove(r.resolved); err != nil {
