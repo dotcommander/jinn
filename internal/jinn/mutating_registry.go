@@ -9,7 +9,7 @@ package jinn
 //
 // Read-only actions are intentionally ABSENT and must stay absent:
 //
-//	task.get, task.list, memory.recall, memory.list, artifact.list.
+//	memory.recall, memory.list.
 type mutatingAction struct {
 	Tool    string // Dispatch tool name (engine.go switch)
 	Action  string // sub-action value (args["action"]); "" when the tool has no action fan-out
@@ -19,12 +19,7 @@ type mutatingAction struct {
 // mutatingActions is the canonical mutating set. Command strings here MUST be
 // byte-identical to the literals passed to runIdempotent in the handlers.
 var mutatingActions = []mutatingAction{
-	{Tool: "task", Action: "create", Command: "task.create"},
-	{Tool: "task", Action: "begin", Command: "task.begin"},
-	{Tool: "task", Action: "set_status", Command: "task.set_status"},
 	{Tool: "memory", Action: "save", Command: "memory.save"},
 	{Tool: "memory", Action: "forget", Command: "memory.forget"},
 	{Tool: "memory", Action: "gc", Command: "memory.gc"},
-	{Tool: "artifact", Action: "add", Command: "artifact.add"},
-	{Tool: "push", Action: "", Command: "push"},
 }

@@ -11,22 +11,6 @@ import (
 // no migration framework (Beta, no back-compat).
 func ensureSchema(ctx context.Context, db *sql.DB) error {
 	stmts := []string{
-		`CREATE TABLE IF NOT EXISTS tasks (
-			id             TEXT PRIMARY KEY,
-			title          TEXT NOT NULL,
-			description    TEXT,
-			status         TEXT NOT NULL,
-			priority       INTEGER NOT NULL DEFAULT 0,
-			blocked_reason TEXT,
-			project_id     TEXT NOT NULL DEFAULT '',
-			version        INTEGER NOT NULL DEFAULT 1,
-			created_at     TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			updated_at     TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-		)`,
-		`CREATE INDEX IF NOT EXISTS idx_tasks_status  ON tasks(status)`,
-		`CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id)`,
-		`CREATE INDEX IF NOT EXISTS idx_tasks_focus   ON tasks(status, project_id, priority DESC, created_at ASC)`,
-
 		`CREATE TABLE IF NOT EXISTS memory (
 			id              INTEGER PRIMARY KEY AUTOINCREMENT,
 			scope           TEXT NOT NULL,
@@ -43,24 +27,6 @@ func ensureSchema(ctx context.Context, db *sql.DB) error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_memory_scope   ON memory(scope, scope_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_memory_expires ON memory(expires_at)`,
-
-		`CREATE TABLE IF NOT EXISTS artifacts (
-			id           TEXT PRIMARY KEY,
-			task_id      TEXT NOT NULL,
-			file_path    TEXT NOT NULL,
-			content_type TEXT,
-			project_id   TEXT NOT NULL DEFAULT '',
-			created_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-		)`,
-		`CREATE INDEX IF NOT EXISTS idx_artifacts_task    ON artifacts(task_id)`,
-		`CREATE INDEX IF NOT EXISTS idx_artifacts_project ON artifacts(project_id)`,
-
-		`CREATE TABLE IF NOT EXISTS projects (
-			id         TEXT PRIMARY KEY,
-			name       TEXT NOT NULL,
-			metadata   TEXT,
-			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-		)`,
 
 		`CREATE TABLE IF NOT EXISTS idempotency (
 			agent_name  TEXT NOT NULL,

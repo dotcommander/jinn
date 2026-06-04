@@ -46,7 +46,7 @@ func TestContinuitySchema_TablesExist(t *testing.T) {
 		t.Fatalf("rows err: %v", err)
 	}
 
-	want := []string{"memory", "tasks", "artifacts", "projects", "idempotency"}
+	want := []string{"memory", "idempotency"}
 	var missing []string
 	for _, w := range want {
 		if !got[w] {

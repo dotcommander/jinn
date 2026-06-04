@@ -22,53 +22,6 @@ func dbCount(t *testing.T, e *Engine, ctx context.Context, query string, args ..
 	return n
 }
 
-// TestIdempotency5b_PushReplayOnce verifies that push with the same (agent,
-// request_id) twice leaves exactly one artifact and memory row; the second
-// result is byte-identical to the first.
-func TestIdempotency5b_PushReplayOnce(t *testing.T) {
-	e, ctx := newIdempotencyEngine(t)
-
-	taskRaw, err := e.taskTool(ctx, args("action", "create", "title", "push-idem", "agent", "agent"))
-	if err != nil {
-		t.Fatalf("create task: %v", err)
-	}
-	var task Task
-	if err := json.Unmarshal([]byte(taskRaw), &task); err != nil {
-		t.Fatalf("decode task: %v", err)
-	}
-
-	pushArgs := args(
-		"agent", "agent",
-		"task_id", task.ID,
-		"request_id", "push-req-5b-001",
-		"artifacts", []interface{}{
-			map[string]interface{}{"file_path": "/tmp/out.json", "content_type": "application/json"},
-		},
-		"memories", []interface{}{
-			map[string]interface{}{"key": "push-mem", "value": "v1", "scope": "global"},
-		},
-	)
-
-	first, err := e.pushTool(ctx, pushArgs)
-	if err != nil {
-		t.Fatalf("first push: %v", err)
-	}
-	second, err := e.pushTool(ctx, pushArgs)
-	if err != nil {
-		t.Fatalf("second push (replay): %v", err)
-	}
-	if first != second {
-		t.Errorf("push replay not byte-identical:\n first:  %s\n second: %s", first, second)
-	}
-
-	if n := dbCount(t, e, ctx, `SELECT COUNT(*) FROM artifacts WHERE file_path='/tmp/out.json'`); n != 1 {
-		t.Errorf("want 1 artifact row, got %d", n)
-	}
-	if n := dbCount(t, e, ctx, `SELECT COUNT(*) FROM memory WHERE key='push-mem'`); n != 1 {
-		t.Errorf("want 1 memory row, got %d", n)
-	}
-}
-
 // TestIdempotency5b_MemorySaveReplayOnce verifies that memory.save with the
 // same (agent, request_id) twice produces one memory row and byte-identical results;
 // a different request_id is an independent (idempotent-to-itself) write.

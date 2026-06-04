@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"os"
 	"regexp"
 )
 
@@ -276,4 +277,16 @@ func (e *Engine) memoryGCAction(ctx context.Context, args map[string]interface{}
 		return "", err
 	}
 	return out.(string), nil
+}
+
+// resolveAgent resolves the agent identity from args, falling back to the
+// JINN_CLIENT env var, then "agent".
+func resolveAgent(args map[string]interface{}) string {
+	if v := strArg(args, "agent"); v != "" {
+		return v
+	}
+	if v := os.Getenv("JINN_CLIENT"); v != "" {
+		return v
+	}
+	return "agent"
 }

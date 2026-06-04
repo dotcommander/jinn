@@ -60,32 +60,16 @@ func TestMutatingRegistryCompleteness(t *testing.T) {
 
 // dispatchMutating builds minimal valid args for the given action (setting the
 // supplied request_id) and dispatches the matching tool method. It returns the
-// raw JSON result. preTaskID is a task created by the caller for actions that
-// require an existing task.
-func dispatchMutating(t *testing.T, e *Engine, ctx context.Context, a mutatingAction, requestID, preTaskID string) (string, error) {
+// raw JSON result.
+func dispatchMutating(t *testing.T, e *Engine, ctx context.Context, a mutatingAction, requestID string) (string, error) {
 	t.Helper()
 	switch a.Command {
-	case "task.create":
-		return e.taskTool(ctx, args("action", "create", "title", "mut-create", "agent", "agent", "request_id", requestID))
-	case "task.begin":
-		return e.taskTool(ctx, args("action", "begin", "task_id", preTaskID, "agent", "agent", "request_id", requestID))
-	case "task.set_status":
-		return e.taskTool(ctx, args("action", "set_status", "task_id", preTaskID, "status", "completed", "agent", "agent", "request_id", requestID))
 	case "memory.save":
 		return e.memoryTool(ctx, args("action", "save", "key", "mut-key", "value", "v1", "scope", "global", "agent", "agent", "request_id", requestID))
 	case "memory.forget":
 		return e.memoryTool(ctx, args("action", "forget", "key", "mut-key", "scope", "global", "agent", "agent", "request_id", requestID))
 	case "memory.gc":
 		return e.memoryTool(ctx, args("action", "gc", "scope", "global", "agent", "agent", "request_id", requestID))
-	case "artifact.add":
-		return e.artifactTool(ctx, args("action", "add", "task_id", preTaskID, "file_path", "/tmp/mut.json", "content_type", "application/json", "agent", "agent", "request_id", requestID))
-	case "push":
-		return e.pushTool(ctx, args(
-			"agent", "agent",
-			"task_id", preTaskID,
-			"request_id", requestID,
-			"memories", []interface{}{map[string]interface{}{"key": "mut-push-key", "value": "v1", "scope": "global"}},
-		))
 	default:
 		t.Fatalf("dispatchMutating: unhandled command %q", a.Command)
 		return "", nil
@@ -101,20 +85,13 @@ func TestMutatingRegistryReplay(t *testing.T) {
 		t.Run(a.Command, func(t *testing.T) {
 			e, ctx := newIdempotencyEngine(t)
 
-			// Pre-create a task for actions that need an existing task_id.
-			cr, err := e.taskTool(ctx, args("action", "create", "title", "pre", "agent", "agent"))
-			if err != nil {
-				t.Fatalf("pre-create task: %v", err)
-			}
-			preTaskID := decodeTask(t, cr).ID
-
 			reqID := "mut-replay-" + a.Command
 
-			first, err := dispatchMutating(t, e, ctx, a, reqID, preTaskID)
+			first, err := dispatchMutating(t, e, ctx, a, reqID)
 			if err != nil {
 				t.Fatalf("%s first dispatch: %v", a.Command, err)
 			}
-			second, err := dispatchMutating(t, e, ctx, a, reqID, preTaskID)
+			second, err := dispatchMutating(t, e, ctx, a, reqID)
 			if err != nil {
 				t.Fatalf("%s second dispatch (replay): %v", a.Command, err)
 			}
