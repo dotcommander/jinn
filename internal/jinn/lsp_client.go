@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 )
 
@@ -49,6 +50,7 @@ type lspClient struct {
 	kill      func() error
 	nextID    atomic.Int64
 	launcher  lspLauncher // nil → use realLauncher
+	stopOnce  sync.Once
 }
 
 func newLSPClient(launcher lspLauncher) *lspClient {
@@ -72,15 +74,17 @@ func (c *lspClient) start(ctx context.Context, argv []string) error {
 }
 
 func (c *lspClient) stop() {
-	if c.stdin != nil {
-		_ = c.stdin.Close()
-	}
-	if c.stdoutRaw != nil {
-		_ = c.stdoutRaw.Close()
-	}
-	if c.kill != nil {
-		c.kill() //nolint:errcheck
-	}
+	c.stopOnce.Do(func() {
+		if c.stdin != nil {
+			_ = c.stdin.Close()
+		}
+		if c.stdoutRaw != nil {
+			_ = c.stdoutRaw.Close()
+		}
+		if c.kill != nil {
+			c.kill() //nolint:errcheck
+		}
+	})
 }
 
 // --- LSP lifecycle ---
