@@ -48,6 +48,73 @@ func shellEnv() []string {
 	return env
 }
 
+// waitExitCode waits for c and returns its exit code: the process exit code for
+// a normal exit error, or 1 for any non-ExitError failure.
+func waitExitCode(c *exec.Cmd) int {
+	if err := c.Wait(); err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return exitErr.ExitCode()
+		}
+		return 1
+	}
+	return 0
+}
+
+// runWithTimeout starts c, kills its process group after timeout seconds, and
+// returns the exit code: 1 if start fails, 124 on timeout, else the wait code.
+func runWithTimeout(c *exec.Cmd, timeout int) int {
+	if err := c.Start(); err != nil {
+		return 1
+	}
+	pgid := c.Process.Pid // bash is the group leader (Setpgid=true)
+	timer := time.AfterFunc(time.Duration(timeout)*time.Second, func() {
+		// Negative pgid targets the whole process group.
+		syscall.Kill(-pgid, syscall.SIGKILL) //nolint:errcheck
+	})
+	exitCode := waitExitCode(c)
+	// Stop returns false when the timer already fired.
+	if !timer.Stop() {
+		return 124 // preserves "timed out after N seconds" message
+	}
+	return exitCode
+}
+
+// shapeShellOutput compresses, truncates and frames captured output, appending a
+// spill/truncation annotation and a timeout note (when exitCode is 124).
+func shapeShellOutput(capture *shellOutputCapture, cmd string, exitCode, timeout int) string {
+	raw := collapseRepeatedLines(capture.String())
+	raw = collapseBlankLines(raw, 3)
+	// Apply command-aware compression before framing (compress_shell.go dispatches on
+	// the last pipeline segment's verb, then falls through to the generic strategy chain).
+	raw = compressShellOutput(raw, cmd)
+
+	// Apply tail truncation with line + byte limits (matching pi conventions).
+	content, trunc := truncateTailDetailed(raw, DefaultMaxLines, DefaultMaxBytes)
+	if capture.Truncated() {
+		trunc.TotalBytes = capture.TotalBytes()
+		trunc.TotalLines = capture.TotalLines()
+	}
+
+	if capture.Truncated() || trunc.Truncated {
+		spill := ""
+		if tmpPath := capture.EnsureSpill(); tmpPath != "" {
+			spill = ". Full output: " + tmpPath
+		}
+		content += fmt.Sprintf(
+			"\n\n[Showing %d of %d lines (%s of %s)%s]",
+			trunc.OutputLines, trunc.TotalLines,
+			formatSize(trunc.OutputBytes), formatSize(trunc.TotalBytes),
+			spill,
+		)
+	}
+
+	if exitCode == 124 {
+		content += fmt.Sprintf("\n\nCommand timed out after %d seconds", timeout)
+	}
+	return content
+}
+
 // runShell executes a shell command and returns (result, meta, error).
 // Meta keys: "risk" (pre-execution risk level) and "classification" (exit-code class).
 // Dangerous commands are blocked unless args["force"] is true.
@@ -103,67 +170,8 @@ func (e *Engine) runShell(ctx context.Context, args map[string]interface{}) (str
 	c.Stdout = io.MultiWriter(capture, outBuf)
 	c.Stderr = io.MultiWriter(capture, errBuf)
 
-	exitCode := 0
-	timedOut := false
-
-	if err := c.Start(); err != nil {
-		exitCode = 1
-	} else {
-		pgid := c.Process.Pid // bash is the group leader (Setpgid=true)
-		timer := time.AfterFunc(time.Duration(timeout)*time.Second, func() {
-			// Negative pgid targets the whole process group.
-			syscall.Kill(-pgid, syscall.SIGKILL) //nolint:errcheck
-		})
-		if err := c.Wait(); err != nil {
-			var exitErr *exec.ExitError
-			if errors.As(err, &exitErr) {
-				exitCode = exitErr.ExitCode()
-			} else {
-				exitCode = 1
-			}
-		}
-		// Stop returns false when the timer already fired.
-		if !timer.Stop() {
-			timedOut = true
-		}
-	}
-
-	if timedOut {
-		exitCode = 124 // preserves "timed out after N seconds" message below
-	}
-	raw := collapseRepeatedLines(capture.String())
-	raw = collapseBlankLines(raw, 3)
-	// Apply command-aware compression before framing (compress_shell.go dispatches on
-	// the last pipeline segment's verb, then falls through to the generic strategy chain).
-	raw = compressShellOutput(raw, cmd)
-
-	// Apply tail truncation with line + byte limits (matching pi conventions).
-	content, trunc := truncateTailDetailed(raw, DefaultMaxLines, DefaultMaxBytes)
-	if capture.Truncated() {
-		trunc.TotalBytes = capture.TotalBytes()
-		trunc.TotalLines = capture.TotalLines()
-	}
-
-	if capture.Truncated() || trunc.Truncated {
-		if tmpPath := capture.EnsureSpill(); tmpPath != "" {
-			content += fmt.Sprintf(
-				"\n\n[Showing %d of %d lines (%s of %s). Full output: %s]",
-				trunc.OutputLines, trunc.TotalLines,
-				formatSize(trunc.OutputBytes), formatSize(trunc.TotalBytes),
-				tmpPath,
-			)
-		} else {
-			content += fmt.Sprintf(
-				"\n\n[Showing %d of %d lines (%s of %s)]",
-				trunc.OutputLines, trunc.TotalLines,
-				formatSize(trunc.OutputBytes), formatSize(trunc.TotalBytes),
-			)
-		}
-	}
-
-	if exitCode == 124 {
-		content += fmt.Sprintf("\n\nCommand timed out after %d seconds", timeout)
-	}
+	exitCode := runWithTimeout(c, timeout)
+	content := shapeShellOutput(capture, cmd, exitCode, timeout)
 
 	argv0 := extractArgv0(cmd)
 	class, reason := classifyExitCode(argv0, exitCode)
