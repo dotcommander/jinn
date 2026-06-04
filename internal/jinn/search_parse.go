@@ -101,9 +101,7 @@ func parseSearchResults(raw string, cap int) (results []searchResult, total int)
 				continue
 			}
 			// Strip the leading '-' separator between linenum and text.
-			if strings.HasPrefix(text, "-") {
-				text = text[1:]
-			}
+			text = strings.TrimPrefix(text, "-")
 			file := line[:idx]
 			if pending != nil && pending.File == file {
 				if lineNum < pending.Line {

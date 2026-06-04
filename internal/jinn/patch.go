@@ -43,10 +43,10 @@ func parsePatch(text string) ([]patchOperation, error) {
 		return nil, errors.New("patch is empty or invalid")
 	}
 	if strings.TrimSpace(lines[0]) != "*** Begin Patch" {
-		return nil, fmt.Errorf("the first line of the patch must be '*** Begin Patch'")
+		return nil, errors.New("the first line of the patch must be '*** Begin Patch'")
 	}
 	if strings.TrimSpace(lines[len(lines)-1]) != "*** End Patch" {
-		return nil, fmt.Errorf("the last line of the patch must be '*** End Patch'")
+		return nil, errors.New("the last line of the patch must be '*** End Patch'")
 	}
 
 	var ops []patchOperation
@@ -96,7 +96,7 @@ func parsePatch(text string) ([]patchOperation, error) {
 			i++
 
 			if i <= lastContent && strings.HasPrefix(strings.TrimSpace(lines[i]), "*** Move to: ") {
-				return nil, fmt.Errorf("patch move operations (*** Move to:) are not supported")
+				return nil, errors.New("patch move operations (*** Move to:) are not supported")
 			}
 
 			var chunks []updateChunk
@@ -127,7 +127,7 @@ func parsePatch(text string) ([]patchOperation, error) {
 	}
 
 	if len(ops) == 0 {
-		return nil, fmt.Errorf("patch contains no operations")
+		return nil, errors.New("patch contains no operations")
 	}
 	return ops, nil
 }
@@ -158,7 +158,7 @@ func parseUpdateChunk(lines []string, startIdx, lastContentLine int, allowMissin
 
 		if trimmed == "*** End of File" {
 			if parsed == 0 {
-				return updateChunk{}, i, fmt.Errorf("update hunk does not contain any lines")
+				return updateChunk{}, i, errors.New("update hunk does not contain any lines")
 			}
 			isEOF = true
 			i++

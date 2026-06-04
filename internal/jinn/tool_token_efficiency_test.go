@@ -438,7 +438,7 @@ func TestTokenEfficiency_ListTools_OutputSize(t *testing.T) {
 	t.Parallel()
 	e, _ := testEngine(t)
 
-	result, _, err := e.Dispatch(nil, "list_tools", nil)
+	result, _, err := e.Dispatch(context.TODO(), "list_tools", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
