@@ -115,6 +115,51 @@ func shapeShellOutput(capture *shellOutputCapture, cmd string, exitCode, timeout
 	return content
 }
 
+// shellExecution carries the post-run outputs runShell needs to build its
+// result envelope and meta map: the shaped/framed content, the process exit
+// code, and the separately-buffered stdout/stderr (stderr also feeds hint matching).
+type shellExecution struct {
+	content  string
+	exitCode int
+	stdout   string
+	stderr   string
+}
+
+// executeShellCommand sets up the bash subprocess (minimal env, process group,
+// bounded capture + stdout/stderr buffers), runs it under the timeout, and shapes
+// the captured output. It covers the execution half of runShell; classification,
+// hint matching and meta assembly stay in the caller. ctx threads to the subprocess
+// via exec.CommandContext; a nil ctx is a caller bug and panics.
+func executeShellCommand(ctx context.Context, cmd string, timeout int) shellExecution {
+	// Always use a process group so SIGKILL reaches background processes too.
+	// exec.CommandContext only kills the direct child; our timer kills -pgid.
+	// nil ctx is a caller bug — guard with panic so it surfaces in tests rather
+	// than masking parent cancellation in production.
+	if ctx == nil {
+		panic("runShell: nil ctx")
+	}
+	c := exec.CommandContext(ctx, "bash", "-c", cmd) //nolint:gosec // G204: the shell tool intentionally executes agent-provided commands (its documented purpose)
+	c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+
+	capture := newShellOutputCapture(1 << 20) // 1 MB response tail + full spill on overflow
+	defer capture.Close()
+	outBuf := &boundedWriter{limit: 1 << 20} // 1 MB stdout meta buffer
+	errBuf := &boundedWriter{limit: 1 << 20} // 1 MB stderr meta buffer
+	c.Env = shellEnv()
+	c.Stdout = io.MultiWriter(capture, outBuf)
+	c.Stderr = io.MultiWriter(capture, errBuf)
+
+	exitCode := runWithTimeout(c, timeout)
+	content := shapeShellOutput(capture, cmd, exitCode, timeout)
+
+	return shellExecution{
+		content:  content,
+		exitCode: exitCode,
+		stdout:   outBuf.String(),
+		stderr:   errBuf.String(),
+	}
+}
+
 // runShell executes a shell command and returns (result, meta, error).
 // Meta keys: "risk" (pre-execution risk level) and "classification" (exit-code class).
 // Dangerous commands are blocked unless args["force"] is true.
@@ -152,45 +197,26 @@ func (e *Engine) runShell(ctx context.Context, args map[string]interface{}) (str
 		timeout = 300
 	}
 
-	// Always use a process group so SIGKILL reaches background processes too.
-	// exec.CommandContext only kills the direct child; our timer kills -pgid.
-	// nil ctx is a caller bug — guard with panic so it surfaces in tests rather
-	// than masking parent cancellation in production.
-	if ctx == nil {
-		panic("runShell: nil ctx")
-	}
-	c := exec.CommandContext(ctx, "bash", "-c", cmd) //nolint:gosec // G204: the shell tool intentionally executes agent-provided commands (its documented purpose)
-	c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-
-	capture := newShellOutputCapture(1 << 20) // 1 MB response tail + full spill on overflow
-	defer capture.Close()
-	outBuf := &boundedWriter{limit: 1 << 20} // 1 MB stdout meta buffer
-	errBuf := &boundedWriter{limit: 1 << 20} // 1 MB stderr meta buffer
-	c.Env = shellEnv()
-	c.Stdout = io.MultiWriter(capture, outBuf)
-	c.Stderr = io.MultiWriter(capture, errBuf)
-
-	exitCode := runWithTimeout(c, timeout)
-	content := shapeShellOutput(capture, cmd, exitCode, timeout)
+	res := executeShellCommand(ctx, cmd, timeout)
 
 	argv0 := extractArgv0(cmd)
-	class, reason := classifyExitCode(argv0, exitCode)
+	class, reason := classifyExitCode(argv0, res.exitCode)
 
 	// Expected-nonzero exits return a success envelope (output + annotation)
 	// rather than an error, so the LLM sees the command's output alongside
 	// the classification and does not misinterpret a semantic non-zero as failure.
-	output := fmt.Sprintf("[exit: %d]\n%s", exitCode, content)
+	output := fmt.Sprintf("[exit: %d]\n%s", res.exitCode, res.content)
 	result := fmt.Sprintf("%s\n[classification: %s — %s]", output, class, reason)
 
-	if hint := matchStderrHint(errBuf.String()); hint != "" {
+	if hint := matchStderrHint(res.stderr); hint != "" {
 		result += fmt.Sprintf("\n[hint: %s]", hint)
 	}
 
 	meta := map[string]string{
 		"risk":           riskLevel.String(),
 		"classification": string(class),
-		"stdout":         outBuf.String(),
-		"stderr":         errBuf.String(),
+		"stdout":         res.stdout,
+		"stderr":         res.stderr,
 	}
 	return result, meta, nil
 }
