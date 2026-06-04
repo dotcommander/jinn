@@ -46,95 +46,23 @@ func (e *Engine) readFile(args map[string]interface{}) (*ToolResult, error) {
 	}
 
 	if isImage {
-		data, rerr := os.ReadFile(resolved)
-		if rerr != nil {
-			if os.IsPermission(rerr) {
-				return nil, &ErrWithSuggestion{
-					Err:        fmt.Errorf("permission denied: %s", path),
-					Suggestion: "file is not readable by the sandbox; check ownership or choose a different file",
-					Code:       ErrCodePermissionDenied,
-				}
-			}
-			return nil, rerr
-		}
-
-		info, serr := os.Stat(resolved)
-		if serr == nil {
-			e.tracker.record(resolved, info.ModTime())
-		}
-
-		var checksum string
-		if inc, _ := args["include_checksum"].(bool); inc {
-			h := sha256.Sum256(data)
-			checksum = hex.EncodeToString(h[:])
-		}
-
-		var mime string
-		if strings.HasPrefix(detected, "image/") {
-			mime = detected
-		} else {
-			mime = "image/svg+xml"
-		}
-		encoded := base64.StdEncoding.EncodeToString(data)
-		return withChecksum(&ToolResult{
-			Content: []ContentBlock{{
-				Type:     "image",
-				Data:     encoded,
-				MimeType: mime,
-			}},
-		}, checksum), nil
+		return e.readImageFile(resolved, path, detected, args)
 	}
 
 	// Conditional read: if the caller supplies if_checksum and it matches the
 	// current file's SHA-256, return a compact unchanged response (no content).
-	if ifCS, _ := args["if_checksum"].(string); ifCS != "" {
-		d, rerr := os.ReadFile(resolved)
-		if rerr != nil {
-			if os.IsPermission(rerr) {
-				return nil, &ErrWithSuggestion{
-					Err:        fmt.Errorf("permission denied: %s", path),
-					Suggestion: "file is not readable by the sandbox; check ownership or choose a different file",
-					Code:       ErrCodePermissionDenied,
-				}
-			}
-			return nil, rerr
-		}
-		h := sha256.Sum256(d)
-		current := hex.EncodeToString(h[:])
-		if ifCS == current {
-			return &ToolResult{
-				Text: fmt.Sprintf(`{"unchanged":true,"path":%q,"checksum":%q}`, resolved, current),
-			}, nil
-		}
+	if res, err := readUnchangedIfMatch(resolved, path, args); err != nil || res != nil {
+		return res, err
 	}
 
 	// Delegate to the shared content reader.
 	result, err := e.readFileContent(resolved, args)
 	if err != nil {
-		// Binary detection returns an ErrWithSuggestion — convert to the
-		// backward-compatible textResult format with a bracketed hint.
-		var sErr *ErrWithSuggestion
-		if errors.As(err, &sErr) && sErr.Code == ErrCodeBinaryFile && strings.HasPrefix(sErr.Err.Error(), "binary file:") {
-			var checksum string
-			if inc, _ := args["include_checksum"].(bool); inc {
-				if d, rerr := os.ReadFile(resolved); rerr == nil {
-					h := sha256.Sum256(d)
-					checksum = hex.EncodeToString(h[:])
-				}
-			}
-			return withChecksum(textResult(fmt.Sprintf("[%s — %s]", sErr.Err.Error(), sErr.Suggestion)), checksum), nil
-		}
-		return nil, err
+		return binaryFallbackOrErr(resolved, args, err)
 	}
 
 	// Compute checksum if requested (separate read; include_checksum is rare).
-	var checksum string
-	if inc, _ := args["include_checksum"].(bool); inc {
-		if d, rerr := os.ReadFile(resolved); rerr == nil {
-			h := sha256.Sum256(d)
-			checksum = hex.EncodeToString(h[:])
-		}
-	}
+	checksum := checksumIfRequested(resolved, args)
 
 	// Build final text: content + byte/window hint.
 	text := result.Content
@@ -157,6 +85,103 @@ func (e *Engine) readFile(args map[string]interface{}) (*ToolResult, error) {
 	}
 
 	return withChecksum(textResult(text), checksum), nil
+}
+
+// readImageFile reads an image file and returns it as a base64 image block,
+// recording it in the tracker and attaching a checksum when requested.
+func (e *Engine) readImageFile(resolved, path, detected string, args map[string]interface{}) (*ToolResult, error) {
+	data, rerr := os.ReadFile(resolved)
+	if rerr != nil {
+		if os.IsPermission(rerr) {
+			return nil, &ErrWithSuggestion{
+				Err:        fmt.Errorf("permission denied: %s", path),
+				Suggestion: "file is not readable by the sandbox; check ownership or choose a different file",
+				Code:       ErrCodePermissionDenied,
+			}
+		}
+		return nil, rerr
+	}
+
+	info, serr := os.Stat(resolved)
+	if serr == nil {
+		e.tracker.record(resolved, info.ModTime())
+	}
+
+	var checksum string
+	if inc, _ := args["include_checksum"].(bool); inc {
+		h := sha256.Sum256(data)
+		checksum = hex.EncodeToString(h[:])
+	}
+
+	mime := "image/svg+xml"
+	if strings.HasPrefix(detected, "image/") {
+		mime = detected
+	}
+	encoded := base64.StdEncoding.EncodeToString(data)
+	return withChecksum(&ToolResult{
+		Content: []ContentBlock{{
+			Type:     "image",
+			Data:     encoded,
+			MimeType: mime,
+		}},
+	}, checksum), nil
+}
+
+// readUnchangedIfMatch implements the if_checksum precondition: when the
+// caller's checksum matches the file's current SHA-256, it returns a compact
+// "unchanged" result. A nil result with nil error means the caller should
+// proceed with a normal read.
+func readUnchangedIfMatch(resolved, path string, args map[string]interface{}) (*ToolResult, error) {
+	ifCS, _ := args["if_checksum"].(string)
+	if ifCS == "" {
+		return nil, nil
+	}
+	d, rerr := os.ReadFile(resolved)
+	if rerr != nil {
+		if os.IsPermission(rerr) {
+			return nil, &ErrWithSuggestion{
+				Err:        fmt.Errorf("permission denied: %s", path),
+				Suggestion: "file is not readable by the sandbox; check ownership or choose a different file",
+				Code:       ErrCodePermissionDenied,
+			}
+		}
+		return nil, rerr
+	}
+	h := sha256.Sum256(d)
+	current := hex.EncodeToString(h[:])
+	if ifCS == current {
+		return &ToolResult{
+			Text: fmt.Sprintf(`{"unchanged":true,"path":%q,"checksum":%q}`, resolved, current),
+		}, nil
+	}
+	return nil, nil
+}
+
+// binaryFallbackOrErr converts the binary-file ErrWithSuggestion from
+// readFileContent into a backward-compatible bracketed text result; any other
+// error is returned unchanged.
+func binaryFallbackOrErr(resolved string, args map[string]interface{}, err error) (*ToolResult, error) {
+	var sErr *ErrWithSuggestion
+	if errors.As(err, &sErr) && sErr.Code == ErrCodeBinaryFile && strings.HasPrefix(sErr.Err.Error(), "binary file:") {
+		checksum := checksumIfRequested(resolved, args)
+		return withChecksum(textResult(fmt.Sprintf("[%s — %s]", sErr.Err.Error(), sErr.Suggestion)), checksum), nil
+	}
+	return nil, err
+}
+
+// checksumIfRequested re-reads the file and returns its SHA-256 hex digest when
+// include_checksum is set; otherwise the empty string. Read errors yield "".
+func checksumIfRequested(resolved string, args map[string]interface{}) string {
+	inc, _ := args["include_checksum"].(bool)
+	if !inc {
+		return ""
+	}
+	d, rerr := os.ReadFile(resolved)
+	if rerr != nil {
+		return ""
+	}
+	h := sha256.Sum256(d)
+	return hex.EncodeToString(h[:])
 }
 
 // withChecksum adds a SHA-256 checksum to a ToolResult's Meta map.
