@@ -39,11 +39,12 @@ func realLauncher(argv []string) (io.WriteCloser, io.ReadCloser, func() error, e
 // lspClient drives one LSP session. All calls are synchronous and single-threaded;
 // the LSP handshake and query sequence does not require concurrent requests.
 type lspClient struct {
-	stdin    io.WriteCloser
-	stdout   *bufio.Reader
-	kill     func() error
-	nextID   atomic.Int64
-	launcher lspLauncher // nil → use realLauncher
+	stdin     io.WriteCloser
+	stdoutRaw io.ReadCloser // underlying stdout closer; closed in stop() to unblock a blocked read
+	stdout    *bufio.Reader
+	kill      func() error
+	nextID    atomic.Int64
+	launcher  lspLauncher // nil → use realLauncher
 }
 
 // lspRPCMsg is the wire shape for JSON-RPC 2.0 requests and responses.
@@ -130,6 +131,7 @@ func (c *lspClient) start(argv []string) error {
 		return err
 	}
 	c.stdin = stdin
+	c.stdoutRaw = stdout
 	c.stdout = bufio.NewReader(stdout)
 	c.kill = kill
 	return nil
@@ -138,6 +140,9 @@ func (c *lspClient) start(argv []string) error {
 func (c *lspClient) stop() {
 	if c.stdin != nil {
 		_ = c.stdin.Close()
+	}
+	if c.stdoutRaw != nil {
+		_ = c.stdoutRaw.Close()
 	}
 	if c.kill != nil {
 		c.kill() //nolint:errcheck
@@ -215,6 +220,9 @@ func (c *lspClient) readFrame() ([]byte, error) {
 	if contentLen < 0 {
 		return nil, errors.New("lsp: missing Content-Length header")
 	}
+	if contentLen > maxLSPFrame {
+		return nil, fmt.Errorf("lsp: Content-Length %d exceeds max frame size %d", contentLen, maxLSPFrame)
+	}
 	buf := make([]byte, contentLen)
 	if _, err := io.ReadFull(c.stdout, buf); err != nil {
 		return nil, fmt.Errorf("lsp body read: %w", err)
@@ -268,6 +276,11 @@ func (c *lspClient) handshake(workDir string) error {
 // this threshold are too large for useful LSP analysis and risk OOM in the
 // language server process.
 const maxLSPFileSize = 10 * 1024 * 1024 // 10 MB
+
+// maxLSPFrame caps a single server response frame. A hostile or buggy server
+// could send an enormous Content-Length and force an OOM allocation; reject
+// frames above this bound before allocating.
+const maxLSPFrame = 64 << 20 // 64 MB
 
 func (c *lspClient) didOpen(absPath, langID string) error {
 	fi, err := os.Stat(absPath)

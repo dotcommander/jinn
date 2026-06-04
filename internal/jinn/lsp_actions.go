@@ -34,7 +34,7 @@ func unmarshalLocations(raw json.RawMessage) []lspLocation {
 	return nil
 }
 
-func (c *lspClient) definition(absPath string, line, char int, workDir string) (string, error) {
+func (c *lspClient) definition(absPath string, line, char int, workDir string, pathOK func(string) (string, error)) (string, error) {
 	raw, err := c.sendRequest("textDocument/definition", tdPos(absPath, line, char))
 	if err != nil {
 		return "", err
@@ -61,7 +61,11 @@ func (c *lspClient) definition(absPath string, line, char int, workDir string) (
 			}
 		}
 		fmt.Fprintf(&sb, "%s:%d:%d\n", rel, loc.Range.Start.Line+1, loc.Range.Start.Character+1)
-		lines := lspCachedLines(fileCache, path)
+		safePath, perr := pathOK(path)
+		if perr != nil {
+			continue // server-supplied location escapes sandbox — skip context, keep the file:line header
+		}
+		lines := lspCachedLines(fileCache, safePath)
 		if ctx := lspFormatContext(lines, loc.Range.Start.Line, 2); ctx != "" {
 			sb.WriteString(ctx)
 			sb.WriteByte('\n')
@@ -70,7 +74,7 @@ func (c *lspClient) definition(absPath string, line, char int, workDir string) (
 	return strings.TrimRight(sb.String(), "\n"), nil
 }
 
-func (c *lspClient) references(absPath string, line, char int, workDir string) (string, error) {
+func (c *lspClient) references(absPath string, line, char int, workDir string, pathOK func(string) (string, error)) (string, error) {
 	type refParams struct {
 		TextDocument map[string]string `json:"textDocument"`
 		Position     map[string]any    `json:"position"`
@@ -107,7 +111,11 @@ func (c *lspClient) references(absPath string, line, char int, workDir string) (
 			}
 		}
 		fmt.Fprintf(&sb, "%s:%d:%d\n", rel, loc.Range.Start.Line+1, loc.Range.Start.Character+1)
-		lines := lspCachedLines(fileCache, path)
+		safePath, perr := pathOK(path)
+		if perr != nil {
+			continue // server-supplied location escapes sandbox — skip context, keep the file:line header
+		}
+		lines := lspCachedLines(fileCache, safePath)
 		if ctx := lspFormatContext(lines, loc.Range.Start.Line, 1); ctx != "" {
 			sb.WriteString(ctx)
 			sb.WriteByte('\n')

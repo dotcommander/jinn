@@ -182,9 +182,9 @@ func (e *Engine) lspQueryWithLauncher(args map[string]interface{}, launcher lspL
 		)
 		switch action {
 		case "definition":
-			out, qErr = client.definition(absPath, line, char, e.workDir)
+			out, qErr = client.definition(absPath, line, char, e.workDir, e.checkPath)
 		case "references":
-			out, qErr = client.references(absPath, line, char, e.workDir)
+			out, qErr = client.references(absPath, line, char, e.workDir, e.checkPath)
 		case "hover":
 			out, qErr = client.hover(absPath, line, char)
 		case "symbols":
