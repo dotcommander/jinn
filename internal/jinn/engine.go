@@ -1,3 +1,9 @@
+// Package jinn is a sandboxed tool executor bound to a working directory.
+//
+// File naming: tool_<name>.go = a tool handler plus its direct support;
+// bare <domain>.go = generic infrastructure/helpers shared across tools.
+// A few support files (read_window.go, search_parse.go, search_run.go) keep
+// bare names despite being tool-specific — renaming would be churn.
 package jinn
 
 import (
@@ -117,6 +123,11 @@ func (e *Engine) dispatchListTools(args map[string]interface{}) (*ToolResult, ma
 	return textResult(string(capsJSON) + "\n\n" + schema), nil, nil
 }
 
+// Handler return-shape rule (applies across all dispatch functions below):
+// handlers returning a plain string are wrapped via textResult() at the call
+// site; handlers that attach Meta/Content (truncation info, checksums, image
+// blocks, diffs) return *ToolResult directly and are passed through unchanged.
+//
 // dispatchFileOps routes file-mutation/read tools whose handlers need no ctx.
 // ok=false means "not in this group".
 func (e *Engine) dispatchFileOps(args map[string]interface{}, tool string) (*ToolResult, bool, error) {
