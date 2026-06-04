@@ -263,10 +263,15 @@
       "parameters": {
         "type": "object",
         "properties": {
-          "action": {"type": "string", "enum": ["save", "recall", "list", "forget"], "description": "Operation to perform."},
+          "action": {"type": "string", "enum": ["save", "recall", "list", "forget", "gc"], "description": "Operation to perform. gc sweeps expired entries (optionally restricted to scope)."},
           "key":    {"type": "string", "description": "Key name (1-128 chars, [a-zA-Z0-9_.-]). Required for save, recall, forget."},
           "value":  {"type": "string", "description": "Value to store (max 16 KiB). Required for save."},
           "scope":          {"type": "string",  "description": "Optional. Omit for the current project (auto-detected). Use \"global\" for the cross-project bucket, or an absolute path for an explicit project. Junk (relative) values are rejected."},
+          "scope_id":       {"type": "string",  "description": "Optional. Sub-bucket identifier within scope, isolating keys further. Pairs with scope; omit for the default bucket."},
+          "kind":           {"type": "string",  "enum": ["fact", "directive", "lesson"], "description": "save only. Memory category: \"fact\" (default), \"directive\", or \"lesson\"."},
+          "pin":            {"type": "boolean", "description": "save only. When true, pins the entry so gc never sweeps it. Default false."},
+          "expires_in":     {"type": "string",  "description": "save only. Relative TTL after which the entry expires, e.g. \"12h\", \"30d\", \"2w\". Omit for no expiry."},
+          "request_id":     {"type": "string",  "description": "Optional idempotency key for save, forget, and gc. Replays the prior result instead of re-applying the mutation."},
           "include_values": {"type": "boolean", "description": "list only. When true, returns {entries:[{key,value,updated}],count:N} instead of {keys:[...],count:N}. Default false."}
         },
         "required": ["action"]

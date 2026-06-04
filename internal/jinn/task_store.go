@@ -28,7 +28,7 @@ func getTaskTx(ctx context.Context, tx *sql.Tx, taskID string) (*Task, error) {
 		SELECT id, title, description, status, priority, project_id, blocked_reason, version, created_at, updated_at
 		FROM tasks WHERE id = ?
 	`, taskID)
-	t, err := scanTask(row)
+	t, err := scanTaskRow(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("task not found: %s", taskID)
 	}
@@ -41,19 +41,25 @@ func getTaskDB(ctx context.Context, db *sql.DB, taskID string) (*Task, error) {
 		SELECT id, title, description, status, priority, project_id, blocked_reason, version, created_at, updated_at
 		FROM tasks WHERE id = ?
 	`, taskID)
-	t, err := scanTask(row)
+	t, err := scanTaskRow(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("task not found: %s", taskID)
 	}
 	return t, err
 }
 
-// scanTask scans a single task row from a *sql.Row.
-func scanTask(row *sql.Row) (*Task, error) {
+// scanner is satisfied by both *sql.Row and *sql.Rows, letting single-row and
+// row-loop scans share one implementation.
+type scanner interface {
+	Scan(dest ...any) error
+}
+
+// scanTaskRow scans one task row from a *sql.Row or *sql.Rows.
+func scanTaskRow(s scanner) (*Task, error) {
 	var t Task
 	var desc, projectID, blockedReason sql.NullString
 	var createdAt, updatedAt string
-	if err := row.Scan(
+	if err := s.Scan(
 		&t.ID, &t.Title, &desc,
 		&t.Status, &t.Priority,
 		&projectID, &blockedReason,
@@ -146,23 +152,11 @@ func listTasksDB(ctx context.Context, db *sql.DB, statusFilter, projectFilter st
 
 	var tasks []*Task
 	for rows.Next() {
-		var t Task
-		var desc, projectID, blockedReason sql.NullString
-		var createdAt, updatedAt string
-		if err := rows.Scan(
-			&t.ID, &t.Title, &desc,
-			&t.Status, &t.Priority,
-			&projectID, &blockedReason,
-			&t.Version, &createdAt, &updatedAt,
-		); err != nil {
+		t, err := scanTaskRow(rows)
+		if err != nil {
 			return nil, fmt.Errorf("scan task: %w", err)
 		}
-		t.Description = desc.String
-		t.ProjectID = projectID.String
-		t.BlockedReason = blockedReason.String
-		t.CreatedAt, _ = parseTimestamp(createdAt)
-		t.UpdatedAt, _ = parseTimestamp(updatedAt)
-		tasks = append(tasks, &t)
+		tasks = append(tasks, t)
 	}
 	return tasks, rows.Err()
 }

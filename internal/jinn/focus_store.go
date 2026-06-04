@@ -44,18 +44,59 @@ func determineFocusTx(ctx context.Context, tx *sql.Tx, currentFocusID string, de
 	}
 
 	// Rule 2: task_assigned delta whose task is pending (and in project if scoped).
+	// First pass: collect ordered, de-duplicated candidate task ids (first occurrence wins).
+	var candidates []string
+	seen := make(map[string]bool)
 	for _, ev := range deltas {
-		if ev.Kind != "task_assigned" || ev.TaskID == "" {
+		if ev.Kind != "task_assigned" || ev.TaskID == "" || seen[ev.TaskID] {
 			continue
 		}
-		t, err := getTaskTx(ctx, tx, ev.TaskID)
-		if err != nil || t.Status != statusPending {
-			continue
+		seen[ev.TaskID] = true
+		candidates = append(candidates, ev.TaskID)
+	}
+	if len(candidates) > 0 {
+		// One batched query for status + project_id of all candidate ids.
+		placeholders := strings.Repeat("?,", len(candidates))
+		placeholders = placeholders[:len(placeholders)-1]
+		args := make([]any, len(candidates))
+		for i, id := range candidates {
+			args[i] = id
 		}
-		if projectID != "" && t.ProjectID != projectID {
-			continue
+		rows, err := tx.QueryContext(ctx,
+			`SELECT id, status, project_id FROM tasks WHERE id IN (`+placeholders+`)`, args...)
+		if err != nil {
+			return FocusResult{}, fmt.Errorf("batch fetch rule2 candidates: %w", err)
 		}
-		return FocusResult{ev.TaskID, fmt.Sprintf("rule2: assigned via task_assigned event for %s", ev.TaskID)}, nil
+		type taskMeta struct {
+			status    string
+			projectID string
+		}
+		metas := make(map[string]taskMeta, len(candidates))
+		for rows.Next() {
+			var id, status string
+			var pid sql.NullString
+			if err := rows.Scan(&id, &status, &pid); err != nil {
+				rows.Close()
+				return FocusResult{}, fmt.Errorf("scan rule2 candidate: %w", err)
+			}
+			metas[id] = taskMeta{status: status, projectID: pid.String}
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return FocusResult{}, fmt.Errorf("iterate rule2 candidates: %w", err)
+		}
+		rows.Close()
+		// Second pass: first candidate (in delta order) that is pending and in-scope.
+		for _, id := range candidates {
+			m, ok := metas[id]
+			if !ok || m.status != statusPending {
+				continue
+			}
+			if projectID != "" && m.projectID != projectID {
+				continue
+			}
+			return FocusResult{id, fmt.Sprintf("rule2: assigned via task_assigned event for %s", id)}, nil
+		}
 	}
 
 	// Rule 3: previously-blocked focus now pending.

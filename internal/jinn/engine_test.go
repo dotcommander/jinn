@@ -15,7 +15,7 @@ func TestSchema_Valid(t *testing.T) {
 		t.Fatalf("Schema is not valid JSON: %v", err)
 	}
 	if len(tools) != 25 {
-		t.Fatalf("expected 23 tools, got %d", len(tools))
+		t.Fatalf("expected 25 tools, got %d", len(tools))
 	}
 }
 
@@ -33,7 +33,7 @@ func TestCompactSchema_Valid(t *testing.T) {
 		t.Fatalf("compact schema is not valid JSON: %v", err)
 	}
 	if len(tools) != 25 {
-		t.Fatalf("expected 23 tools, got %d", len(tools))
+		t.Fatalf("expected 25 tools, got %d", len(tools))
 	}
 }
 
@@ -54,7 +54,7 @@ func TestLeanSchema_Valid(t *testing.T) {
 		t.Fatalf("lean schema is not valid JSON: %v", err)
 	}
 	if len(tools) != 25 {
-		t.Fatalf("expected 23 tools, got %d", len(tools))
+		t.Fatalf("expected 25 tools, got %d", len(tools))
 	}
 }
 

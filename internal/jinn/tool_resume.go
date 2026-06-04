@@ -36,7 +36,7 @@ func (e *Engine) resumeTool(ctx context.Context, args map[string]interface{}) (s
 func (e *Engine) resumePeek(ctx context.Context, db *sql.DB, agent, projectID string, limit int, asOf time.Time) (string, error) {
 	var packet *BriefPacket
 	err := transact(ctx, db, func(tx *sql.Tx) error {
-		state, lErr := loadAgentStateTx(ctx, tx, agent)
+		state, lErr := loadAgentState(ctx, tx, agent)
 		if lErr != nil {
 			return lErr
 		}

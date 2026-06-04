@@ -17,35 +17,21 @@ func loadOrCreateAgentStateTx(ctx context.Context, tx *sql.Tx, agentName string)
 	`, agentName, time.Now().UTC().Format(time.RFC3339)); err != nil {
 		return AgentCursorFocus{}, fmt.Errorf("ensure agent state: %w", err)
 	}
-	return loadAgentStateTx(ctx, tx, agentName)
+	return loadAgentState(ctx, tx, agentName)
 }
 
-// loadAgentStateTx reads cursor + focus pointers without creating a row.
+// rowQuerier is satisfied by both *sql.Tx and *sql.DB, letting tx and non-tx
+// reads share one implementation.
+type rowQuerier interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+// loadAgentState reads cursor + focus pointers without creating a row.
 // Returns Exists=false (zero value otherwise) when no row exists.
-func loadAgentStateTx(ctx context.Context, tx *sql.Tx, agentName string) (AgentCursorFocus, error) {
+func loadAgentState(ctx context.Context, q rowQuerier, agentName string) (AgentCursorFocus, error) {
 	var out AgentCursorFocus
 	var focusTaskID, focusProjectID sql.NullString
-	err := tx.QueryRowContext(ctx, `
-		SELECT last_seen_event_id, focus_task_id, focus_project_id
-		FROM agent_state WHERE agent_name = ?
-	`, agentName).Scan(&out.Cursor, &focusTaskID, &focusProjectID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return AgentCursorFocus{Exists: false}, nil
-	}
-	if err != nil {
-		return AgentCursorFocus{}, fmt.Errorf("load agent state: %w", err)
-	}
-	out.TaskID = focusTaskID.String
-	out.ProjectID = focusProjectID.String
-	out.Exists = true
-	return out, nil
-}
-
-// loadAgentStateDB is the non-tx read used by peek (no row creation).
-func loadAgentStateDB(ctx context.Context, db *sql.DB, agentName string) (AgentCursorFocus, error) {
-	var out AgentCursorFocus
-	var focusTaskID, focusProjectID sql.NullString
-	err := db.QueryRowContext(ctx, `
+	err := q.QueryRowContext(ctx, `
 		SELECT last_seen_event_id, focus_task_id, focus_project_id
 		FROM agent_state WHERE agent_name = ?
 	`, agentName).Scan(&out.Cursor, &focusTaskID, &focusProjectID)
