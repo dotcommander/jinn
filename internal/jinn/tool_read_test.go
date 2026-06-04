@@ -321,7 +321,7 @@ func TestReadFile_LargeFile_Suggestion(t *testing.T) {
 	if sErr.Error() != sErr.Err.Error() {
 		t.Errorf("ErrWithSuggestion.Error() should delegate to Err, got: %s", sErr.Error())
 	}
-	if sErr.Unwrap() != sErr.Err {
+	if !errors.Is(sErr.Unwrap(), sErr.Err) {
 		t.Error("ErrWithSuggestion.Unwrap() should return Err")
 	}
 }

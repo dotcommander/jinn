@@ -1,6 +1,7 @@
 package jinn
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -17,7 +18,8 @@ func TestEditFile_RejectsEmptyOldText(t *testing.T) {
 	if !strings.Contains(err.Error(), "old_text cannot be empty") {
 		t.Errorf("expected 'old_text cannot be empty', got: %v", err)
 	}
-	s, ok := err.(*ErrWithSuggestion)
+	var s *ErrWithSuggestion
+	ok := errors.As(err, &s)
 	if !ok {
 		t.Fatalf("expected *ErrWithSuggestion, got %T", err)
 	}
@@ -64,7 +66,8 @@ func TestMultiEdit_RejectsOverlappingEdits(t *testing.T) {
 	if !strings.Contains(err.Error(), "overlapping regions") {
 		t.Errorf("expected 'overlapping regions', got: %v", err)
 	}
-	s, ok := err.(*ErrWithSuggestion)
+	var s *ErrWithSuggestion
+	ok := errors.As(err, &s)
 	if !ok {
 		t.Fatalf("expected *ErrWithSuggestion, got %T", err)
 	}
@@ -86,7 +89,8 @@ func TestEditFile_RejectsNoOpEdit(t *testing.T) {
 	if !strings.Contains(err.Error(), "edit produced no changes") {
 		t.Errorf("expected 'edit produced no changes', got: %v", err)
 	}
-	s, ok := err.(*ErrWithSuggestion)
+	var s *ErrWithSuggestion
+	ok := errors.As(err, &s)
 	if !ok {
 		t.Fatalf("expected *ErrWithSuggestion, got %T", err)
 	}

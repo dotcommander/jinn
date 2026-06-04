@@ -113,9 +113,7 @@ func TestReadFile_TruncateInvalidEnum(t *testing.T) {
 	}
 	// Suggestion should list the four valid values
 	var sErr *ErrWithSuggestion
-	if asErr, ok := err.(*ErrWithSuggestion); ok {
-		sErr = asErr
-	}
+	errors.As(err, &sErr)
 	if sErr == nil {
 		t.Fatalf("expected *ErrWithSuggestion, got %T", err)
 	}
