@@ -58,3 +58,16 @@ func renderLocations(locs []lspLocation, workDir string, pathOK func(string) (st
 	}
 	return strings.TrimRight(sb.String(), "\n")
 }
+
+// formatSymbolTree renders symbols as "{indent}Kind Name (line N)" with
+// 2-space indent per depth level for children.
+func formatSymbolTree(sb *strings.Builder, syms []lspDocSymbol, depth int) {
+	indent := strings.Repeat("  ", depth)
+	for _, s := range syms {
+		line := s.Range.Start.Line + 1
+		fmt.Fprintf(sb, "%s%s %s (line %d)\n", indent, symbolKindName(s.Kind), s.Name, line)
+		if len(s.Children) > 0 {
+			formatSymbolTree(sb, s.Children, depth+1)
+		}
+	}
+}

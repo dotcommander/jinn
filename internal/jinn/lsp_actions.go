@@ -9,12 +9,23 @@ import (
 
 // --- action methods ---
 
+// lspSendCheck sends an LSP request and reports whether the reply was null/empty.
+// When empty is true, callers return their per-action empty message; otherwise
+// raw holds the result for unmarshalling.
+func (c *lspClient) lspSendCheck(method string, params any) (raw json.RawMessage, empty bool, err error) {
+	raw, err = c.sendRequest(method, params)
+	if err != nil {
+		return nil, false, err
+	}
+	return raw, string(raw) == "null" || len(raw) == 0, nil
+}
+
 func (c *lspClient) definition(absPath string, line, char int, workDir string, pathOK func(string) (string, error)) (string, error) {
-	raw, err := c.sendRequest("textDocument/definition", tdPos(absPath, line, char))
+	raw, empty, err := c.lspSendCheck("textDocument/definition", tdPos(absPath, line, char))
 	if err != nil {
 		return "", err
 	}
-	if string(raw) == "null" || len(raw) == 0 {
+	if empty {
 		return "no definition found", nil
 	}
 
@@ -33,7 +44,7 @@ func (c *lspClient) references(absPath string, line, char int, workDir string, p
 		Position     map[string]any    `json:"position"`
 		Context      map[string]bool   `json:"context"`
 	}
-	raw, err := c.sendRequest("textDocument/references", refParams{
+	raw, empty, err := c.lspSendCheck("textDocument/references", refParams{
 		TextDocument: map[string]string{"uri": pathToURI(absPath)},
 		Position:     lspPosition(line, char),
 		Context:      map[string]bool{"includeDeclaration": true},
@@ -41,9 +52,12 @@ func (c *lspClient) references(absPath string, line, char int, workDir string, p
 	if err != nil {
 		return "", err
 	}
+	if empty {
+		return "no references found", nil
+	}
 	var locs []lspLocation
 	if err := json.Unmarshal(raw, &locs); err != nil || len(locs) == 0 {
-		return "no references found", nil //nolint:nilerr // malformed/empty LSP reply means no references, not a tool error
+		return "no references found", nil //nolint:nilerr // malformed (non-null) reply or empty array means no references, not a tool error
 	}
 	const refCap = 100
 	truncated := len(locs) > refCap
@@ -60,11 +74,11 @@ func (c *lspClient) references(absPath string, line, char int, workDir string, p
 }
 
 func (c *lspClient) hover(absPath string, line, char int) (string, error) {
-	raw, err := c.sendRequest("textDocument/hover", tdPos(absPath, line, char))
+	raw, empty, err := c.lspSendCheck("textDocument/hover", tdPos(absPath, line, char))
 	if err != nil {
 		return "", err
 	}
-	if string(raw) == "null" || len(raw) == 0 {
+	if empty {
 		return "no hover information found", nil
 	}
 	var h struct {
@@ -124,13 +138,13 @@ type lspDocSymbol struct {
 }
 
 func (c *lspClient) symbols(absPath string) (string, error) {
-	raw, err := c.sendRequest("textDocument/documentSymbol", map[string]any{
+	raw, empty, err := c.lspSendCheck("textDocument/documentSymbol", map[string]any{
 		"textDocument": map[string]string{"uri": pathToURI(absPath)},
 	})
 	if err != nil {
 		return "", err
 	}
-	if string(raw) == "null" || len(raw) == 0 {
+	if empty {
 		return "no symbols found", nil
 	}
 
@@ -167,21 +181,8 @@ func (c *lspClient) symbols(absPath string) (string, error) {
 	return "no symbols found", nil
 }
 
-// formatSymbolTree renders symbols as "{indent}Kind Name (line N)" with
-// 2-space indent per depth level for children.
-func formatSymbolTree(sb *strings.Builder, syms []lspDocSymbol, depth int) {
-	indent := strings.Repeat("  ", depth)
-	for _, s := range syms {
-		line := s.Range.Start.Line + 1
-		fmt.Fprintf(sb, "%s%s %s (line %d)\n", indent, symbolKindName(s.Kind), s.Name, line)
-		if len(s.Children) > 0 {
-			formatSymbolTree(sb, s.Children, depth+1)
-		}
-	}
-}
-
 func (c *lspClient) diagnostics(absPath string) (string, error) {
-	raw, err := c.sendRequest("textDocument/diagnostic", map[string]any{
+	raw, empty, err := c.lspSendCheck("textDocument/diagnostic", map[string]any{
 		"textDocument":     map[string]string{"uri": pathToURI(absPath)},
 		"identifier":       nil,
 		"previousResultId": nil,
@@ -189,7 +190,7 @@ func (c *lspClient) diagnostics(absPath string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if string(raw) == "null" || len(raw) == 0 {
+	if empty {
 		return "no diagnostics found", nil
 	}
 
@@ -269,7 +270,7 @@ func (c *lspClient) rename(absPath string, line, char int, newName, workDir stri
 		Position     map[string]any    `json:"position"`
 		NewName      string            `json:"newName"`
 	}
-	raw, err := c.sendRequest("textDocument/rename", renameParams{
+	raw, empty, err := c.lspSendCheck("textDocument/rename", renameParams{
 		TextDocument: map[string]string{"uri": pathToURI(absPath)},
 		Position:     lspPosition(line, char),
 		NewName:      newName,
@@ -277,7 +278,7 @@ func (c *lspClient) rename(absPath string, line, char int, newName, workDir stri
 	if err != nil {
 		return "", err
 	}
-	if string(raw) == "null" || len(raw) == 0 {
+	if empty {
 		return "no rename changes", nil
 	}
 	var edit lspWorkspaceEdit
