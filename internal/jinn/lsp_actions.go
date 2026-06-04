@@ -50,7 +50,7 @@ func (c *lspClient) definition(absPath string, line, char int, workDir string) (
 
 	fileCache := make(map[string][]string)
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("%d location(s) found:\n\n", len(locs)))
+	fmt.Fprintf(&sb, "%d location(s) found:\n\n", len(locs))
 	for _, loc := range locs {
 		path := strings.TrimPrefix(loc.URI, "file://")
 		rel := path
@@ -96,7 +96,7 @@ func (c *lspClient) references(absPath string, line, char int, workDir string) (
 
 	fileCache := make(map[string][]string)
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("%d location(s) found:\n\n", len(locs)))
+	fmt.Fprintf(&sb, "%d location(s) found:\n\n", len(locs))
 	for _, loc := range locs {
 		path := strings.TrimPrefix(loc.URI, "file://")
 		rel := path
@@ -259,7 +259,7 @@ func (c *lspClient) diagnostics(absPath string) (string, error) {
 	}
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("%d diagnostic(s) found:\n\n", len(diagnostics)))
+	fmt.Fprintf(&sb, "%d diagnostic(s) found:\n\n", len(diagnostics))
 	for _, diagnostic := range diagnostics {
 		line := diagnostic.Range.Start.Line + 1
 		character := diagnostic.Range.Start.Character + 1

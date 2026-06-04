@@ -81,7 +81,7 @@ func TestCondenseGitLog_Decoration(t *testing.T) {
 	if hashIdx < 0 || decoIdx < 0 || subjectIdx < 0 {
 		t.Fatalf("missing expected segments in: %q", result)
 	}
-	if !(hashIdx < decoIdx && decoIdx < subjectIdx) {
+	if hashIdx >= decoIdx || decoIdx >= subjectIdx {
 		t.Errorf("order wrong: hash=%d deco=%d subject=%d in %q", hashIdx, decoIdx, subjectIdx, result)
 	}
 }
