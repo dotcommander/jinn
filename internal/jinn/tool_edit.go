@@ -182,10 +182,7 @@ func (e *Engine) editFile(args map[string]interface{}) (*ToolResult, error) {
 	oldText, _ := args["old_text"].(string)
 	newText, _ := args["new_text"].(string)
 	fuzzyIndent, _ := args["fuzzy_indent"].(bool)
-	showContext := 0
-	if v, ok := args["show_context"].(float64); ok && v > 0 {
-		showContext = int(v)
-	}
+	showContext := intArg(args, "show_context", 0)
 
 	resolved, data, err := e.loadEditTarget(path, oldText)
 	if err != nil {
@@ -209,7 +206,7 @@ func (e *Engine) editFile(args map[string]interface{}) (*ToolResult, error) {
 	dr := generateEditDiff(string(data), updated, path, info, oldText, newText, 3)
 	details := singleEditDetails(dr.Diff, info, fuzzy, newText)
 
-	if dryRun, ok := args["dry_run"].(bool); ok && dryRun {
+	if boolArg(args, "dry_run") {
 		preview := formatEditPreview(string(data), updated, path, fuzzy)
 		return &ToolResult{
 			Text: preview,

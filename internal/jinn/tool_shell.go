@@ -129,7 +129,7 @@ func (e *Engine) runShell(ctx context.Context, args map[string]interface{}) (str
 	}
 	// Classify before dry-run so the response envelope always includes risk metadata.
 	riskLevel, riskReason := ClassifyCommand(cmd)
-	if dryRun, ok := args["dry_run"].(bool); ok && dryRun {
+	if boolArg(args, "dry_run") {
 		return fmt.Sprintf("[dry-run] would execute: %s", cmd), map[string]string{
 			"risk":           riskLevel.String(),
 			"classification": string(ClassSuccess),

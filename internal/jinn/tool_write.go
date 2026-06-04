@@ -64,7 +64,7 @@ func (e *Engine) writeFile(args map[string]interface{}) (string, error) {
 		return "", staleErr
 	}
 
-	if dryRun, ok := args["dry_run"].(bool); ok && dryRun {
+	if boolArg(args, "dry_run") {
 		existing, rErr := os.ReadFile(resolved)
 		if rErr != nil {
 			return fmt.Sprintf("[dry-run] would create %s (%d bytes)", path, len(content)), nil //nolint:nilerr // unreadable/missing file in dry-run means the write would create it

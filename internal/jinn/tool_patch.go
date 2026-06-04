@@ -45,7 +45,7 @@ func (e *Engine) applyPatch(args map[string]interface{}) (*ToolResult, error) {
 		return nil, err
 	}
 
-	if dryRun, ok := args["dry_run"].(bool); ok && dryRun {
+	if boolArg(args, "dry_run") {
 		return renderPatchDryRun(resolved, preflights), nil
 	}
 

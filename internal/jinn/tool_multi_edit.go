@@ -62,10 +62,7 @@ func (e *Engine) parseAndResolveEdits(editsRaw []interface{}) (
 		oldText, _ := entry["old_text"].(string)
 		newText, _ := entry["new_text"].(string)
 		fuzzyIndent, _ := entry["fuzzy_indent"].(bool)
-		showContext := 0
-		if v, ok := entry["show_context"].(float64); ok && v > 0 {
-			showContext = int(v)
-		}
+		showContext := intArg(entry, "show_context", 0)
 
 		if oldText == "" {
 			return nil, nil, &ErrWithSuggestion{
@@ -136,7 +133,7 @@ func (e *Engine) multiEdit(args map[string]interface{}) (*ToolResult, error) {
 	}
 
 	// dry_run: return previews without writing.
-	if dryRun, ok := args["dry_run"].(bool); ok && dryRun {
+	if boolArg(args, "dry_run") {
 		return dryRunResult(edits), nil
 	}
 

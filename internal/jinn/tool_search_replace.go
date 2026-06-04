@@ -80,10 +80,7 @@ func (e *Engine) searchReplace(ctx context.Context, args map[string]interface{})
 		return nil, err
 	}
 
-	dryRun := false
-	if v, ok := args["dry_run"].(bool); ok && v {
-		dryRun = true
-	}
+	dryRun := boolArg(args, "dry_run")
 
 	// --- Phase 1: Validate all files (collect-then-report) ---
 
