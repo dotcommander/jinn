@@ -77,6 +77,7 @@ func (e *Engine) checkPath(p string) (string, error) {
 	real, err := resolveExistingPrefix(resolved)
 	if err != nil {
 		return "", &ErrWithSuggestion{
+			Code:       ErrCodePathOutsideSandbox,
 			Err:        fmt.Errorf("symlink target is outside the sandbox: %s", p),
 			Suggestion: "symlink target is outside the sandbox; follow the symlink manually via its absolute path if authorized",
 		}
