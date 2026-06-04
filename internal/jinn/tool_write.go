@@ -15,40 +15,12 @@ func atomicWriteJSON(path string, v any, perm os.FileMode) error {
 	if merr != nil {
 		return fmt.Errorf("marshal: %w", merr)
 	}
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("mkdir: %w", err)
 	}
-	tmp, err := os.CreateTemp(dir, ".json-")
-	if err != nil {
-		return fmt.Errorf("create temp: %w", err)
+	if err := atomicWriteBytes(path, data, perm); err != nil {
+		return fmt.Errorf("atomic write: %w", err)
 	}
-	tmpPath := tmp.Name()
-	ok := false
-	defer func() {
-		if !ok {
-			_ = os.Remove(tmpPath)
-		}
-	}()
-	if _, err = tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("write: %w", err)
-	}
-	if err = tmp.Chmod(perm); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("chmod: %w", err)
-	}
-	if err = tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("sync: %w", err)
-	}
-	if err = tmp.Close(); err != nil {
-		return fmt.Errorf("close: %w", err)
-	}
-	if err = os.Rename(tmpPath, path); err != nil {
-		return fmt.Errorf("rename: %w", err)
-	}
-	ok = true
 	return nil
 }
 
@@ -62,35 +34,11 @@ func (e *Engine) atomicWriteFile(resolved, content string) error {
 		perm = info.Mode().Perm()
 	}
 
-	dir := filepath.Dir(resolved)
-	tmp, err := os.CreateTemp(dir, ".jinn-")
-	if err != nil {
+	if err := atomicWriteBytes(resolved, []byte(content), perm); err != nil {
 		return err
 	}
-	tmpPath := tmp.Name()
-	if _, err := tmp.WriteString(content); err != nil {
-		_ = tmp.Close()
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("write: %w", err)
-	}
-	if err := tmp.Chmod(perm); err != nil {
-		_ = tmp.Close()
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("chmod: %w", err)
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("sync: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("close: %w", err)
-	}
-	if err := os.Rename(tmpPath, resolved); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("rename: %w", err)
-	}
+
+	// Record the post-write mtime so the staleness tracker stays consistent.
 	if info, err := os.Stat(resolved); err == nil {
 		e.tracker.record(resolved, info.ModTime())
 	}
