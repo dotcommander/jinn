@@ -276,47 +276,62 @@ func (s *testResultStrategy) Compress(output string) string {
 	}
 }
 
+// goTestSummary holds the tallies and metadata scanned from go test -v output.
+type goTestSummary struct {
+	passCount, failCount int
+	pkg, duration        string
+}
+
 // compressGoTest compresses go test -v output when all tests pass.
 func (s *testResultStrategy) compressGoTest(output string) string {
-	lines := splitLines(output)
-	passCount := 0
-	failCount := 0
-	var duration string
-	var pkg string
-
-	for _, line := range lines {
-		if reGoTestPass.MatchString(line) {
-			passCount++
-		}
-		if reGoTestFail.MatchString(line) {
-			failCount++
-		}
-		if reGoTestOK.MatchString(line) {
-			fields := strings.Fields(line)
-			if len(fields) >= 2 {
-				pkg = fields[1]
-			}
-			// Extract duration (last field matching "0.00s" pattern).
-			for i := len(fields) - 1; i >= 0; i-- {
-				f := fields[i]
-				if strings.HasSuffix(f, "s") && len(f) > 1 && f[0] >= '0' && f[0] <= '9' {
-					duration = f
-					break
-				}
-			}
-		}
-	}
+	t := scanGoTestLines(splitLines(output))
 
 	// Only compress when all tests pass.
-	if failCount > 0 || passCount == 0 {
+	if t.failCount > 0 || t.passCount == 0 {
 		return output
 	}
 
-	result := formatTestSummary(pkg, passCount, duration)
+	result := formatTestSummary(t.pkg, t.passCount, t.duration)
 	if len(result) >= len(output) {
 		return output
 	}
 	return result
+}
+
+// scanGoTestLines tallies pass/fail counts and extracts the package name and
+// duration from the `ok` line of go test -v output.
+func scanGoTestLines(lines []string) goTestSummary {
+	var t goTestSummary
+	for _, line := range lines {
+		if reGoTestPass.MatchString(line) {
+			t.passCount++
+		}
+		if reGoTestFail.MatchString(line) {
+			t.failCount++
+		}
+		if reGoTestOK.MatchString(line) {
+			t.pkg, t.duration = parseGoTestOKLine(line)
+		}
+	}
+	return t
+}
+
+// parseGoTestOKLine extracts the package name and duration from a go test
+// `ok  pkg  0.00s` line.
+func parseGoTestOKLine(line string) (pkg, duration string) {
+	fields := strings.Fields(line)
+	if len(fields) >= 2 {
+		pkg = fields[1]
+	}
+	// Extract duration (last field matching "0.00s" pattern).
+	for i := len(fields) - 1; i >= 0; i-- {
+		f := fields[i]
+		if strings.HasSuffix(f, "s") && len(f) > 1 && f[0] >= '0' && f[0] <= '9' {
+			duration = f
+			break
+		}
+	}
+	return pkg, duration
 }
 
 // compressPytest compresses pytest -v output when all tests pass.
@@ -352,8 +367,7 @@ func (s *testResultStrategy) compressPytest(output string) string {
 
 // compressCargoTest compresses cargo test output when all tests pass.
 func (s *testResultStrategy) compressCargoTest(output string) string {
-	lines := splitLines(output)
-	for _, line := range lines {
+	for _, line := range splitLines(output) {
 		if !strings.HasPrefix(line, "test result: ") {
 			continue
 		}
@@ -361,23 +375,7 @@ func (s *testResultStrategy) compressCargoTest(output string) string {
 		if !strings.Contains(line, "ok.") || !strings.Contains(line, "0 failed") {
 			continue
 		}
-		passCount := 0
-		if idx := strings.Index(line, ". "); idx >= 0 {
-			rest := line[idx+2:]
-			if pIdx := strings.Index(rest, " passed"); pIdx >= 0 {
-				if n, _ := fmt.Sscanf(rest[:pIdx], "%d", &passCount); n != 1 {
-					passCount = 0
-				}
-			}
-		}
-		var duration string
-		if idx := strings.Index(line, "finished in "); idx >= 0 {
-			d := strings.TrimSpace(line[idx+12:])
-			if !strings.HasSuffix(d, "s") {
-				d += "s"
-			}
-			duration = d
-		}
+		passCount, duration := parseCargoResultLine(line)
 		if passCount > 0 {
 			result := formatTestSummary("", passCount, duration)
 			if len(result) < len(output) {
@@ -387,6 +385,27 @@ func (s *testResultStrategy) compressCargoTest(output string) string {
 		break
 	}
 	return output
+}
+
+// parseCargoResultLine extracts the pass count and duration from a cargo
+// "test result: ok. N passed; ... finished in 0.00s" line.
+func parseCargoResultLine(line string) (passCount int, duration string) {
+	if idx := strings.Index(line, ". "); idx >= 0 {
+		rest := line[idx+2:]
+		if pIdx := strings.Index(rest, " passed"); pIdx >= 0 {
+			if n, _ := fmt.Sscanf(rest[:pIdx], "%d", &passCount); n != 1 {
+				passCount = 0
+			}
+		}
+	}
+	if idx := strings.Index(line, "finished in "); idx >= 0 {
+		d := strings.TrimSpace(line[idx+12:])
+		if !strings.HasSuffix(d, "s") {
+			d += "s"
+		}
+		duration = d
+	}
+	return passCount, duration
 }
 
 // formatTestSummary builds a compact test result summary line.
@@ -468,19 +487,7 @@ func isGoTestPlainOutput(output string) bool {
 // lines, `?  [no test files]` lines, and any stray PASS/RUN noise.
 func (s *testResultStrategy) compressGoTestPlain(output string) string {
 	lines := splitLines(output)
-	okPkgs, noTestPkgs := 0, 0
-	hasFailure := false
-	for _, line := range lines {
-		switch {
-		case reGoTestOK.MatchString(line):
-			okPkgs++
-		case strings.HasPrefix(line, "?") && strings.Contains(line, "[no test files]"):
-			noTestPkgs++
-		case reGoTestFail.MatchString(line) || reGoTestFailPkg.MatchString(line) ||
-			strings.HasPrefix(line, "--- FAIL:") || line == "FAIL" || strings.HasPrefix(line, "panic:"):
-			hasFailure = true
-		}
-	}
+	okPkgs, noTestPkgs, hasFailure := scanGoTestPlainLines(lines)
 
 	if !hasFailure && okPkgs > 0 {
 		var b strings.Builder
@@ -498,14 +505,8 @@ func (s *testResultStrategy) compressGoTestPlain(output string) string {
 	// Failures present: drop only lines we are certain are noise; keep everything else.
 	var kept []string
 	for _, line := range lines {
-		if reGoTestOK.MatchString(line) {
-			continue // "ok  \tpkg\t0.2s" — a passing package
-		}
-		if strings.HasPrefix(line, "?") && strings.Contains(line, "[no test files]") {
+		if isGoTestPlainNoise(line) {
 			continue
-		}
-		if reGoTestRun.MatchString(line) || reGoTestPass.MatchString(line) || line == "PASS" {
-			continue // -v leftovers, shouldn't appear in plain output but be safe
 		}
 		kept = append(kept, line)
 	}
@@ -517,6 +518,37 @@ func (s *testResultStrategy) compressGoTestPlain(output string) string {
 		return output
 	}
 	return result
+}
+
+// scanGoTestPlainLines classifies non-verbose `go test ./...` lines into
+// passing-package and no-test-file counts, plus whether any failure appears.
+func scanGoTestPlainLines(lines []string) (okPkgs, noTestPkgs int, hasFailure bool) {
+	for _, line := range lines {
+		switch {
+		case reGoTestOK.MatchString(line):
+			okPkgs++
+		case strings.HasPrefix(line, "?") && strings.Contains(line, "[no test files]"):
+			noTestPkgs++
+		case reGoTestFail.MatchString(line) || reGoTestFailPkg.MatchString(line) ||
+			strings.HasPrefix(line, "--- FAIL:") || line == "FAIL" || strings.HasPrefix(line, "panic:"):
+			hasFailure = true
+		}
+	}
+	return okPkgs, noTestPkgs, hasFailure
+}
+
+// isGoTestPlainNoise reports whether a line is certain-to-be-noise in plain
+// `go test ./...` output: passing-package `ok` lines, `[no test files]` lines,
+// and stray -v leftovers (RUN/PASS).
+func isGoTestPlainNoise(line string) bool {
+	if reGoTestOK.MatchString(line) {
+		return true // "ok  \tpkg\t0.2s" — a passing package
+	}
+	if strings.HasPrefix(line, "?") && strings.Contains(line, "[no test files]") {
+		return true
+	}
+	// -v leftovers, shouldn't appear in plain output but be safe.
+	return reGoTestRun.MatchString(line) || reGoTestPass.MatchString(line) || line == "PASS"
 }
 
 // isPytestOutput returns true if the output looks like pytest output.

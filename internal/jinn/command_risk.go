@@ -192,36 +192,69 @@ func classifySegment(seg string) (RiskLevel, string) {
 
 // applyArgHeuristics upgrades risk based on flag/argument patterns.
 // It returns the base rule unchanged when no heuristic fires.
+// Each per-verb helper returns (level, reason, true) when its heuristic fires.
 func applyArgHeuristics(verb string, tokens []string, base riskRule) (RiskLevel, string) {
+	var (
+		level  RiskLevel
+		reason string
+		fired  bool
+	)
 	switch verb {
 	case "rm":
-		for _, tok := range tokens[1:] {
-			if isFlag(tok) && containsAny(tok, 'r', 'f') {
-				return RiskDangerous, "critical: rm with force/recursive flags — irreversible"
-			}
-		}
+		level, reason, fired = checkRmFlags(tokens)
 	case "chmod":
-		for _, tok := range tokens[1:] {
-			if tok == "777" || tok == "0777" || tok == "a+rwx" {
-				return RiskCaution, "chmod 777 — grants world read/write/execute"
-			}
-		}
+		level, reason, fired = checkChmodArgs(tokens)
 	case "git":
-		for i, tok := range tokens[1:] {
-			if tok == "push" {
-				for _, f := range tokens[i+2:] {
-					if f == "--force" || f == "-f" {
-						return RiskCaution, "git force push — rewrites remote history"
-					}
+		level, reason, fired = checkGitForcePush(tokens)
+	case "find":
+		level, reason, fired = checkFindExecRm(tokens)
+	}
+	if fired {
+		return level, reason
+	}
+	return base.Level, base.Reason
+}
+
+// checkRmFlags escalates rm with force/recursive flags to dangerous.
+func checkRmFlags(tokens []string) (RiskLevel, string, bool) {
+	for _, tok := range tokens[1:] {
+		if isFlag(tok) && containsAny(tok, 'r', 'f') {
+			return RiskDangerous, "critical: rm with force/recursive flags — irreversible", true
+		}
+	}
+	return 0, "", false
+}
+
+// checkChmodArgs flags world-writable chmod modes.
+func checkChmodArgs(tokens []string) (RiskLevel, string, bool) {
+	for _, tok := range tokens[1:] {
+		if tok == "777" || tok == "0777" || tok == "a+rwx" {
+			return RiskCaution, "chmod 777 — grants world read/write/execute", true
+		}
+	}
+	return 0, "", false
+}
+
+// checkGitForcePush flags git push with --force/-f.
+func checkGitForcePush(tokens []string) (RiskLevel, string, bool) {
+	for i, tok := range tokens[1:] {
+		if tok == "push" {
+			for _, f := range tokens[i+2:] {
+				if f == "--force" || f == "-f" {
+					return RiskCaution, "git force push — rewrites remote history", true
 				}
 			}
 		}
-	case "find":
-		for i, tok := range tokens {
-			if tok == "-exec" && i+1 < len(tokens) && tokens[i+1] == "rm" {
-				return RiskDangerous, "find -exec rm — bulk file deletion"
-			}
+	}
+	return 0, "", false
+}
+
+// checkFindExecRm flags find -exec rm as bulk deletion.
+func checkFindExecRm(tokens []string) (RiskLevel, string, bool) {
+	for i, tok := range tokens {
+		if tok == "-exec" && i+1 < len(tokens) && tokens[i+1] == "rm" {
+			return RiskDangerous, "find -exec rm — bulk file deletion", true
 		}
 	}
-	return base.Level, base.Reason
+	return 0, "", false
 }

@@ -124,25 +124,20 @@ func classifyHeredoc(cmdline string) (RiskLevel, string, bool) {
 
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
+
+		// Header line: detect the heredoc marker and classify the outer verb.
 		if !inBody {
 			idx := strings.Index(trimmed, "<<")
 			if idx < 0 {
 				continue
 			}
-			raw := strings.TrimSpace(trimmed[idx+2:])
-			raw = strings.TrimPrefix(raw, "-") // <<-EOF
-			raw = strings.Trim(raw, `'"`)
-			marker = strings.TrimSpace(raw)
+			marker = heredocMarker(trimmed[idx+2:])
 			inBody = true
-			// Classify the outer verb (before <<).
-			if outer := strings.TrimSpace(trimmed[:idx]); outer != "" {
-				if rule, ok := riskTable[firstVerb(outer)]; ok && rule.Level > maxLevel {
-					maxLevel = rule.Level
-					reasons = append(reasons, rule.Reason)
-				}
-			}
+			classifyHeredocOuter(trimmed[:idx], &maxLevel, &reasons)
 			continue
 		}
+
+		// Body line: terminator ends the body; blank lines are ignored.
 		if trimmed == marker {
 			inBody = false
 			continue
@@ -160,6 +155,30 @@ func classifyHeredoc(cmdline string) (RiskLevel, string, bool) {
 	}
 
 	return maxLevel, strings.Join(reasons, "; "), true
+}
+
+// heredocMarker extracts the terminator marker from the text after "<<",
+// stripping the optional "-" (<<-EOF) and surrounding quotes.
+func heredocMarker(afterOp string) string {
+	raw := strings.TrimSpace(afterOp)
+	raw = strings.TrimPrefix(raw, "-") // <<-EOF
+	raw = strings.Trim(raw, `'"`)
+	return strings.TrimSpace(raw)
+}
+
+// classifyHeredocOuter classifies the verb preceding "<<" and escalates
+// maxLevel/reasons when it outranks the current level.
+func classifyHeredocOuter(before string, maxLevel *RiskLevel, reasons *[]string) {
+	outer := strings.TrimSpace(before)
+	if outer == "" {
+		return
+	}
+	rule, ok := riskTable[firstVerb(outer)]
+	if !ok || rule.Level <= *maxLevel {
+		return
+	}
+	*maxLevel = rule.Level
+	*reasons = append(*reasons, rule.Reason)
 }
 
 // firstVerb returns the first non-assignment token from cmd.
