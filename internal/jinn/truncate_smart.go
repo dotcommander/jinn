@@ -68,40 +68,10 @@ func truncateOutputSmart(raw string, limit int, ext string) struct {
 		return truncateOutputHead(raw, limit)
 	}
 
-	// Walk forward accumulating lines. Track brace depth, ignoring braces
-	// inside string literals and line comments. Stop at the limit and scan
-	// backward to find the last line where depth == 0 (top-level boundary).
-	depth := 0
-	cutLine := limit // candidate cut point (exclusive)
-
-	for i := 0; i < count; i++ {
-		depth += lineBraceDepth(lines[i])
-		if i == limit-1 {
-			// We've reached the limit. If depth is 0, we can cut cleanly here.
-			if depth == 0 {
-				cutLine = limit
-				break
-			}
-			// Walk backward from current position to find the last zero-depth line.
-			// Recompute depth from scratch to avoid accumulated state errors.
-			found := false
-			for j := i; j >= 0; j-- {
-				d := 0
-				for k := 0; k <= j; k++ {
-					d += lineBraceDepth(lines[k])
-				}
-				if d == 0 {
-					cutLine = j + 1 // cut after this line (exclusive)
-					found = true
-					break
-				}
-			}
-			if !found {
-				// No clean boundary found — use head truncation as fallback.
-				return truncateOutputHead(raw, limit)
-			}
-			break
-		}
+	cutLine, ok := braceCutLine(lines, limit)
+	if !ok {
+		// No clean boundary found — use head truncation as fallback.
+		return truncateOutputHead(raw, limit)
 	}
 
 	if cutLine <= 0 {
@@ -123,54 +93,96 @@ func truncateOutputSmart(raw string, limit int, ext string) struct {
 	return result
 }
 
+// braceCutLine finds the exclusive cut point at or before limit that lands on
+// a top-level (zero brace depth) boundary. It walks forward accumulating brace
+// depth; if depth is zero at the limit it cuts there, otherwise it scans
+// backward for the last zero-depth line. The bool reports whether a clean
+// boundary was found.
+func braceCutLine(lines []string, limit int) (int, bool) {
+	depth := 0
+	for i := 0; i < len(lines); i++ {
+		depth += lineBraceDepth(lines[i])
+		if i != limit-1 {
+			continue
+		}
+		// We've reached the limit. If depth is 0, we can cut cleanly here.
+		if depth == 0 {
+			return limit, true
+		}
+		// Walk backward from current position to find the last zero-depth line.
+		// Recompute depth from scratch to avoid accumulated state errors.
+		for j := i; j >= 0; j-- {
+			d := 0
+			for k := 0; k <= j; k++ {
+				d += lineBraceDepth(lines[k])
+			}
+			if d == 0 {
+				return j + 1, true // cut after this line (exclusive)
+			}
+		}
+		return 0, false
+	}
+	return limit, true
+}
+
 // lineBraceDepth computes the net brace depth change for a single line,
 // ignoring braces inside double-quoted strings, backtick strings, and
 // line comments.
 func lineBraceDepth(line string) int {
-	depth := 0
-	inString := false
-	inRawString := false
-	inComment := false
-
+	s := braceScanner{}
 	for i := 0; i < len(line); i++ {
-		ch := line[i]
-
-		if inRawString {
-			if ch == '`' {
-				inRawString = false
-			}
-			continue
-		}
-		if inString {
-			if ch == '\\' {
-				i++ // skip escaped char
-				continue
-			}
-			if ch == '"' {
-				inString = false
-			}
-			continue
-		}
-		if inComment {
-			// Line comments persist until newline; since we process per-line,
-			// everything after // is a comment.
+		if s.step(line, &i) {
 			break
 		}
-		switch ch {
-		case '"':
-			inString = true
-		case '`':
-			inRawString = true
-		case '/':
-			if i+1 < len(line) && line[i+1] == '/' {
-				inComment = true
-				i++ // skip second slash
-			}
-		case '{':
-			depth++
-		case '}':
-			depth--
-		}
 	}
-	return depth
+	return s.depth
+}
+
+// braceScanner carries the lexical state used to count brace depth on a single
+// line while ignoring braces inside string/raw-string literals and comments.
+type braceScanner struct {
+	depth       int
+	inString    bool
+	inRawString bool
+}
+
+// step advances the scanner by the character at *i, mutating *i to consume
+// extra characters (escapes, the second comment slash). It returns true when
+// the rest of the line is a comment and scanning should stop.
+func (s *braceScanner) step(line string, i *int) bool {
+	ch := line[*i]
+
+	if s.inRawString {
+		if ch == '`' {
+			s.inRawString = false
+		}
+		return false
+	}
+	if s.inString {
+		switch ch {
+		case '\\':
+			*i++ // skip escaped char
+		case '"':
+			s.inString = false
+		}
+		return false
+	}
+
+	switch ch {
+	case '"':
+		s.inString = true
+	case '`':
+		s.inRawString = true
+	case '/':
+		if *i+1 < len(line) && line[*i+1] == '/' {
+			// Line comments persist until newline; since we process per-line,
+			// everything after // is a comment.
+			return true
+		}
+	case '{':
+		s.depth++
+	case '}':
+		s.depth--
+	}
+	return false
 }

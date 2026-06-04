@@ -77,8 +77,21 @@ func (e *Engine) lspQuery(ctx context.Context, args map[string]interface{}) (str
 	return e.lspQueryWithLauncher(ctx, args, nil)
 }
 
-// lspQueryWithLauncher is the testable variant — tests inject a fake launcher.
-func (e *Engine) lspQueryWithLauncher(ctx context.Context, args map[string]interface{}, launcher lspLauncher) (string, error) {
+// lspRequest is the validated, resolved form of an lsp_query invocation,
+// produced by parseLSPArgs and consumed by the client-dispatch phase.
+type lspRequest struct {
+	action  string
+	absPath string
+	ext     string
+	argv    []string
+	line    int
+	char    int
+	newName string
+}
+
+// parseLSPArgs validates the raw args, resolves the path, picks the LSP server,
+// and auto-detects the column from a symbol when needed.
+func (e *Engine) parseLSPArgs(args map[string]interface{}) (lspRequest, error) {
 	action, _ := args["action"].(string)
 	path, _ := args["path"].(string)
 	line := intArg(args, "line", 0)
@@ -87,50 +100,74 @@ func (e *Engine) lspQueryWithLauncher(ctx context.Context, args map[string]inter
 	newName, _ := args["new_name"].(string)
 
 	if action == "" {
-		return "", &ErrWithSuggestion{
+		return lspRequest{}, &ErrWithSuggestion{
 			Err:        errors.New("lsp_query: 'action' is required"),
 			Suggestion: "set action to one of: definition, references, hover, symbols, diagnostics, rename",
 		}
 	}
 	if path == "" {
-		return "", &ErrWithSuggestion{
+		return lspRequest{}, &ErrWithSuggestion{
 			Err:        errors.New("lsp_query: 'path' is required"),
 			Suggestion: "provide the path to the source file to query",
 		}
 	}
 	absPath, err := e.checkPath(path)
 	if err != nil {
-		return "", err
+		return lspRequest{}, err
 	}
 
 	ext := strings.ToLower(filepath.Ext(absPath))
 	argv, err := lspServerForExt(ext)
 	if err != nil {
-		return "", err
+		return lspRequest{}, err
 	}
 
 	// rename requires new_name
 	if action == "rename" && newName == "" {
-		return "", &ErrWithSuggestion{
+		return lspRequest{}, &ErrWithSuggestion{
 			Err:        fmt.Errorf("lsp_query: 'new_name' is required for action %q", action),
 			Suggestion: "provide the new name for the symbol",
 		}
 	}
 
-	// position required for all actions except whole-file queries
+	char, err = resolveLSPPosition(action, absPath, line, char, symbol)
+	if err != nil {
+		return lspRequest{}, err
+	}
+
+	return lspRequest{
+		action:  action,
+		absPath: absPath,
+		ext:     ext,
+		argv:    argv,
+		line:    line,
+		char:    char,
+		newName: newName,
+	}, nil
+}
+
+// resolveLSPPosition validates that a 1-based line/character position is
+// present for actions that require one, auto-detecting the column from a symbol
+// when character is unset. Whole-file actions (symbols, diagnostics) need no
+// position and pass char through unchanged.
+func resolveLSPPosition(action, absPath string, line, char int, symbol string) (int, error) {
 	needsPosition := action != "symbols" && action != "diagnostics"
-	if needsPosition && line <= 0 {
-		return "", &ErrWithSuggestion{
+	if !needsPosition {
+		return char, nil
+	}
+
+	if line <= 0 {
+		return 0, &ErrWithSuggestion{
 			Err:        fmt.Errorf("lsp_query: 'line' is required for action %q", action),
 			Suggestion: "provide a 1-based line number for the symbol under the cursor",
 		}
 	}
 
 	// symbol → character auto-detect: read the file line, find the symbol
-	if needsPosition && char <= 0 && symbol != "" {
+	if char <= 0 && symbol != "" {
 		col, err := findSymbolColumn(absPath, line-1, symbol) // line is 1-based, findSymbolColumn wants 0-based
 		if err != nil {
-			return "", &ErrWithSuggestion{
+			return 0, &ErrWithSuggestion{
 				Err:        fmt.Errorf("lsp_query: %w", err),
 				Suggestion: "check that the symbol name appears on the specified line",
 			}
@@ -138,11 +175,44 @@ func (e *Engine) lspQueryWithLauncher(ctx context.Context, args map[string]inter
 		char = col + 1 // convert 0-based back to 1-based for the rest of the flow
 	}
 
-	if needsPosition && char <= 0 {
-		return "", &ErrWithSuggestion{
+	if char <= 0 {
+		return 0, &ErrWithSuggestion{
 			Err:        fmt.Errorf("lsp_query: 'character' (or 'symbol') is required for action %q", action),
 			Suggestion: "provide 1-based character offset, or set 'symbol' to auto-detect the column",
 		}
+	}
+
+	return char, nil
+}
+
+// dispatchLSPAction runs the query for req.action against an already-open client.
+func (e *Engine) dispatchLSPAction(client *lspClient, req lspRequest) (string, error) {
+	switch req.action {
+	case "definition":
+		return client.definition(req.absPath, req.line, req.char, e.workDir, e.checkPath)
+	case "references":
+		return client.references(req.absPath, req.line, req.char, e.workDir, e.checkPath)
+	case "hover":
+		return client.hover(req.absPath, req.line, req.char)
+	case "symbols":
+		return client.symbols(req.absPath)
+	case "diagnostics":
+		return client.diagnostics(req.absPath)
+	case "rename":
+		return client.rename(req.absPath, req.line, req.char, req.newName, e.workDir)
+	default:
+		return "", &ErrWithSuggestion{
+			Err:        fmt.Errorf("unknown lsp action: %s", req.action),
+			Suggestion: "use one of: definition, references, hover, symbols, diagnostics, rename",
+		}
+	}
+}
+
+// lspQueryWithLauncher is the testable variant — tests inject a fake launcher.
+func (e *Engine) lspQueryWithLauncher(ctx context.Context, args map[string]interface{}, launcher lspLauncher) (string, error) {
+	req, err := e.parseLSPArgs(args)
+	if err != nil {
+		return "", err
 	}
 
 	timeout := e.LSPTimeoutSec
@@ -157,13 +227,13 @@ func (e *Engine) lspQueryWithLauncher(ctx context.Context, args map[string]inter
 	done := make(chan result, 1)
 
 	client := newLSPClient(launcher)
-	if err := client.start(ctx, argv); err != nil {
+	if err := client.start(ctx, req.argv); err != nil {
 		return "", err
 	}
 
 	go func() {
 		defer func() {
-			client.didClose(absPath) //nolint:errcheck
+			client.didClose(req.absPath) //nolint:errcheck
 			client.shutdown()
 			client.stop()
 		}()
@@ -172,34 +242,12 @@ func (e *Engine) lspQueryWithLauncher(ctx context.Context, args map[string]inter
 			done <- result{err: err}
 			return
 		}
-		if err := client.didOpen(absPath, langIDForExt(ext)); err != nil {
+		if err := client.didOpen(req.absPath, langIDForExt(req.ext)); err != nil {
 			done <- result{err: err}
 			return
 		}
 
-		var (
-			out  string
-			qErr error
-		)
-		switch action {
-		case "definition":
-			out, qErr = client.definition(absPath, line, char, e.workDir, e.checkPath)
-		case "references":
-			out, qErr = client.references(absPath, line, char, e.workDir, e.checkPath)
-		case "hover":
-			out, qErr = client.hover(absPath, line, char)
-		case "symbols":
-			out, qErr = client.symbols(absPath)
-		case "diagnostics":
-			out, qErr = client.diagnostics(absPath)
-		case "rename":
-			out, qErr = client.rename(absPath, line, char, newName, e.workDir)
-		default:
-			qErr = &ErrWithSuggestion{
-				Err:        fmt.Errorf("unknown lsp action: %s", action),
-				Suggestion: "use one of: definition, references, hover, symbols, diagnostics, rename",
-			}
-		}
+		out, qErr := e.dispatchLSPAction(client, req)
 		done <- result{out: out, err: qErr}
 	}()
 

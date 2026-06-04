@@ -72,44 +72,66 @@ func preflightPatch(resolved []resolvedOp) ([]preflightResult, error) {
 	preflights := make([]preflightResult, len(resolved))
 
 	for i, r := range resolved {
+		var (
+			pre preflightResult
+			err error
+		)
 		switch r.op.kind {
 		case "add":
-			if _, err := os.Stat(r.resolved); err == nil {
-				return nil, fmt.Errorf("add %s: file already exists", r.op.path)
-			} else if !os.IsNotExist(err) {
-				return nil, fmt.Errorf("add %s: %w", r.op.path, err)
-			}
-			preflights[i].newContent = r.op.contents
-
+			pre, err = preflightAdd(r)
 		case "delete":
-			if _, err := os.Stat(r.resolved); os.IsNotExist(err) {
-				return nil, fmt.Errorf("delete %s: file does not exist", r.op.path)
-			}
-			data, err := os.ReadFile(r.resolved)
-			if err != nil {
-				return nil, fmt.Errorf("delete %s: %w", r.op.path, err)
-			}
-			preflights[i].oldContent = string(data)
-
+			pre, err = preflightDelete(r)
 		case "update":
-			data, err := os.ReadFile(r.resolved)
-			if err != nil {
-				if os.IsNotExist(err) {
-					return nil, fmt.Errorf("update %s: file not found", r.op.path)
-				}
-				return nil, fmt.Errorf("update %s: %w", r.op.path, err)
-			}
-			preflights[i].oldContent = string(data)
-
-			updated, err := deriveUpdatedContent(r.op.path, string(data), r.op.chunks)
-			if err != nil {
-				return nil, fmt.Errorf("update %s: %w", r.op.path, err)
-			}
-			preflights[i].newContent = updated
+			pre, err = preflightUpdate(r)
 		}
+		if err != nil {
+			return nil, err
+		}
+		preflights[i] = pre
 	}
 
 	return preflights, nil
+}
+
+// preflightAdd validates an add operation: the target must not already exist.
+func preflightAdd(r resolvedOp) (preflightResult, error) {
+	if _, err := os.Stat(r.resolved); err == nil {
+		return preflightResult{}, fmt.Errorf("add %s: file already exists", r.op.path)
+	} else if !os.IsNotExist(err) {
+		return preflightResult{}, fmt.Errorf("add %s: %w", r.op.path, err)
+	}
+	return preflightResult{newContent: r.op.contents}, nil
+}
+
+// preflightDelete validates a delete operation and captures the file's
+// current content for the undo snapshot.
+func preflightDelete(r resolvedOp) (preflightResult, error) {
+	if _, err := os.Stat(r.resolved); os.IsNotExist(err) {
+		return preflightResult{}, fmt.Errorf("delete %s: file does not exist", r.op.path)
+	}
+	data, err := os.ReadFile(r.resolved)
+	if err != nil {
+		return preflightResult{}, fmt.Errorf("delete %s: %w", r.op.path, err)
+	}
+	return preflightResult{oldContent: string(data)}, nil
+}
+
+// preflightUpdate validates an update operation, deriving the new content
+// from the chunks against the file's current content.
+func preflightUpdate(r resolvedOp) (preflightResult, error) {
+	data, err := os.ReadFile(r.resolved)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return preflightResult{}, fmt.Errorf("update %s: file not found", r.op.path)
+		}
+		return preflightResult{}, fmt.Errorf("update %s: %w", r.op.path, err)
+	}
+
+	updated, err := deriveUpdatedContent(r.op.path, string(data), r.op.chunks)
+	if err != nil {
+		return preflightResult{}, fmt.Errorf("update %s: %w", r.op.path, err)
+	}
+	return preflightResult{oldContent: string(data), newContent: updated}, nil
 }
 
 // renderPatchDryRun produces the no-write summary of the operations.
@@ -131,6 +153,13 @@ func renderPatchDryRun(resolved []resolvedOp, preflights []preflightResult) *Too
 	}
 }
 
+// applyOpResult holds the per-operation outcome accumulated during apply.
+type applyOpResult struct {
+	summary          string
+	diff             string
+	firstChangedLine int
+}
+
 // applyPatchOps performs phase 2: apply all operations with per-file atomic
 // writes and undo snapshots, accumulating diffs for the result metadata.
 func (e *Engine) applyPatchOps(resolved []resolvedOp, preflights []preflightResult) (*ToolResult, error) {
@@ -139,43 +168,27 @@ func (e *Engine) applyPatchOps(resolved []resolvedOp, preflights []preflightResu
 	var firstLine int
 
 	for i, r := range resolved {
+		var (
+			res applyOpResult
+			err error
+		)
 		switch r.op.kind {
 		case "add":
-			dir := filepath.Dir(r.resolved)
-			if err := os.MkdirAll(dir, 0o750); err != nil {
-				return nil, fmt.Errorf("add %s: mkdir: %w", r.op.path, err)
-			}
-			preContent, _ := os.ReadFile(r.resolved)
-			_ = e.recordSnapshot(r.resolved, r.op.path, "apply_patch", preContent)
-			if err := e.atomicWriteFile(r.resolved, preflights[i].newContent); err != nil {
-				return nil, fmt.Errorf("add %s: %w", r.op.path, err)
-			}
-			results = append(results, fmt.Sprintf("added %s", r.op.path))
-
+			res, err = e.applyAdd(r, preflights[i])
 		case "delete":
-			preContent, _ := os.ReadFile(r.resolved)
-			_ = e.recordSnapshot(r.resolved, r.op.path, "apply_patch", preContent)
-			if err := os.Remove(r.resolved); err != nil {
-				return nil, fmt.Errorf("delete %s: %w", r.op.path, err)
-			}
-			results = append(results, fmt.Sprintf("deleted %s", r.op.path))
-
+			res, err = e.applyDelete(r)
 		case "update":
-			if err := e.tracker.checkStale(r.resolved); err != nil {
-				return nil, fmt.Errorf("update %s: %w", r.op.path, err)
-			}
-			_ = e.recordSnapshot(r.resolved, r.op.path, "apply_patch", []byte(preflights[i].oldContent))
-			if err := e.atomicWriteFile(r.resolved, preflights[i].newContent); err != nil {
-				return nil, fmt.Errorf("update %s: %w", r.op.path, err)
-			}
-			dr := generateDiff(preflights[i].oldContent, preflights[i].newContent, r.op.path, 3)
-			if dr.Diff != "" {
-				allDiffs = append(allDiffs, dr.Diff)
-			}
-			if firstLine == 0 && dr.FirstChangedLine > 0 {
-				firstLine = dr.FirstChangedLine
-			}
-			results = append(results, fmt.Sprintf("updated %s", r.op.path))
+			res, err = e.applyUpdate(r, preflights[i])
+		}
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, res.summary)
+		if res.diff != "" {
+			allDiffs = append(allDiffs, res.diff)
+		}
+		if firstLine == 0 && res.firstChangedLine > 0 {
+			firstLine = res.firstChangedLine
 		}
 	}
 
@@ -189,5 +202,48 @@ func (e *Engine) applyPatchOps(resolved []resolvedOp, preflights []preflightResu
 	return &ToolResult{
 		Text: fmt.Sprintf("applied patch with %d operation(s):\n%s", len(resolved), strings.Join(results, "\n")),
 		Meta: meta,
+	}, nil
+}
+
+// applyAdd writes a new file, creating parent directories and recording an
+// undo snapshot of any pre-existing content.
+func (e *Engine) applyAdd(r resolvedOp, pre preflightResult) (applyOpResult, error) {
+	dir := filepath.Dir(r.resolved)
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		return applyOpResult{}, fmt.Errorf("add %s: mkdir: %w", r.op.path, err)
+	}
+	preContent, _ := os.ReadFile(r.resolved)
+	_ = e.recordSnapshot(r.resolved, r.op.path, "apply_patch", preContent)
+	if err := e.atomicWriteFile(r.resolved, pre.newContent); err != nil {
+		return applyOpResult{}, fmt.Errorf("add %s: %w", r.op.path, err)
+	}
+	return applyOpResult{summary: fmt.Sprintf("added %s", r.op.path)}, nil
+}
+
+// applyDelete removes a file after recording an undo snapshot.
+func (e *Engine) applyDelete(r resolvedOp) (applyOpResult, error) {
+	preContent, _ := os.ReadFile(r.resolved)
+	_ = e.recordSnapshot(r.resolved, r.op.path, "apply_patch", preContent)
+	if err := os.Remove(r.resolved); err != nil {
+		return applyOpResult{}, fmt.Errorf("delete %s: %w", r.op.path, err)
+	}
+	return applyOpResult{summary: fmt.Sprintf("deleted %s", r.op.path)}, nil
+}
+
+// applyUpdate writes updated content after a staleness check, recording an
+// undo snapshot and computing the diff for the result metadata.
+func (e *Engine) applyUpdate(r resolvedOp, pre preflightResult) (applyOpResult, error) {
+	if err := e.tracker.checkStale(r.resolved); err != nil {
+		return applyOpResult{}, fmt.Errorf("update %s: %w", r.op.path, err)
+	}
+	_ = e.recordSnapshot(r.resolved, r.op.path, "apply_patch", []byte(pre.oldContent))
+	if err := e.atomicWriteFile(r.resolved, pre.newContent); err != nil {
+		return applyOpResult{}, fmt.Errorf("update %s: %w", r.op.path, err)
+	}
+	dr := generateDiff(pre.oldContent, pre.newContent, r.op.path, 3)
+	return applyOpResult{
+		summary:          fmt.Sprintf("updated %s", r.op.path),
+		diff:             dr.Diff,
+		firstChangedLine: dr.FirstChangedLine,
 	}, nil
 }
