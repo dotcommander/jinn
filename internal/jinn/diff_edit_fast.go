@@ -5,47 +5,37 @@ import (
 	"strings"
 )
 
-// generateEditDiff produces a unified diff from known line ranges, avoiding the
-// O(m×n) LCS computation. It uses matchInfo from applyEdit to build the diff
-// directly. Falls back to the full LCS-based generateDiff if the ranges look
-// wrong (should never happen, but defensive).
-func generateEditDiff(oldContent, newContent, label string, info matchInfo, oldText, newText string, contextLines int) DiffResult {
-	if oldContent == newContent {
-		return DiffResult{}
+// splitDiffLines splits content into lines, trimming the trailing empty
+// element produced by a final newline.
+func splitDiffLines(content string) []string {
+	lines := strings.Split(content, "\n")
+	if len(lines) > 0 && lines[len(lines)-1] == "" && strings.HasSuffix(content, "\n") {
+		lines = lines[:len(lines)-1]
 	}
+	return lines
+}
 
-	oldLinesRaw := strings.Split(oldContent, "\n")
-	newLinesRaw := strings.Split(newContent, "\n")
+// editRegion describes a known change region for the fast-path diff builder.
+type editRegion struct {
+	start        int // 0-based index into oldLinesRaw where the change begins
+	oldCount     int // number of replaced old lines
+	newCount     int // number of inserted new lines
+	contextLines int
+}
 
-	// Trim trailing empty from final newline.
-	if len(oldLinesRaw) > 0 && oldLinesRaw[len(oldLinesRaw)-1] == "" && strings.HasSuffix(oldContent, "\n") {
-		oldLinesRaw = oldLinesRaw[:len(oldLinesRaw)-1]
-	}
-	if len(newLinesRaw) > 0 && newLinesRaw[len(newLinesRaw)-1] == "" && strings.HasSuffix(newContent, "\n") {
-		newLinesRaw = newLinesRaw[:len(newLinesRaw)-1]
-	}
+// buildEditScript constructs the diff script (leading context, removed, added,
+// trailing context) for a known change region. offset is the 0-based start of
+// the rendered span (== ctxStart).
+func buildEditScript(oldLinesRaw, newLinesRaw []string, r editRegion) (script []diffOp, offset int) {
+	start := r.start
+	oldEnd := start + r.oldCount
+	newEnd := start + r.newCount
 
-	oldCount := strings.Count(oldText, "\n") + 1
-	newCount := strings.Count(newText, "\n") + 1
-
-	// Sanity check: if info is out of bounds, fall back to LCS.
-	if info.startLine < 1 || info.endLine > len(oldLinesRaw)+1 {
-		return generateDiff(oldContent, newContent, label, contextLines)
-	}
-
-	// Build a simple diff script around the known change.
-	start := info.startLine - 1 // 0-based index into oldLinesRaw
-	oldEnd := start + oldCount
-	newEnd := start + newCount
-
-	ctxStart := start - contextLines
+	ctxStart := start - r.contextLines
 	if ctxStart < 0 {
 		ctxStart = 0
 	}
-
-	// Hunk offsets are identical for old and new: the prefix before `start` is unchanged.
-	offset := ctxStart
-	var script []diffOp
+	offset = ctxStart
 
 	// Leading context lines (same in both old and new).
 	for i := ctxStart; i < start; i++ {
@@ -64,7 +54,7 @@ func generateEditDiff(oldContent, newContent, label string, info matchInfo, oldT
 
 	// Trailing context lines (same in both, taken from new file shifted by newEnd).
 	trailingStart := oldEnd
-	trailingEnd := oldEnd + contextLines
+	trailingEnd := oldEnd + r.contextLines
 	if trailingEnd > len(oldLinesRaw) {
 		trailingEnd = len(oldLinesRaw)
 	}
@@ -74,12 +64,13 @@ func generateEditDiff(oldContent, newContent, label string, info matchInfo, oldT
 			script = append(script, diffOp{' ', newLinesRaw[newIdx]})
 		}
 	}
+	return script, offset
+}
 
-	if len(script) == 0 {
-		return DiffResult{}
-	}
-
-	// Count old/new lines in script for header.
+// renderEditScript writes the --- / +++ / @@ header and body lines for a
+// single-hunk script to b, returning the 1-based new-file line of the first
+// change, or 0 if none.
+func renderEditScript(script []diffOp, offset int, label string, b *strings.Builder) int {
 	oldScriptCount := 0
 	newScriptCount := 0
 	for _, s := range script {
@@ -91,9 +82,8 @@ func generateEditDiff(oldContent, newContent, label string, info matchInfo, oldT
 		}
 	}
 
-	var b strings.Builder
-	fmt.Fprintf(&b, "--- %s\n+++ %s\n", label, label)
-	fmt.Fprintf(&b, "@@ -%d,%d +%d,%d @@\n", offset+1, oldScriptCount, offset+1, newScriptCount)
+	fmt.Fprintf(b, "--- %s\n+++ %s\n", label, label)
+	fmt.Fprintf(b, "@@ -%d,%d +%d,%d @@\n", offset+1, oldScriptCount, offset+1, newScriptCount)
 
 	firstChangedLine := 0
 	for k, s := range script {
@@ -111,6 +101,46 @@ func generateEditDiff(oldContent, newContent, label string, info matchInfo, oldT
 			firstChangedLine = lineNum - 1
 		}
 	}
+	return firstChangedLine
+}
+
+// generateEditDiff produces a unified diff from known line ranges, avoiding the
+// O(m×n) LCS computation. It uses matchInfo from applyEdit to build the diff
+// directly. Falls back to the full LCS-based generateDiff if the ranges look
+// wrong (should never happen, but defensive).
+//
+//nolint:revive // argument-limit: signature is fixed by callers in tool_edit.go and tests; cannot collapse params without changing the public contract.
+func generateEditDiff(oldContent, newContent, label string, info matchInfo, oldText, newText string, contextLines int) DiffResult {
+	if oldContent == newContent {
+		return DiffResult{}
+	}
+
+	oldLinesRaw := splitDiffLines(oldContent)
+	newLinesRaw := splitDiffLines(newContent)
+
+	oldCount := strings.Count(oldText, "\n") + 1
+	newCount := strings.Count(newText, "\n") + 1
+
+	// Sanity check: if info is out of bounds, fall back to LCS.
+	if info.startLine < 1 || info.endLine > len(oldLinesRaw)+1 {
+		return generateDiff(oldContent, newContent, label, contextLines)
+	}
+
+	// Build a simple diff script around the known change.
+	start := info.startLine - 1 // 0-based index into oldLinesRaw
+	script, offset := buildEditScript(oldLinesRaw, newLinesRaw, editRegion{
+		start:        start,
+		oldCount:     oldCount,
+		newCount:     newCount,
+		contextLines: contextLines,
+	})
+
+	if len(script) == 0 {
+		return DiffResult{}
+	}
+
+	var b strings.Builder
+	firstChangedLine := renderEditScript(script, offset, label, &b)
 
 	return DiffResult{
 		Diff:             strings.TrimRight(b.String(), "\n"),

@@ -113,56 +113,88 @@ func computeHunks(script []diffOp, contextLines int) []hunkRange {
 	return hunks
 }
 
+// hunkBounds is the rendered span of a hunk: the [start,end) slice of the
+// script plus the 0-based old/new offsets and line counts for the @@ header.
+type hunkBounds struct {
+	start, end           int
+	oldOffset, newOffset int
+	oldCount, newCount   int
+}
+
+// computeHunkBounds expands a hunkRange by contextLines and counts old/new
+// lines before and within the rendered span.
+func computeHunkBounds(script []diffOp, h hunkRange, contextLines int) hunkBounds {
+	start := h.start - contextLines
+	if start < 0 {
+		start = 0
+	}
+	end := h.end + contextLines
+	if end > len(script) {
+		end = len(script)
+	}
+
+	bounds := hunkBounds{start: start, end: end}
+	for k := 0; k < start; k++ {
+		if script[k].tag == ' ' || script[k].tag == '-' {
+			bounds.oldOffset++
+		}
+		if script[k].tag == ' ' || script[k].tag == '+' {
+			bounds.newOffset++
+		}
+	}
+	for k := start; k < end; k++ {
+		if script[k].tag == ' ' || script[k].tag == '-' {
+			bounds.oldCount++
+		}
+		if script[k].tag == ' ' || script[k].tag == '+' {
+			bounds.newCount++
+		}
+	}
+	return bounds
+}
+
+// firstChangeNewLine returns the 1-based new-file line number of the first
+// change at or after index k within the span, or 0 if k is not a change line.
+func firstChangeNewLine(script []diffOp, bounds hunkBounds, k int) int {
+	if script[k].tag != '+' && script[k].tag != '-' {
+		return 0
+	}
+	newLine := bounds.newOffset + 1
+	for m := bounds.start; m <= k; m++ {
+		if script[m].tag == ' ' || script[m].tag == '+' {
+			newLine++
+		}
+	}
+	return newLine - 1
+}
+
+// renderHunk writes one hunk's @@ header and body lines to b, returning the
+// 1-based new-file line of the first change found, or 0 if none.
+func renderHunk(script []diffOp, bounds hunkBounds, b *strings.Builder) int {
+	fmt.Fprintf(b, "@@ -%d,%d +%d,%d @@\n", bounds.oldOffset+1, bounds.oldCount, bounds.newOffset+1, bounds.newCount)
+
+	firstChangedLine := 0
+	for k := bounds.start; k < bounds.end; k++ {
+		b.WriteByte(script[k].tag)
+		b.WriteByte(' ')
+		b.WriteString(script[k].value)
+		b.WriteByte('\n')
+		if firstChangedLine == 0 {
+			firstChangedLine = firstChangeNewLine(script, bounds, k)
+		}
+	}
+	return firstChangedLine
+}
+
 // formatHunks renders hunks from an edit script into a string builder.
 // Returns the 1-based line number of the first changed line in the new file,
 // or 0 if no changes.
 func formatHunks(script []diffOp, hunks []hunkRange, contextLines int, b *strings.Builder) int {
 	firstChangedLine := 0
 	for _, h := range hunks {
-		start := h.start - contextLines
-		if start < 0 {
-			start = 0
-		}
-		end := h.end + contextLines
-		if end > len(script) {
-			end = len(script)
-		}
-
-		oldOffset, newOffset := 0, 0
-		for k := 0; k < start; k++ {
-			if script[k].tag == ' ' || script[k].tag == '-' {
-				oldOffset++
-			}
-			if script[k].tag == ' ' || script[k].tag == '+' {
-				newOffset++
-			}
-		}
-		oldCount, newCount := 0, 0
-		for k := start; k < end; k++ {
-			if script[k].tag == ' ' || script[k].tag == '-' {
-				oldCount++
-			}
-			if script[k].tag == ' ' || script[k].tag == '+' {
-				newCount++
-			}
-		}
-		fmt.Fprintf(b, "@@ -%d,%d +%d,%d @@\n", oldOffset+1, oldCount, newOffset+1, newCount)
-
-		for k := start; k < end; k++ {
-			b.WriteByte(script[k].tag)
-			b.WriteByte(' ')
-			b.WriteString(script[k].value)
-			b.WriteByte('\n')
-			if firstChangedLine == 0 && (script[k].tag == '+' || script[k].tag == '-') {
-				// Count the new-file line number up to this point.
-				newLine := newOffset + 1
-				for m := start; m <= k; m++ {
-					if script[m].tag == ' ' || script[m].tag == '+' {
-						newLine++
-					}
-				}
-				firstChangedLine = newLine - 1
-			}
+		bounds := computeHunkBounds(script, h, contextLines)
+		if line := renderHunk(script, bounds, b); firstChangedLine == 0 {
+			firstChangedLine = line
 		}
 	}
 	return firstChangedLine

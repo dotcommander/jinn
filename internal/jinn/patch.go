@@ -61,64 +61,80 @@ func parsePatch(text string) ([]patchOperation, error) {
 
 		line := strings.TrimSpace(lines[i])
 
-		if strings.HasPrefix(line, "*** Add File: ") {
-			path := line[len("*** Add File: "):]
-			i++
-			var contentLines []string
-			for i <= lastContent {
-				next := lines[i]
-				if strings.HasPrefix(strings.TrimSpace(next), "*** ") {
-					break
-				}
-				if len(next) == 0 || next[0] != '+' {
-					return nil, fmt.Errorf("invalid add-file line %q. Add file lines must start with '+'", next)
-				}
-				contentLines = append(contentLines, next[1:])
-				i++
-			}
-			content := ""
-			if len(contentLines) > 0 {
-				content = strings.Join(contentLines, "\n") + "\n"
-			}
-			ops = append(ops, patchOperation{kind: "add", path: path, contents: content})
-			continue
-		}
-
-		if strings.HasPrefix(line, "*** Delete File: ") {
-			path := line[len("*** Delete File: "):]
-			ops = append(ops, patchOperation{kind: "delete", path: path})
-			i++
-			continue
-		}
-
-		if strings.HasPrefix(line, "*** Update File: ") {
-			path := line[len("*** Update File: "):]
-			i++
-
-			if i <= lastContent && strings.HasPrefix(strings.TrimSpace(lines[i]), "*** Move to: ") {
-				return nil, errors.New("patch move operations (*** Move to:) are not supported")
-			}
-
-			chunks, nextIdx, err := collectUpdateChunks(lines, i, lastContent)
+		switch {
+		case strings.HasPrefix(line, "*** Add File: "):
+			op, nextIdx, err := parseAddFile(lines, i, lastContent)
 			if err != nil {
-				return nil, fmt.Errorf("update %s: %w", path, err)
+				return nil, err
 			}
+			ops = append(ops, op)
 			i = nextIdx
-
-			if len(chunks) == 0 {
-				return nil, fmt.Errorf("update file hunk for path %q is empty", path)
+		case strings.HasPrefix(line, "*** Delete File: "):
+			ops = append(ops, patchOperation{kind: "delete", path: line[len("*** Delete File: "):]})
+			i++
+		case strings.HasPrefix(line, "*** Update File: "):
+			op, nextIdx, err := parseUpdateFile(lines, i, lastContent)
+			if err != nil {
+				return nil, err
 			}
-			ops = append(ops, patchOperation{kind: "update", path: path, chunks: chunks})
-			continue
+			ops = append(ops, op)
+			i = nextIdx
+		default:
+			return nil, fmt.Errorf("%q is not a valid hunk header. Valid headers: '*** Add File:', '*** Delete File:', '*** Update File:'", line)
 		}
-
-		return nil, fmt.Errorf("%q is not a valid hunk header. Valid headers: '*** Add File:', '*** Delete File:', '*** Update File:'", line)
 	}
 
 	if len(ops) == 0 {
 		return nil, errors.New("patch contains no operations")
 	}
 	return ops, nil
+}
+
+// parseAddFile parses an "*** Add File:" section starting at lines[start]
+// (which holds the header). It returns the operation and the index of the
+// first unconsumed line.
+func parseAddFile(lines []string, start, lastContent int) (patchOperation, int, error) {
+	path := strings.TrimSpace(lines[start])[len("*** Add File: "):]
+	i := start + 1
+	var contentLines []string
+	for i <= lastContent {
+		next := lines[i]
+		if strings.HasPrefix(strings.TrimSpace(next), "*** ") {
+			break
+		}
+		if len(next) == 0 || next[0] != '+' {
+			return patchOperation{}, i, fmt.Errorf("invalid add-file line %q. Add file lines must start with '+'", next)
+		}
+		contentLines = append(contentLines, next[1:])
+		i++
+	}
+	content := ""
+	if len(contentLines) > 0 {
+		content = strings.Join(contentLines, "\n") + "\n"
+	}
+	return patchOperation{kind: "add", path: path, contents: content}, i, nil
+}
+
+// parseUpdateFile parses an "*** Update File:" section starting at lines[start]
+// (which holds the header). It returns the operation and the index of the
+// first unconsumed line.
+func parseUpdateFile(lines []string, start, lastContent int) (patchOperation, int, error) {
+	path := strings.TrimSpace(lines[start])[len("*** Update File: "):]
+	i := start + 1
+
+	if i <= lastContent && strings.HasPrefix(strings.TrimSpace(lines[i]), "*** Move to: ") {
+		return patchOperation{}, i, errors.New("patch move operations (*** Move to:) are not supported")
+	}
+
+	chunks, nextIdx, err := collectUpdateChunks(lines, i, lastContent)
+	if err != nil {
+		return patchOperation{}, nextIdx, fmt.Errorf("update %s: %w", path, err)
+	}
+
+	if len(chunks) == 0 {
+		return patchOperation{}, nextIdx, fmt.Errorf("update file hunk for path %q is empty", path)
+	}
+	return patchOperation{kind: "update", path: path, chunks: chunks}, nextIdx, nil
 }
 
 // collectUpdateChunks parses consecutive update hunks for one file, starting at
@@ -146,10 +162,11 @@ func collectUpdateChunks(lines []string, start, lastContent int) ([]updateChunk,
 }
 
 // parseUpdateChunk parses a single hunk starting at lines[startIdx].
-//nolint:gocyclo // Single-pass hunk state machine: cursor advancement, the
 // parsed-count gating, and the goto-done exit are mutually coupled; extracting
 // the marker switch would require pointer-mutated slices plus a control-flow
 // return enum, which obscures the parse logic more than the branch count does.
+//
+//nolint:gocyclo // Single-pass hunk state machine: cursor advancement, the
 func parseUpdateChunk(lines []string, startIdx, lastContentLine int, allowMissingContext bool) (updateChunk, int, error) {
 	i := startIdx
 	var ctx string
@@ -264,61 +281,50 @@ func seekSequence(lines, pattern []string, start int, eof bool) int {
 	return -1
 }
 
-// deriveUpdatedContent applies update chunks to the current file content,
-// producing the new content. Returns the updated content with BOM preserved.
-func deriveUpdatedContent(filePath string, content string, chunks []updateChunk) (string, error) {
-	raw, bom := stripBom(content)
-	raw = normalizeToLF(raw)
+// lineReplacement is a resolved edit: replace oldLen lines at start with newSeg.
+type lineReplacement struct {
+	start  int
+	oldLen int
+	newSeg []string
+}
 
-	lines := strings.Split(raw, "\n")
-	// Remove trailing empty element from final newline.
-	if len(lines) > 0 && lines[len(lines)-1] == "" && strings.HasSuffix(raw, "\n") {
-		lines = lines[:len(lines)-1]
+// resolveChunk locates a single update chunk within lines (advancing past any
+// context marker) and returns the replacement plus the next search index.
+func resolveChunk(lines []string, chunk updateChunk, lineIndex int, filePath string) (lineReplacement, int, error) {
+	if chunk.context != "" {
+		ctxIdx := seekSequence(lines, []string{chunk.context}, lineIndex, false)
+		if ctxIdx < 0 {
+			return lineReplacement{}, lineIndex, fmt.Errorf("failed to find context %q in %s", chunk.context, filePath)
+		}
+		lineIndex = ctxIdx
 	}
 
-	type replacement struct {
-		start  int
-		oldLen int
-		newSeg []string
-	}
-	var replacements []replacement
-	lineIndex := 0
-
-	for _, chunk := range chunks {
-		if chunk.context != "" {
-			ctxIdx := seekSequence(lines, []string{chunk.context}, lineIndex, false)
-			if ctxIdx < 0 {
-				return "", fmt.Errorf("failed to find context %q in %s", chunk.context, filePath)
-			}
-			lineIndex = ctxIdx
-		}
-
-		if len(chunk.oldLines) == 0 {
-			replacements = append(replacements, replacement{len(lines), 0, chunk.newLines})
-			continue
-		}
-
-		pattern := chunk.oldLines
-		newSlice := chunk.newLines
-
-		found := seekSequence(lines, pattern, lineIndex, chunk.isEOF)
-		if found < 0 && len(pattern) > 0 && pattern[len(pattern)-1] == "" {
-			pattern = pattern[:len(pattern)-1]
-			if len(newSlice) > 0 && newSlice[len(newSlice)-1] == "" {
-				newSlice = newSlice[:len(newSlice)-1]
-			}
-			found = seekSequence(lines, pattern, lineIndex, chunk.isEOF)
-		}
-
-		if found < 0 {
-			return "", fmt.Errorf("failed to find expected lines in %s:\n%s", filePath, strings.Join(chunk.oldLines, "\n"))
-		}
-
-		replacements = append(replacements, replacement{found, len(pattern), newSlice})
-		lineIndex = found + len(pattern)
+	if len(chunk.oldLines) == 0 {
+		return lineReplacement{len(lines), 0, chunk.newLines}, lineIndex, nil
 	}
 
-	// Apply replacements in reverse order to preserve indices.
+	pattern := chunk.oldLines
+	newSlice := chunk.newLines
+
+	found := seekSequence(lines, pattern, lineIndex, chunk.isEOF)
+	if found < 0 && len(pattern) > 0 && pattern[len(pattern)-1] == "" {
+		pattern = pattern[:len(pattern)-1]
+		if len(newSlice) > 0 && newSlice[len(newSlice)-1] == "" {
+			newSlice = newSlice[:len(newSlice)-1]
+		}
+		found = seekSequence(lines, pattern, lineIndex, chunk.isEOF)
+	}
+
+	if found < 0 {
+		return lineReplacement{}, lineIndex, fmt.Errorf("failed to find expected lines in %s:\n%s", filePath, strings.Join(chunk.oldLines, "\n"))
+	}
+
+	return lineReplacement{found, len(pattern), newSlice}, found + len(pattern), nil
+}
+
+// applyReplacements applies replacements to lines in reverse order (to preserve
+// indices) and ensures a trailing empty element for the final newline.
+func applyReplacements(lines []string, replacements []lineReplacement) []string {
 	result := make([]string, len(lines))
 	copy(result, lines)
 	for i := len(replacements) - 1; i >= 0; i-- {
@@ -332,6 +338,33 @@ func deriveUpdatedContent(filePath string, content string, chunks []updateChunk)
 	if len(result) == 0 || result[len(result)-1] != "" {
 		result = append(result, "")
 	}
+	return result
+}
 
+// deriveUpdatedContent applies update chunks to the current file content,
+// producing the new content. Returns the updated content with BOM preserved.
+func deriveUpdatedContent(filePath string, content string, chunks []updateChunk) (string, error) {
+	raw, bom := stripBom(content)
+	raw = normalizeToLF(raw)
+
+	lines := strings.Split(raw, "\n")
+	// Remove trailing empty element from final newline.
+	if len(lines) > 0 && lines[len(lines)-1] == "" && strings.HasSuffix(raw, "\n") {
+		lines = lines[:len(lines)-1]
+	}
+
+	var replacements []lineReplacement
+	lineIndex := 0
+
+	for _, chunk := range chunks {
+		r, nextIndex, err := resolveChunk(lines, chunk, lineIndex, filePath)
+		if err != nil {
+			return "", err
+		}
+		replacements = append(replacements, r)
+		lineIndex = nextIndex
+	}
+
+	result := applyReplacements(lines, replacements)
 	return bom + strings.Join(result, "\n"), nil
 }
