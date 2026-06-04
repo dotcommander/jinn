@@ -42,12 +42,7 @@ func byteTruncateResult(content, resolved string, lines []string, startLine, tot
 	tmpPath, _ := writeTruncationRemainder(resolved, remainingStart, srcRemainder)
 
 	nextLine := startLine + len(kept)
-	hint := fmt.Sprintf("\n[Showing lines %d-%d of %d. Use start_line=%d to continue.",
-		startLine, startLine+len(kept)-1, total, nextLine)
-	if tmpPath != "" {
-		hint += fmt.Sprintf(" Remainder saved to %s.", tmpPath)
-	}
-	hint += "]"
+	hint := buildReadHint(startLine, startLine+len(kept)-1, total, nextLine, tmpPath)
 
 	return &readContentResult{
 		Content:     strings.Join(kept, "\n"),
@@ -57,6 +52,17 @@ func byteTruncateResult(content, resolved string, lines []string, startLine, tot
 		ByteHint:    hint,
 		TempFile:    tmpPath,
 	}
+}
+
+// buildReadHint formats the windowed-read continuation hint.
+func buildReadHint(startLine, endLine, total, nextLine int, tmpPath string) string {
+	hint := fmt.Sprintf("\n[Showing lines %d-%d of %d. Use start_line=%d to continue.",
+		startLine, endLine, total, nextLine)
+	if tmpPath != "" {
+		hint += fmt.Sprintf(" Remainder saved to %s.", tmpPath)
+	}
+	hint += "]"
+	return hint
 }
 
 // writeTruncationRemainder writes the lines from startLine onward to a temp file

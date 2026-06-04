@@ -42,12 +42,7 @@ func assembleReadResult(resolved string, lines []string, w readWindow, tr trunca
 	if windowTruncated {
 		// Write remainder to temp file for seamless continuation.
 		tmpPath, _ = writeTruncationRemainder(resolved, w.endLine+1, lines[w.endLine:w.total])
-		hint = fmt.Sprintf("\n[Showing lines %d-%d of %d. Use start_line=%d to continue.",
-			w.startLine, w.endLine, w.total, w.endLine+1)
-		if tmpPath != "" {
-			hint += fmt.Sprintf(" Remainder saved to %s.", tmpPath)
-		}
-		hint += "]"
+		hint = buildReadHint(w.startLine, w.endLine, w.total, w.endLine+1, tmpPath)
 	}
 
 	// Build truncation metadata for callers.
