@@ -260,15 +260,17 @@ func (e *Engine) editFile(args map[string]interface{}) (*ToolResult, error) {
 	// Compute diff for structured metadata using fast-path (known region).
 	dr := generateEditDiff(string(data), updated, path, info, oldText, newText, 3)
 
-	if dryRun, ok := args["dry_run"].(bool); ok && dryRun {
-		matchType := "exact"
-		fuzzyNormalized := ""
-		if fuzzy {
-			matchType = "fuzzy"
-			fuzzyNormalized = "whitespace_and_quotes"
-		}
-		newLineCount := strings.Count(newText, "\n") + 1
+	// Single source of truth for match metadata (shared by dry-run and live branches).
+	matchType := "exact"
+	fuzzyNormalized := ""
+	if fuzzy {
+		matchType = "fuzzy"
+		fuzzyNormalized = "whitespace_and_quotes"
+	}
+	newLineCount := strings.Count(newText, "\n") + 1
+	lastChangedLine := info.startLine + newLineCount - 1
 
+	if dryRun, ok := args["dry_run"].(bool); ok && dryRun {
 		preview := formatEditPreview(string(data), updated, path, fuzzy)
 		return &ToolResult{
 			Text: preview,
@@ -276,7 +278,7 @@ func (e *Engine) editFile(args map[string]interface{}) (*ToolResult, error) {
 				"edit": editDetails{
 					Diff:             dr.Diff,
 					FirstChangedLine: info.startLine,
-					LastChangedLine:  info.startLine + newLineCount - 1,
+					LastChangedLine:  lastChangedLine,
 					MatchType:        matchType,
 					FuzzyNormalized:  fuzzyNormalized,
 				},
@@ -302,15 +304,6 @@ func (e *Engine) editFile(args map[string]interface{}) (*ToolResult, error) {
 			result += fmt.Sprintf("\n--- context ---\n%s", formatEditContext(data, info, newLines, showContext))
 		}
 	}
-
-	matchType := "exact"
-	fuzzyNormalized := ""
-	if fuzzy {
-		matchType = "fuzzy"
-		fuzzyNormalized = "whitespace_and_quotes"
-	}
-	newLineCount := strings.Count(newText, "\n") + 1
-	lastChangedLine := info.startLine + newLineCount - 1
 
 	return &ToolResult{
 		Text: result,

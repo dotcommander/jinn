@@ -160,6 +160,18 @@ func intArg(args map[string]interface{}, key string, def int) int {
 	return def
 }
 
+// strArg extracts an optional string arg.
+func strArg(args map[string]interface{}, key string) string {
+	s, _ := args[key].(string)
+	return s
+}
+
+// boolArg extracts an optional bool arg.
+func boolArg(args map[string]interface{}, key string) bool {
+	b, _ := args[key].(bool)
+	return b
+}
+
 // ResolveVersion returns a human-readable version string, preferring
 // ldflags-injected version, then VCS revision, then module version.
 func ResolveVersion(ldVersion string) string {

@@ -37,18 +37,6 @@ func validateKind(kind string) error {
 	}
 }
 
-// strArg extracts an optional string arg.
-func strArg(args map[string]interface{}, key string) string {
-	s, _ := args[key].(string)
-	return s
-}
-
-// boolArg extracts an optional bool arg.
-func boolArg(args map[string]interface{}, key string) bool {
-	b, _ := args[key].(bool)
-	return b
-}
-
 // memoryTool implements the memory tool: save|recall|list|forget|gc.
 func (e *Engine) memoryTool(ctx context.Context, args map[string]interface{}) (string, error) {
 	action, _ := args["action"].(string)
