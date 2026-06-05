@@ -101,6 +101,10 @@ linters:
         - name: confusing-results
 
   exclusions:
+    paths:
+      - vendor
+      - generated
+      - third_party
     rules:
       # Test files: relax noisy linters
       - path: _test\.go
@@ -136,7 +140,3 @@ linters:
 issues:
   max-issues-per-linter: 20
   max-same-issues: 5
-  exclude-dirs:
-    - vendor
-    - generated
-    - third_party
