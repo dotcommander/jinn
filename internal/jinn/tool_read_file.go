@@ -61,7 +61,7 @@ func (e *Engine) readTextFile(resolved string, args map[string]interface{}) (*To
 		if result != nil {
 			checksum = result.Checksum
 		}
-		return binaryFallbackOrErr(resolved, args, err, checksum)
+		return binaryFallbackOrErr(err, checksum)
 	}
 
 	if ifChecksum, ok := args["if_checksum"].(string); ok && ifChecksum != "" {
@@ -146,7 +146,7 @@ func checksumRequested(args map[string]interface{}) bool {
 // binaryFallbackOrErr converts the binary-file ErrWithSuggestion from
 // readFileContent into a backward-compatible bracketed text result; any other
 // error is returned unchanged.
-func binaryFallbackOrErr(resolved string, args map[string]interface{}, err error, checksum string) (*ToolResult, error) {
+func binaryFallbackOrErr(err error, checksum string) (*ToolResult, error) {
 	var sErr *ErrWithSuggestion
 	if errors.As(err, &sErr) && sErr.Code == ErrCodeBinaryFile && strings.HasPrefix(sErr.Err.Error(), "binary file:") {
 		return withChecksum(textResult(fmt.Sprintf("[%s — %s]", sErr.Err.Error(), sErr.Suggestion)), checksum), nil

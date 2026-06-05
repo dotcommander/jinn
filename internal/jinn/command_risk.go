@@ -294,23 +294,30 @@ func firstSubcommandToken(verb string, tokens []string) string {
 			}
 			return ""
 		}
-		if strings.HasPrefix(tok, "-") {
+		if isSubcommandSetupToken(tok) {
 			if consumeNextArg != nil && consumeNextArg[tok] {
 				i++
 			}
 			continue
 		}
-		if isEnvAssignment(tok) {
-			continue
-		}
-		if eq := strings.IndexByte(tok, '='); eq > 0 && eq < len(tok)-1 {
-			if strings.HasPrefix(tok[:eq], "-") {
-				continue
-			}
-		}
 		return tok
 	}
 	return ""
+}
+
+// isSubcommandSetupToken reports whether tok is a flag, env assignment, or
+// flag=value pair that precedes (and is not) the subcommand verb.
+func isSubcommandSetupToken(tok string) bool {
+	if strings.HasPrefix(tok, "-") {
+		return true
+	}
+	if isEnvAssignment(tok) {
+		return true
+	}
+	if eq := strings.IndexByte(tok, '='); eq > 0 && eq < len(tok)-1 {
+		return strings.HasPrefix(tok[:eq], "-")
+	}
+	return false
 }
 
 // checkRmFlags escalates rm with force/recursive flags to dangerous.
