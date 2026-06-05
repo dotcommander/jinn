@@ -151,11 +151,12 @@ func shapeShellOutput(capture *shellOutputCapture, cmd string, exitCode, timeout
 // result envelope and meta map: the shaped/framed content, the process exit
 // code, and the separately-buffered stdout/stderr (stderr also feeds hint matching).
 type shellExecution struct {
-	content  string
-	exitCode int
-	canceled bool
-	stdout   string
-	stderr   string
+	content    string
+	exitCode   int
+	canceled   bool
+	stdout     string
+	stderr     string
+	durationMs int64
 }
 
 // executeShellCommand sets up the bash subprocess (minimal env, process group,
@@ -182,22 +183,24 @@ func executeShellCommand(ctx context.Context, cmd string, timeout int) shellExec
 	c.Stdout = io.MultiWriter(capture, outBuf)
 	c.Stderr = io.MultiWriter(capture, errBuf)
 
+	start := time.Now()
 	run := runWithTimeout(ctx, c, timeout)
 	content := shapeShellOutput(capture, cmd, run.exitCode, timeout)
 
 	return shellExecution{
-		content:  content,
-		exitCode: run.exitCode,
-		canceled: run.canceled,
-		stdout:   outBuf.String(),
-		stderr:   errBuf.String(),
+		content:    content,
+		exitCode:   run.exitCode,
+		canceled:   run.canceled,
+		stdout:     outBuf.String(),
+		stderr:     errBuf.String(),
+		durationMs: time.Since(start).Milliseconds(),
 	}
 }
 
 // runShell executes a shell command and returns (result, meta, error).
 // Meta keys: "risk" (pre-execution risk level) and "classification" (exit-code class).
 // Dangerous commands are blocked unless args["force"] is true.
-func (e *Engine) runShell(ctx context.Context, args map[string]interface{}) (string, map[string]string, error) {
+func (e *Engine) runShell(ctx context.Context, args map[string]interface{}) (string, map[string]any, error) {
 	cmd, _ := args["command"].(string)
 	if strings.TrimSpace(cmd) == "" {
 		return "", nil, &ErrWithSuggestion{
@@ -209,20 +212,25 @@ func (e *Engine) runShell(ctx context.Context, args map[string]interface{}) (str
 	// Classify before dry-run so the response envelope always includes risk metadata.
 	riskLevel, riskReason := ClassifyCommand(cmd)
 	if boolArg(args, "dry_run") {
-		return fmt.Sprintf("[dry-run] would execute: %s", cmd), map[string]string{
+		return fmt.Sprintf("[dry-run] would execute: %s", cmd), map[string]any{
 			"risk":           riskLevel.String(),
 			"classification": string(ClassSuccess),
+			"timeout_ms":     int64(intArg(args, "timeout", 30) * 1000),
+			"duration_ms":    int64(0),
+			"exit_code":      0,
 		}, nil
 	}
 
 	// Block dangerous commands unless force=true.
 	if riskLevel == RiskDangerous {
 		if force, _ := args["force"].(bool); !force {
-			return "", map[string]string{"risk": riskLevel.String()}, &ErrWithSuggestion{
-				Err:        fmt.Errorf("blocked by risk classifier: %s — %s", riskLevel, riskReason),
-				Suggestion: `pass force:true in args to override, or use a less-destructive command`,
-				Code:       ErrCodeCommandBlocked,
-			}
+			return "", map[string]any{
+					"risk": riskLevel.String(),
+				}, &ErrWithSuggestion{
+					Err:        fmt.Errorf("blocked by risk classifier: %s — %s", riskLevel, riskReason),
+					Suggestion: `pass force:true in args to override, or use a less-destructive command`,
+					Code:       ErrCodeCommandBlocked,
+				}
 		}
 	}
 
@@ -235,11 +243,14 @@ func (e *Engine) runShell(ctx context.Context, args map[string]interface{}) (str
 
 	argv0 := extractArgv0(cmd)
 	class, reason := classifyExitCode(argv0, res.exitCode)
-	meta := map[string]string{
+	meta := map[string]any{
 		"risk":           riskLevel.String(),
 		"classification": string(class),
 		"stdout":         res.stdout,
 		"stderr":         res.stderr,
+		"exit_code":      res.exitCode,
+		"timeout_ms":     int64(timeout * 1000),
+		"duration_ms":    res.durationMs,
 	}
 	if res.canceled {
 		return "", meta, &ErrWithSuggestion{

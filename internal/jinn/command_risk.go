@@ -100,6 +100,36 @@ var riskTable = map[string]riskRule{
 	"su":        {RiskDangerous, "switches user — elevated privileges"},
 }
 
+// Subcommand-level overrides for multi-purpose verbs.
+// Known subcommands replace the parent verb's base risk.
+// Conservative: only mark obvious read-only actions as safe.
+var subcommandRiskRules = map[string]map[string]riskRule{
+	"git": {
+		"status": {RiskSafe, "git status — read-only project status"},
+		"log":    {RiskSafe, "git log — read-only history"},
+		"show":   {RiskSafe, "git show — read-only object inspection"},
+		"diff":   {RiskSafe, "git diff — read-only diff output"},
+		"push":   {RiskDangerous, "git push — modifies remote refs"},
+	},
+	"go": {
+		"env":     {RiskSafe, "go env — read-only environment query"},
+		"version": {RiskSafe, "go version — read-only"},
+		"list":    {RiskSafe, "go list — read-only package query"},
+		"doc":     {RiskSafe, "go doc — read-only docs"},
+		"help":    {RiskSafe, "go help — read-only"},
+	},
+}
+
+// Flags that consume the next token as an argument for specific verbs.
+var subcommandFlagArgRules = map[string]map[string]bool{
+	"git": {
+		"-C":          true,
+		"--git-dir":   true,
+		"--work-tree": true,
+		"--namespace": true,
+	},
+}
+
 // ClassifyCommand parses cmdline (a bash-style command string) and returns
 // the highest risk level it can detect plus a human reason.
 //
@@ -194,6 +224,18 @@ func classifySegment(seg string) (RiskLevel, string) {
 // It returns the base rule unchanged when no heuristic fires.
 // Each per-verb helper returns (level, reason, true) when its heuristic fires.
 func applyArgHeuristics(verb string, tokens []string, base riskRule) (RiskLevel, string) {
+	if level, reason, fired := applySubcommandRule(verb, tokens); fired {
+		subLevel := level
+		subReason := reason
+
+		// Keep destructive git heuristics from being masked by safe defaults.
+		if level2, reason2, fired2 := checkGitForcePush(tokens); fired2 && level2 > subLevel {
+			return level2, reason2
+		}
+
+		return subLevel, subReason
+	}
+
 	var (
 		level  RiskLevel
 		reason string
@@ -213,6 +255,62 @@ func applyArgHeuristics(verb string, tokens []string, base riskRule) (RiskLevel,
 		return level, reason
 	}
 	return base.Level, base.Reason
+}
+
+// applySubcommandRule looks up a more specific risk rule for verbs that support
+// recognized subcommands (e.g. "git status" as a safe read-only command).
+func applySubcommandRule(verb string, tokens []string) (RiskLevel, string, bool) {
+	rules, ok := subcommandRiskRules[verb]
+	if !ok {
+		return 0, "", false
+	}
+
+	subcommand := firstSubcommandToken(verb, tokens)
+	if subcommand == "" {
+		return 0, "", false
+	}
+
+	rule, ok := rules[subcommand]
+	if !ok {
+		return 0, "", false
+	}
+	return rule.Level, rule.Reason, true
+}
+
+// firstSubcommandToken returns the first non-assignment token after the verb,
+// skipping flags (and their arguments where known) that are command setup.
+func firstSubcommandToken(verb string, tokens []string) string {
+	if len(tokens) < 2 {
+		return ""
+	}
+
+	consumeNextArg := subcommandFlagArgRules[verb]
+
+	for i := 1; i < len(tokens); i++ {
+		tok := tokens[i]
+		if tok == "--" {
+			if i+1 < len(tokens) {
+				return tokens[i+1]
+			}
+			return ""
+		}
+		if strings.HasPrefix(tok, "-") {
+			if consumeNextArg != nil && consumeNextArg[tok] {
+				i++
+			}
+			continue
+		}
+		if isEnvAssignment(tok) {
+			continue
+		}
+		if eq := strings.IndexByte(tok, '='); eq > 0 && eq < len(tok)-1 {
+			if strings.HasPrefix(tok[:eq], "-") {
+				continue
+			}
+		}
+		return tok
+	}
+	return ""
 }
 
 // checkRmFlags escalates rm with force/recursive flags to dangerous.

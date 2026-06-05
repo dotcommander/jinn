@@ -76,7 +76,7 @@ func textResult(s string) *ToolResult {
 //   - "classification": exit-code class set by run_shell ("success", "expected_nonzero", "error", "timeout", "signal")
 //
 // Tools that don't set meta return a nil map. Callers should treat nil as empty.
-func (e *Engine) Dispatch(ctx context.Context, tool string, args map[string]interface{}) (*ToolResult, map[string]string, error) {
+func (e *Engine) Dispatch(ctx context.Context, tool string, args map[string]interface{}) (*ToolResult, map[string]any, error) {
 	// run_shell is the only tool returning meta; handle it directly.
 	if tool == "run_shell" {
 		result, meta, err := e.runShell(ctx, args)
@@ -98,7 +98,7 @@ func (e *Engine) Dispatch(ctx context.Context, tool string, args map[string]inte
 }
 
 // dispatchListTools handles the list_tools capability/schema reporting case.
-func (e *Engine) dispatchListTools(args map[string]interface{}) (*ToolResult, map[string]string, error) {
+func (e *Engine) dispatchListTools(args map[string]interface{}) (*ToolResult, map[string]any, error) {
 	tools, err := SchemaToolNames()
 	if err != nil {
 		return nil, nil, fmt.Errorf("list tool names: %w", err)

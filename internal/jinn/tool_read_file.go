@@ -26,13 +26,6 @@ func (e *Engine) readFile(args map[string]interface{}) (*ToolResult, error) {
 		return e.readImageFile(resolved, path, detected, args)
 	}
 
-	// Conditional read: if the caller supplies if_checksum and it matches the
-	// current file's SHA-256, return a compact unchanged response (no content).
-	var res *ToolResult
-	if res, err = readUnchangedIfMatch(resolved, path, args); err != nil || res != nil {
-		return res, err
-	}
-
 	return e.readTextFile(resolved, args)
 }
 
@@ -62,13 +55,22 @@ func wrapBlockedReadErr(err error) error {
 // fallback, and assembles the final ToolResult with truncation metadata and an
 // optional checksum.
 func (e *Engine) readTextFile(resolved string, args map[string]interface{}) (*ToolResult, error) {
-	result, err := e.readFileContent(resolved, args)
+	result, err := e.readFileContent(resolved, args, shouldComputeChecksum(args))
 	if err != nil {
-		return binaryFallbackOrErr(resolved, args, err)
+		checksum := ""
+		if result != nil {
+			checksum = result.Checksum
+		}
+		return binaryFallbackOrErr(resolved, args, err, checksum)
 	}
 
-	// Compute checksum if requested (separate read; include_checksum is rare).
-	checksum := checksumIfRequested(resolved, args)
+	if ifChecksum, ok := args["if_checksum"].(string); ok && ifChecksum != "" {
+		if ifChecksum == result.Checksum {
+			return &ToolResult{
+				Text: fmt.Sprintf(`{"unchanged":true,"path":%q,"checksum":%q}`, resolved, result.Checksum),
+			}, nil
+		}
+	}
 
 	// Build final text: content + byte/window hint.
 	text := result.Content
@@ -87,10 +89,10 @@ func (e *Engine) readTextFile(resolved string, args map[string]interface{}) (*To
 					OutputLines: result.OutputLines,
 				},
 			},
-		}, checksum), nil
+		}, result.Checksum), nil
 	}
 
-	return withChecksum(textResult(text), checksum), nil
+	return withChecksum(textResult(text), result.Checksum), nil
 }
 
 // readImageFile reads an image file and returns it as a base64 image block,
@@ -129,57 +131,32 @@ func (e *Engine) readImageFile(resolved, path, detected string, args map[string]
 	}, checksum), nil
 }
 
-// readUnchangedIfMatch implements the if_checksum precondition: when the
-// caller's checksum matches the file's current SHA-256, it returns a compact
-// "unchanged" result. A nil result with nil error means the caller should
-// proceed with a normal read.
-func readUnchangedIfMatch(resolved, path string, args map[string]interface{}) (*ToolResult, error) {
-	ifCS, _ := args["if_checksum"].(string)
-	if ifCS == "" {
-		return nil, nil
+// checksumRequested returns true when any checksum-relevant input requires a file
+// read.
+func checksumRequested(args map[string]interface{}) bool {
+	if inc, ok := args["include_checksum"].(bool); ok && inc {
+		return true
 	}
-	d, rerr := os.ReadFile(resolved)
-	if rerr != nil {
-		if os.IsPermission(rerr) {
-			return nil, permissionDeniedErr(path)
-		}
-		return nil, rerr
+	if ifChecksum, _ := args["if_checksum"].(string); ifChecksum != "" {
+		return true
 	}
-	h := sha256.Sum256(d)
-	current := hex.EncodeToString(h[:])
-	if ifCS == current {
-		return &ToolResult{
-			Text: fmt.Sprintf(`{"unchanged":true,"path":%q,"checksum":%q}`, resolved, current),
-		}, nil
-	}
-	return nil, nil
+	return false
 }
 
 // binaryFallbackOrErr converts the binary-file ErrWithSuggestion from
 // readFileContent into a backward-compatible bracketed text result; any other
 // error is returned unchanged.
-func binaryFallbackOrErr(resolved string, args map[string]interface{}, err error) (*ToolResult, error) {
+func binaryFallbackOrErr(resolved string, args map[string]interface{}, err error, checksum string) (*ToolResult, error) {
 	var sErr *ErrWithSuggestion
 	if errors.As(err, &sErr) && sErr.Code == ErrCodeBinaryFile && strings.HasPrefix(sErr.Err.Error(), "binary file:") {
-		checksum := checksumIfRequested(resolved, args)
 		return withChecksum(textResult(fmt.Sprintf("[%s — %s]", sErr.Err.Error(), sErr.Suggestion)), checksum), nil
 	}
 	return nil, err
 }
 
-// checksumIfRequested re-reads the file and returns its SHA-256 hex digest when
-// include_checksum is set; otherwise the empty string. Read errors yield "".
-func checksumIfRequested(resolved string, args map[string]interface{}) string {
-	inc, _ := args["include_checksum"].(bool)
-	if !inc {
-		return ""
-	}
-	d, rerr := os.ReadFile(resolved)
-	if rerr != nil {
-		return ""
-	}
-	h := sha256.Sum256(d)
-	return hex.EncodeToString(h[:])
+// shouldComputeChecksum is a local alias for checksumRequested to keep caller intent clear.
+func shouldComputeChecksum(args map[string]interface{}) bool {
+	return checksumRequested(args)
 }
 
 // withChecksum adds a SHA-256 checksum to a ToolResult's Meta map.

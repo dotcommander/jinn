@@ -1,6 +1,8 @@
 package jinn
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
@@ -25,21 +27,22 @@ type readContentResult struct {
 	Truncated   bool   // true if content was truncated in any way
 	ByteHint    string // truncation hint appended after Content (byte or window)
 	TempFile    string // path to spilled remainder file, if any
+	Checksum    string // SHA-256 checksum of full file bytes when requested
 }
 
 // readFileContent reads and processes a file's text content. It handles stat
 // checks, reading, PDF/binary detection, line splitting, windowing, and
 // truncation. The caller is responsible for sandbox validation (checkPath),
 // image detection, checksum computation, and ToolResult wrapping.
-func (e *Engine) readFileContent(resolved string, args map[string]interface{}) (*readContentResult, error) {
+func (e *Engine) readFileContent(resolved string, args map[string]interface{}, needChecksum bool) (*readContentResult, error) {
 	info, err := statForRead(resolved)
 	if err != nil {
 		return nil, err
 	}
 
-	data, err := e.readAndClassify(resolved, info)
+	data, checksum, err := e.readAndClassify(resolved, info, needChecksum)
 	if err != nil {
-		return nil, err
+		return &readContentResult{Checksum: checksum}, err
 	}
 
 	ext := strings.ToLower(filepath.Ext(resolved))
@@ -77,6 +80,7 @@ func (e *Engine) readFileContent(resolved string, args map[string]interface{}) (
 	// Single oversized line guard: if the first source line exceeds the byte cap,
 	// the byte-cap loop below would keep nothing. Return a hint instead.
 	if res := oversizedLineResult(resolved, lines, startLine, total); res != nil {
+		res.Checksum = checksum
 		return res, nil
 	}
 
@@ -87,10 +91,13 @@ func (e *Engine) readFileContent(resolved string, args map[string]interface{}) (
 	// keep the head portion that fits and write the full remainder to a
 	// temp file so the agent can pick up where it left off.
 	if res := byteTruncateResult(tr.Content, resolved, lines, startLine, total); res != nil {
+		res.Checksum = checksum
 		return res, nil
 	}
 
-	return assembleReadResult(resolved, lines, readWindow{startLine, endLine, total}, tr), nil
+	result := assembleReadResult(resolved, lines, readWindow{startLine: startLine, endLine: endLine, total: total}, tr)
+	result.Checksum = checksum
+	return result, nil
 }
 
 // statForRead stats resolved and verifies it is a readable, regular file
@@ -151,13 +158,13 @@ func readFileForOp(path, resolved string) ([]byte, error) {
 
 // readAndClassify reads the file, records it in the tracker, and rejects PDF
 // and binary content before any text processing.
-func (e *Engine) readAndClassify(resolved string, info os.FileInfo) ([]byte, error) {
+func (e *Engine) readAndClassify(resolved string, info os.FileInfo, needChecksum bool) ([]byte, string, error) {
 	data, err := os.ReadFile(resolved)
 	if err != nil {
 		if os.IsPermission(err) {
-			return nil, permissionDeniedErr(resolved)
+			return nil, "", permissionDeniedErr(resolved)
 		}
-		return nil, err
+		return nil, "", err
 	}
 
 	e.tracker.record(resolved, info.ModTime())
@@ -171,10 +178,16 @@ func (e *Engine) readAndClassify(resolved string, info os.FileInfo) ([]byte, err
 		detected = strings.TrimSpace(detected[:i])
 	}
 
+	checksum := ""
+	if needChecksum {
+		h := sha256.Sum256(data)
+		checksum = hex.EncodeToString(h[:])
+	}
+
 	// PDF: reject before binary checks — pdftotext is a better tool.
 	// Either the content detector or the extension is sufficient evidence.
 	if detected == "application/pdf" || ext == ".pdf" {
-		return nil, &ErrWithSuggestion{
+		return nil, checksum, &ErrWithSuggestion{
 			Err:        errors.New("pdf extraction not supported in zero-dep mode"),
 			Suggestion: "convert the PDF to text first (pdftotext, pdftk, or a cloud OCR service) and read the text file",
 			Code:       ErrCodeBinaryFile,
@@ -187,11 +200,11 @@ func (e *Engine) readAndClassify(resolved string, info os.FileInfo) ([]byte, err
 	}
 	// Binary detection: return an error so the caller can decide how to present it.
 	if isBinaryContent(check) {
-		return nil, &ErrWithSuggestion{
+		return nil, checksum, &ErrWithSuggestion{
 			Err:        fmt.Errorf("binary file: %d bytes", len(data)),
 			Suggestion: "use stat_file for metadata or skip content reads",
 			Code:       ErrCodeBinaryFile,
 		}
 	}
-	return data, nil
+	return data, checksum, nil
 }

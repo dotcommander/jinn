@@ -143,7 +143,7 @@ func (e *Engine) readMultiReadEntry(path string, entry map[string]interface{}) (
 	}
 
 	// Delegate to shared content reader.
-	cr, err := e.readFileContent(resolved, perFileArgs)
+	cr, err := e.readFileContent(resolved, perFileArgs, false)
 	if err != nil {
 		mrErr := errToMultiRead(err)
 		return "", nil, &mrErr
