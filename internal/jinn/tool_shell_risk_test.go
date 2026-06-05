@@ -14,8 +14,8 @@ func TestShellRisk_SafeCommand_Allowed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if meta["risk"] != "safe" {
-		t.Errorf("expected risk=safe, got %q", meta["risk"])
+	if got := metaString(meta, "risk"); got != "safe" {
+		t.Errorf("expected risk=safe, got %q", got)
 	}
 	if !strings.Contains(result, "hello") {
 		t.Errorf("expected output, got: %s", result)
@@ -32,8 +32,8 @@ func TestShellRisk_DangerousCommand_Blocked(t *testing.T) {
 	if !strings.Contains(err.Error(), "blocked by risk classifier") {
 		t.Errorf("expected blocked message, got: %v", err)
 	}
-	if meta["risk"] != "dangerous" {
-		t.Errorf("expected risk=dangerous in meta, got %q", meta["risk"])
+	if got := metaString(meta, "risk"); got != "dangerous" {
+		t.Errorf("expected risk=dangerous in meta, got %q", got)
 	}
 	var sErr *ErrWithSuggestion
 	if !errors.As(err, &sErr) {
@@ -56,8 +56,8 @@ func TestShellRisk_DangerousCommand_Force(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error with force=true: %v", err)
 	}
-	if meta["risk"] != "dangerous" {
-		t.Errorf("expected risk=dangerous, got %q", meta["risk"])
+	if got := metaString(meta, "risk"); got != "dangerous" {
+		t.Errorf("expected risk=dangerous, got %q", got)
 	}
 	if !strings.Contains(result, "[exit: 0]") {
 		t.Errorf("expected successful exit, got: %s", result)
@@ -71,8 +71,8 @@ func TestShellRisk_MetaClassification(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if meta["classification"] != "success" {
-		t.Errorf("expected classification=success, got %q", meta["classification"])
+	if got := metaString(meta, "classification"); got != "success" {
+		t.Errorf("expected classification=success, got %q", got)
 	}
 }
 

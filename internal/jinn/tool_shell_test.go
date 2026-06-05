@@ -40,6 +40,20 @@ func TestRunShell_RequiresCommand(t *testing.T) {
 	}
 }
 
+func metaString(meta map[string]any, key string) string {
+	if meta == nil {
+		return ""
+	}
+	v, ok := meta[key]
+	if !ok {
+		return ""
+	}
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return ""
+}
+
 func TestRunShell_NilContextPanics(t *testing.T) {
 	t.Parallel()
 	e, _ := testEngine(t)
@@ -93,11 +107,11 @@ func TestRunShell_DryRun(t *testing.T) {
 	if !strings.Contains(result, "rm -rf /") {
 		t.Errorf("expected command in output, got: %s", result)
 	}
-	if meta["risk"] != RiskDangerous.String() {
-		t.Errorf("risk = %q, want %q", meta["risk"], RiskDangerous)
+	if got := metaString(meta, "risk"); got != RiskDangerous.String() {
+		t.Errorf("risk = %q, want %q", got, RiskDangerous)
 	}
-	if meta["classification"] != string(ClassSuccess) {
-		t.Errorf("classification = %q, want %q", meta["classification"], ClassSuccess)
+	if got := metaString(meta, "classification"); got != string(ClassSuccess) {
+		t.Errorf("classification = %q, want %q", got, ClassSuccess)
 	}
 }
 
@@ -224,6 +238,49 @@ func TestRunShell_LargeOutput_Truncation(t *testing.T) {
 	}
 	if !strings.Contains(result, "of 3000 lines") {
 		t.Errorf("expected 'of 3000 lines' in truncation notice, got tail:\n%s", result[len(result)-300:])
+	}
+}
+
+func TestRunShell_MetaHasTimingAndExitCode(t *testing.T) {
+	t.Parallel()
+	e, _ := testEngine(t)
+
+	_, meta, err := e.runShell(context.Background(), args("command", "echo timing"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var exitCode int
+	switch v := meta["exit_code"].(type) {
+	case int:
+		exitCode = v
+	case int64:
+		exitCode = int(v)
+	default:
+		t.Fatalf("expected exit_code as int/int64, got %T", meta["exit_code"])
+	}
+	if exitCode != 0 {
+		t.Errorf("expected exit_code=0, got %d", exitCode)
+	}
+
+	timeout, ok := meta["timeout_ms"].(int64)
+	if !ok {
+		t.Fatalf("expected timeout_ms as int64, got %T", meta["timeout_ms"])
+	}
+	if timeout != 30000 {
+		t.Errorf("expected default timeout_ms=30000, got %d", timeout)
+	}
+
+	duration, ok := meta["duration_ms"].(int64)
+	if !ok {
+		t.Fatalf("expected duration_ms as int64, got %T", meta["duration_ms"])
+	}
+	if duration < 0 {
+		t.Errorf("expected non-negative duration_ms, got %d", duration)
+	}
+
+	if got := metaString(meta, "classification"); got != string(ClassSuccess) {
+		t.Errorf("classification = %q, want %q", got, ClassSuccess)
 	}
 }
 

@@ -27,7 +27,8 @@ func TestClassifyCommand(t *testing.T) {
 		{name: "mv", cmdline: "mv old new", wantLevel: RiskCaution},
 		{name: "mkdir", cmdline: "mkdir newdir", wantLevel: RiskCaution},
 		{name: "sed -i", cmdline: "sed -i 's/x/y/' file", wantLevel: RiskCaution},
-		{name: "git status (conservative)", cmdline: "git status", wantLevel: RiskCaution},
+		{name: "git status", cmdline: "git status", wantLevel: RiskSafe},
+		{name: "git -C . status (subcommand-aware with setup flag)", cmdline: "git -C . status --short", wantLevel: RiskSafe},
 		{name: "unknown verb", cmdline: "foobar --flag", wantLevel: RiskCaution, wantSub: "unknown command"},
 		{name: "curl download", cmdline: "curl https://example.com -o out.txt", wantLevel: RiskCaution},
 		{name: "chmod 644", cmdline: "chmod 644 file", wantLevel: RiskCaution},
@@ -76,7 +77,12 @@ func TestClassifyCommand(t *testing.T) {
 
 		// --- Argument heuristics ---
 		{name: "chmod 777 escalated reason", cmdline: "chmod 777 file", wantLevel: RiskCaution, wantSub: "777"},
-		{name: "git push force", cmdline: "git push --force", wantLevel: RiskCaution, wantSub: "force push"},
+		{name: "git push force", cmdline: "git push --force", wantLevel: RiskDangerous, wantSub: "push"},
+		{name: "git push", cmdline: "git push", wantLevel: RiskDangerous},
+		{name: "go env (safe)", cmdline: "go env GOPATH", wantLevel: RiskSafe},
+		{name: "go version (safe)", cmdline: "go version", wantLevel: RiskSafe},
+		{name: "go list (safe)", cmdline: "go list ./...", wantLevel: RiskSafe},
+		{name: "go test (caution)", cmdline: "go test ./...", wantLevel: RiskCaution},
 		{name: "find -exec rm dangerous", cmdline: "find . -name '*.tmp' -exec rm {} \\;", wantLevel: RiskDangerous, wantSub: "find -exec rm"},
 	}
 
