@@ -158,12 +158,16 @@ func attachRequestID(req *jinn.Request) {
 	}
 }
 
-func errorResponse(err error, meta map[string]string, requestID string) jinn.Response {
+func errorResponse(err error, meta map[string]any, requestID string) jinn.Response {
 	risk := ""
 	classification := ""
 	if meta != nil {
-		risk = meta["risk"]
-		classification = meta["classification"]
+		if v, ok := meta["risk"].(string); ok {
+			risk = v
+		}
+		if v, ok := meta["classification"].(string); ok {
+			classification = v
+		}
 	}
 	resp := jinn.Response{
 		Error:          err.Error(),
@@ -194,7 +198,7 @@ func applyCompression(req jinn.Request, result *jinn.ToolResult) {
 	result.Meta["compression"] = compressMeta
 }
 
-func successResponse(req jinn.Request, result *jinn.ToolResult, meta map[string]string) jinn.Response {
+func successResponse(req jinn.Request, result *jinn.ToolResult, meta map[string]any) jinn.Response {
 	resp := jinn.Response{
 		OK:        true,
 		Result:    result.Text,
@@ -203,8 +207,12 @@ func successResponse(req jinn.Request, result *jinn.ToolResult, meta map[string]
 		RequestID: req.RequestID,
 	}
 	if meta != nil {
-		resp.Risk = meta["risk"]
-		resp.Classification = meta["classification"]
+		if v, ok := meta["risk"].(string); ok {
+			resp.Risk = v
+		}
+		if v, ok := meta["classification"].(string); ok {
+			resp.Classification = v
+		}
 	}
 	return resp
 }
