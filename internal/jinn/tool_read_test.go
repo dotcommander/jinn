@@ -78,6 +78,29 @@ func TestReadFile_BinaryDetection(t *testing.T) {
 	}
 }
 
+// Regression: a NUL byte past the old 512-byte peek window (but within 8192)
+// must still classify the file as binary. With the accidental 512 cap this
+// file leaked through as text.
+func TestReadFile_BinaryDetection_NULAfter512(t *testing.T) {
+	t.Parallel()
+	e, dir := testEngine(t)
+	content := make([]byte, 1100)
+	for i := range content {
+		content[i] = 'a'
+	}
+	content[1000] = 0 // NUL at byte 1000 — past 512, within 8192
+	if err := os.WriteFile(filepath.Join(dir, "bin_late.dat"), content, 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	result, err := e.readFile(args("path", "bin_late.dat"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result.Text, "binary file") {
+		t.Errorf("expected 'binary file' for NUL at byte 1000, got: %s", result.Text)
+	}
+}
+
 func TestReadFile_AlignedLineNumbers(t *testing.T) {
 	t.Parallel()
 	e, dir := testEngine(t)

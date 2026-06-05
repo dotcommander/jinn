@@ -194,9 +194,10 @@ func (e *Engine) readAndClassify(resolved string, info os.FileInfo, needChecksum
 		}
 	}
 
+	// Binary detection: NUL byte in first 8KB (matches search/replace window).
 	check := data
-	if len(check) > 512 {
-		check = check[:512]
+	if len(check) > 8192 {
+		check = check[:8192]
 	}
 	// Binary detection: return an error so the caller can decide how to present it.
 	if isBinaryContent(check) {

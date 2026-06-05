@@ -8,7 +8,7 @@ import (
 )
 
 // isBinaryContent reports whether data contains a NUL byte. Callers cap the
-// slice to the window they want to inspect (512 for read, 8192 for search/replace).
+// slice to the window they want to inspect (8192 for both read and search/replace).
 func isBinaryContent(data []byte) bool {
 	for _, b := range data {
 		if b == 0 {
