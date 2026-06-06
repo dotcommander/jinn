@@ -41,7 +41,7 @@
     "type": "function",
     "function": {
       "name": "multi_read",
-      "description": "Read multiple files in one call. Returns a JSON object with {files: {path: content}, errors: {path: {error, suggestion, error_code}}, truncation: {path: {truncated, total_lines, output_lines}}}. Supports start_line/end_line/tail per file. Failed individual reads are reported in the errors map without failing the entire call.",
+      "description": "Read 1-20 files in one call. Valid shape: {\"files\":[{\"path\":\"...\"}]}. Returns JSON with files, per-file errors, and truncation metadata. Supports start_line/end_line/tail per file.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -151,7 +151,7 @@
     "type": "function",
     "function": {
       "name": "search_files",
-      "description": "Search file contents with grep. Returns file:line:match. Default limit is 500 matches. When zero results, response includes zero_match_reason ('invalid_regex', 'path_not_found', 'path_is_empty_dir', or 'pattern_matched_nothing'). Error responses include error_code.",
+      "description": "Search file contents with grep. Required valid shape: {\"pattern\":\"...\"}. Returns file:line:match. Default limit is 500 matches. Zero results include zero_match_reason; errors include error_code.",
       "parameters": {
         "type": "object",
         "properties": {

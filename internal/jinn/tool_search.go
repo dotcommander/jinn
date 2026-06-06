@@ -22,7 +22,10 @@ func (e *Engine) searchFiles(args map[string]interface{}) (string, error) {
 }
 
 func (e *Engine) searchFilesContext(ctx context.Context, args map[string]interface{}) (string, error) {
-	pattern, _ := args["pattern"].(string)
+	pattern, err := searchFilesPattern(args)
+	if err != nil {
+		return "", err
+	}
 	searchPath := "."
 	if p, ok := args["path"].(string); ok && p != "" {
 		searchPath = p
@@ -77,6 +80,27 @@ func (e *Engine) searchFilesContext(ctx context.Context, args map[string]interfa
 		return e.formatSearchJSON(raw, req)
 	}
 	return e.formatSearchText(raw, req), nil
+}
+
+func searchFilesPattern(args map[string]interface{}) (string, error) {
+	if pattern, _ := args["pattern"].(string); pattern != "" {
+		return pattern, nil
+	}
+	if alias, _ := args["path_pattern"].(string); alias != "" {
+		return alias, nil
+	}
+	if _, ok := args["query"]; ok {
+		return "", &ErrWithSuggestion{
+			Err:        errors.New("search_files: 'pattern' is required; 'query' is not a valid field"),
+			Suggestion: `valid shape: {"pattern":"..."}`,
+			Code:       ErrCodeInvalidArgs,
+		}
+	}
+	return "", &ErrWithSuggestion{
+		Err:        errors.New("search_files: 'pattern' is required"),
+		Suggestion: `valid shape: {"pattern":"..."}`,
+		Code:       ErrCodeInvalidArgs,
+	}
 }
 
 // searchRequest carries the resolved command and shared parameters for a single

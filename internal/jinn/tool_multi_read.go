@@ -100,14 +100,14 @@ func parseMultiReadFiles(args map[string]interface{}) ([]interface{}, error) {
 	if !ok || len(rawFiles) == 0 {
 		return nil, &ErrWithSuggestion{
 			Err:        fmt.Errorf("files must be a non-empty array (1-%d items)", multiReadMaxFiles),
-			Suggestion: "provide a 'files' array with 1-20 file request objects",
+			Suggestion: `valid shape: {"files":[{"path":"..."}]} (1-20 files)`,
 			Code:       ErrCodeInvalidArgs,
 		}
 	}
 	if len(rawFiles) > multiReadMaxFiles {
 		return nil, &ErrWithSuggestion{
 			Err:        fmt.Errorf("too many files requested: %d (max %d)", len(rawFiles), multiReadMaxFiles),
-			Suggestion: fmt.Sprintf("split the request into batches of %d files", multiReadMaxFiles),
+			Suggestion: fmt.Sprintf(`valid shape: {"files":[{"path":"..."}]} (max %d files); split into batches`, multiReadMaxFiles),
 			Code:       ErrCodeInvalidArgs,
 		}
 	}
