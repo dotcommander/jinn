@@ -192,6 +192,10 @@ func TestMultiReadCap(t *testing.T) {
 	if sErr.Code != ErrCodeInvalidArgs {
 		t.Errorf("expected error_code %q, got %q", ErrCodeInvalidArgs, sErr.Code)
 	}
+	wantSuggestion := `valid shape: {"files":[{"path":"..."}]} (max 20 files); split into batches`
+	if sErr.Suggestion != wantSuggestion {
+		t.Errorf("unexpected suggestion: %q", sErr.Suggestion)
+	}
 }
 
 func TestMultiReadBinaryFile(t *testing.T) {

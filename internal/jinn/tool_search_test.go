@@ -2,6 +2,7 @@ package jinn
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -169,6 +170,40 @@ func TestSearchFiles_InvalidRegex(t *testing.T) {
 	_, err := e.searchFiles(args("pattern", "[invalid"))
 	if err == nil || !strings.Contains(err.Error(), "invalid regex") {
 		t.Errorf("expected 'invalid regex' error, got: %v", err)
+	}
+}
+
+func TestSearchFiles_MissingPatternCorrectiveShape(t *testing.T) {
+	t.Parallel()
+	e, _ := testEngine(t)
+
+	_, err := e.searchFiles(args("query", "needle"))
+	if err == nil {
+		t.Fatal("expected missing pattern error")
+	}
+	var sErr *ErrWithSuggestion
+	if !errors.As(err, &sErr) {
+		t.Fatalf("expected *ErrWithSuggestion, got %T: %v", err, err)
+	}
+	if sErr.Code != ErrCodeInvalidArgs {
+		t.Errorf("expected error_code %q, got %q", ErrCodeInvalidArgs, sErr.Code)
+	}
+	if sErr.Suggestion != `valid shape: {"pattern":"..."}` {
+		t.Errorf("unexpected suggestion: %q", sErr.Suggestion)
+	}
+}
+
+func TestSearchFiles_PathPatternAlias(t *testing.T) {
+	t.Parallel()
+	e, dir := testEngine(t)
+	writeTestFile(t, dir, "alias.txt", "needle\n")
+
+	result, err := e.searchFiles(args("path_pattern", "needle"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result, "alias.txt") {
+		t.Fatalf("expected alias search result, got: %s", result)
 	}
 }
 
