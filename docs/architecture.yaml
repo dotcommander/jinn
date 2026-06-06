@@ -71,12 +71,10 @@ phases:
             - { condition: "list_dir", label: "listDir", subtitle: "find → sort · hidden excluded" }
             - { condition: "find_files", label: "findFiles", subtitle: "fd → find · glob pattern" }
             - { condition: "list_tools", label: "listTools", subtitle: "capability metadata · inline in engine.go" }
-            - { condition: "checksum_tree", label: "checksumTree", subtitle: "SHA-256 file tree · glob filter" }
             - { condition: "detect_project", label: "detectProject", subtitle: "language · framework · build/test/lint" }
             - { condition: "memory", label: "memoryTool", subtitle: "save · recall · list · forget · per-project scope" }
             - { condition: "undo", label: "undoTool", subtitle: "list · preview · restore · clear" }
             - { condition: "lsp_query", label: "lspQuery", subtitle: "8 language servers · symbol auto-detect", wide: true }
-            - { condition: "related_context", label: "relatedContext", subtitle: "offline KB/skill/agent/command ranking" }
       - fork:
           gate: "edit match count"
           branches:
@@ -104,14 +102,12 @@ phases:
       - internal/jinn/tool_stat.go
       - internal/jinn/tool_list.go
       - internal/jinn/tool_find.go
-      - internal/jinn/tool_checksum.go
       - internal/jinn/tool_detect.go
       - internal/jinn/tool_memory.go
       - internal/jinn/tool_undo.go
       - internal/jinn/tool_lsp.go
       - internal/jinn/lsp_client.go
       - internal/jinn/lsp_actions.go
-      - internal/jinn/tool_related_context.go
       - internal/jinn/errors.go
 
   - name: Output
