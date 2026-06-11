@@ -52,6 +52,15 @@ echo '{"tool":"read_file","args":{"path":"main.go"}}' | jinn
 echo '{"tool":"run_shell","args":{"command":"go test ./..."}}' | jinn
 ```
 
+### 3. Open the Inspector
+Start a local browser UI for trying tool requests and viewing JSON responses.
+
+```bash
+jinn --inspect 127.0.0.1:8787
+```
+
+Then open `http://127.0.0.1:8787`. The inspector loads tool definitions from the live schema and runs requests through the same engine as the stdin protocol.
+
 ---
 
 ## Toolset

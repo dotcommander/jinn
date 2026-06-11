@@ -224,6 +224,7 @@ Each line in `requests.jsonl` is a complete JSON request object. jinn processes 
 | Flag | Description |
 |------|-------------|
 | `--schema` | Print all tool definitions as JSON and exit |
+| `--inspect [addr]` | Start the local browser inspector UI. Defaults to `127.0.0.1:8787` |
 | `--version` | Print the version and exit |
 | `--help`, `-h` | Print usage information and exit |
 
