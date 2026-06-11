@@ -15,7 +15,7 @@ import (
 
 var version = "dev"
 
-const helpText = `Usage: jinn [--schema | --inspect [addr] | --version | --help]
+const helpText = `Usage: jinn [--schema | --inspect [addr] | --mcp | --version | --help]
 
 Sandboxed tool executor for AI coding agents.
 Reads a JSON tool request from stdin, writes a JSON response to stdout.
@@ -23,6 +23,7 @@ Reads a JSON tool request from stdin, writes a JSON response to stdout.
 Flags:
   --schema   Print tool definitions (OpenAI function-calling format)
   --inspect  Start a local browser inspector UI (default: 127.0.0.1:8787)
+  --mcp      Start stdio MCP discovery broker mode
   --version  Print version
   --help     Print this help
 
@@ -30,6 +31,7 @@ Example:
   echo '{"tool":"read_file","args":{"path":"main.go"}}' | jinn
   jinn --schema | jq .
   jinn --inspect 127.0.0.1:8787
+  jinn --mcp
 `
 
 // Logging policy: log/slog is intentionally absent from this binary.
@@ -137,6 +139,8 @@ func handleFlag(ctx context.Context, flag string, args []string) (bool, error) {
 			addr = args[0]
 		}
 		return true, serveInspector(ctx, addr, version)
+	case "--mcp":
+		return true, runMCP(ctx, os.Stdin, os.Stdout, version)
 	default:
 		return false, nil
 	}
