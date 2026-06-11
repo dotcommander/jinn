@@ -318,6 +318,29 @@ func singularize(tok string) string {
 	return tok
 }
 
+// intentRule boosts a tool when the query signals its task intent.
+// anyOf: at least one must match; also (when non-empty): at least one must also match.
+// A tool may have multiple rows; the highest matching boost wins (max, not sum).
+type intentRule struct {
+	tool  string
+	anyOf []string
+	also  []string
+	boost int
+}
+
+var intentRules = []intentRule{
+	{"read_file", []string{"read", "open", "show", "cat"}, []string{"file", "files"}, 7},
+	{"multi_read", []string{"read", "open", "show", "cat"}, []string{"file", "files"}, 7},
+	{"search_files", []string{"search", "grep", "find text", "text"}, []string{"repo", "file", "files", "code"}, 8},
+	{"find_files", []string{"find", "locate", "glob"}, []string{"file", "filename", "path"}, 7},
+	{"apply_patch", []string{"patch", "apply patch"}, nil, 12},
+	{"run_shell", []string{"test", "build", "command", "shell", "run", "exec"}, nil, 8},
+	{"lsp_query", []string{"rename", "symbol", "definition", "reference", "diagnostic", "hover"}, nil, 10},
+	{"search_replace", []string{"replace", "regex", "rename"}, []string{"across", "bulk", "many", "repo", "files"}, 8},
+	{"list_dir", []string{"list", "directory", "dir", "folder"}, nil, 8},
+	{"stat_file", []string{"stat", "metadata", "size", "encoding"}, nil, 8},
+}
+
 func intentBoost(name string, query map[string]bool, lower string, reasons *[]string) int {
 	has := func(words ...string) bool {
 		for _, w := range words {
@@ -327,47 +350,20 @@ func intentBoost(name string, query map[string]bool, lower string, reasons *[]st
 		}
 		return false
 	}
-	boost := 0
-	switch name {
-	case "read_file", "multi_read":
-		if has("read", "open", "show", "cat") && has("file", "files") {
-			boost += 7
+	best := 0
+	for _, r := range intentRules {
+		if r.tool != name || !has(r.anyOf...) {
+			continue
 		}
-	case "search_files":
-		if has("search", "grep", "find text", "text") && has("repo", "file", "files", "code") {
-			boost += 8
+		if len(r.also) > 0 && !has(r.also...) {
+			continue
 		}
-	case "find_files":
-		if has("find", "locate", "glob") && has("file", "filename", "path") {
-			boost += 7
-		}
-	case "apply_patch":
-		if has("patch", "apply patch") {
-			boost += 12
-		}
-	case "run_shell":
-		if has("test", "build", "command", "shell", "run", "exec") {
-			boost += 8
-		}
-	case "lsp_query":
-		if has("rename", "symbol", "definition", "reference", "diagnostic", "hover") {
-			boost += 10
-		}
-	case "search_replace":
-		if has("replace", "regex", "rename") && has("across", "bulk", "many", "repo", "files") {
-			boost += 8
-		}
-	case "list_dir":
-		if has("list", "directory", "dir", "folder") {
-			boost += 8
-		}
-	case "stat_file":
-		if has("stat", "metadata", "size", "encoding") {
-			boost += 8
+		if r.boost > best {
+			best = r.boost
 		}
 	}
-	if boost > 0 {
+	if best > 0 {
 		*reasons = append(*reasons, "task intent")
 	}
-	return boost
+	return best
 }
