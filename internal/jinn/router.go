@@ -331,7 +331,7 @@ type intentRule struct {
 var intentRules = []intentRule{
 	{"read_file", []string{"read", "open", "show", "cat"}, []string{"file", "files"}, 7},
 	{"multi_read", []string{"read", "open", "show", "cat"}, []string{"file", "files"}, 7},
-	{"search_files", []string{"search", "grep", "find text", "text"}, []string{"repo", "file", "files", "code"}, 8},
+	{"search_files", []string{"search", "grep", "find text", "look", "text"}, []string{"repo", "file", "files", "code", "codebase"}, 11},
 	{"find_files", []string{"find", "locate", "glob"}, []string{"file", "filename", "path"}, 7},
 	{"apply_patch", []string{"patch", "apply patch"}, nil, 12},
 	{"run_shell", []string{"test", "build", "command", "shell", "run", "exec"}, nil, 8},
@@ -339,6 +339,13 @@ var intentRules = []intentRule{
 	{"search_replace", []string{"replace", "regex", "rename"}, []string{"across", "bulk", "many", "repo", "files"}, 8},
 	{"list_dir", []string{"list", "directory", "dir", "folder"}, nil, 8},
 	{"stat_file", []string{"stat", "metadata", "size", "encoding"}, nil, 8},
+	{"write_file", []string{"write", "save", "create"}, []string{"file"}, 7},
+	{"edit_file", []string{"edit", "fix", "modify", "typo", "correct"}, []string{"line", "text", "typo"}, 8},
+	{"edit_file", []string{"replace"}, []string{"single", "one", "exact"}, 12},
+	{"multi_edit", []string{"edit", "change", "modify"}, []string{"multiple", "many", "several", "across", "batch", "files"}, 12},
+	{"diff_files", []string{"compare", "difference", "differ"}, nil, 9},
+	{"undo", []string{"undo", "revert", "rollback", "roll back", "restore", "snapshot"}, nil, 11},
+	{"detect_project", []string{"framework", "language", "linter", "stack", "project type", "build tool"}, nil, 8},
 }
 
 func intentBoost(name string, query map[string]bool, lower string, reasons *[]string) int {
