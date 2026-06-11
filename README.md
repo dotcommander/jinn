@@ -61,6 +61,23 @@ jinn --inspect 127.0.0.1:8787
 
 Then open `http://127.0.0.1:8787`. The inspector loads tool definitions from the live schema and runs requests through the same engine as the stdin protocol.
 
+### 4. Use MCP Discovery Mode
+`jinn --mcp` starts a stdio MCP server that exposes exactly one tool: `jinn_route`.
+It is a discovery broker, not a full MCP adapter. `jinn_route` recommends the
+existing jinn tools for a task and can optionally include lean schemas only for
+the matched tools, keeping MCP context small.
+
+```json
+{
+  "mcpServers": {
+    "jinn": {
+      "command": "jinn",
+      "args": ["--mcp"]
+    }
+  }
+}
+```
+
 ---
 
 ## Toolset
