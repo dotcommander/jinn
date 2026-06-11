@@ -508,6 +508,25 @@ echo '{"tool":"list_tools","args":{}}' | jinn
 
 Use `include_schema: true` only when the calling agent needs to discover schemas at runtime.
 
+### MCP `jinn_route`
+
+`jinn --mcp` intentionally exposes only one MCP tool, `jinn_route`, to avoid
+prompt bloat from listing every jinn tool directly. It recommends existing jinn
+tools for a coding-agent task and never executes them.
+
+Input:
+
+| Name | Type | Required | Default | Description |
+|------|------|----------|---------|-------------|
+| `need` | string | Yes | — | Natural-language task or capability request |
+| `max_tools` | integer | No | `5` | Maximum recommendations, capped at `8` |
+| `include_schema` | boolean | No | `false` | Include lean schemas only for returned tools |
+| `include_mutating` | boolean | No | `true` | Allow recommendations for mutating tools |
+
+The response is a JSON text block with `query`, `matches`, and `notes`. Each
+match includes the tool name, description, rationale, mutation flag, risk
+(`read_only`, `mutating`, or `shell`), features, and optional schema.
+
 ### detect_project
 
 Detect language, framework, and build commands from project config files.

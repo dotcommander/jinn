@@ -225,8 +225,30 @@ Each line in `requests.jsonl` is a complete JSON request object. jinn processes 
 |------|-------------|
 | `--schema` | Print all tool definitions as JSON and exit |
 | `--inspect [addr]` | Start the local browser inspector UI. Defaults to `127.0.0.1:8787` |
+| `--mcp` | Start stdio MCP discovery broker mode with one recommendation-only tool, `jinn_route` |
 | `--version` | Print the version and exit |
 | `--help`, `-h` | Print usage information and exit |
+
+## MCP Discovery Broker
+
+`jinn --mcp` uses newline-delimited JSON-RPC over stdin/stdout and exposes one
+MCP tool, `jinn_route`. The MCP tool is recommendation-only: it does not execute
+`read_file`, `run_shell`, or any other jinn tool. It maps a natural-language
+need to the most relevant existing jinn tools, risk/mutation notes, and optional
+lean schemas for only the matched tools.
+
+Example client config:
+
+```json
+{
+  "mcpServers": {
+    "jinn": {
+      "command": "jinn",
+      "args": ["--mcp"]
+    }
+  }
+}
+```
 
 ## Persistent Memory
 
