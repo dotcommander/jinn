@@ -64,10 +64,9 @@ Then open `http://127.0.0.1:8787`. The inspector loads tool definitions from the
 ### 4. Use MCP Discovery Mode
 `jinn --mcp` starts a stdio MCP server that exposes exactly one tool: `jinn_route`.
 It is a discovery broker, not a full MCP adapter. `jinn_route` recommends the
-existing jinn tools for a task and can optionally include lean schemas only for
-the matched tools, keeping MCP context small. Routing is deterministic (no LLM,
-no network) and suppresses weak matches — a vague request returns guidance notes
-instead of noisy guesses.
+existing jinn tools for a task -- deterministically, with no LLM and no network --
+and can optionally include lean schemas only for the matched tools, keeping MCP
+context small.
 
 ```json
 {

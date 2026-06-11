@@ -514,39 +514,73 @@ Use `include_schema: true` only when the calling agent needs to discover schemas
 prompt bloat from listing every jinn tool directly. It recommends existing jinn
 tools for a coding-agent task and never executes them.
 
-Input:
+```bash
+printf '%s\n' \
+  '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"demo","version":"0"}}}' \
+  '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"jinn_route","arguments":{"need":"regex replace across many files","max_tools":2}}}' \
+  | jinn --mcp
+```
+
+**Parameters:**
 
 | Name | Type | Required | Default | Description |
 |------|------|----------|---------|-------------|
-| `need` | string | Yes | — | Natural-language task or capability request |
+| `need` | string | Yes | -- | Natural-language task or capability request |
 | `max_tools` | integer | No | `5` | Maximum recommendations, capped at `8` |
 | `include_schema` | boolean | No | `false` | Include lean schemas only for returned tools |
 | `include_mutating` | boolean | No | `true` | Allow recommendations for mutating tools |
 
-The response is a JSON text block with `query`, `matches`, and `notes`. Each
-match includes the tool name, description, rationale, mutation flag, risk
-(`read_only`, `mutating`, or `shell`), features, and optional schema.
+**Returns:** the tool result is one text content block containing route JSON.
+The request above returns (second match abbreviated):
 
-**How routing works.** Routing is deterministic and fully local: no LLM, no
-network, no persistent state — the same `need` always returns the same
-recommendations. Each tool is scored by lexical overlap between the `need` and
-the tool's name, description, parameter names, enum values, and feature tags,
-plus curated task-intent rules, so "revert my last change" routes to `undo`
-and "what framework and language is this codebase" routes to `detect_project`
-even though neither mentions a tool name. Matches below a relevance floor are
-dropped rather than padded: a vague `need` returns zero matches and a `notes`
-hint instead of noisy guesses.
+```json
+{
+  "query": "regex replace across many files",
+  "matches": [
+    {
+      "name": "search_replace",
+      "description": "Regex-based search and replace across files. Supports capture groups ($1, $2) in replacement, multi-file scope (glob patterns), replace-all (every occurrence), validate-first apply, and per-file atomic writes. Use when edit_file/multi_edit cannot: regex patterns, multi-file bulk changes, or replacing all occurrences. Binary files are skipped automatically.",
+      "reason": "Matched name tokens, description, parameters, features, task intent.",
+      "mutating": true,
+      "risk": "mutating",
+      "features": ["regex", "capture_groups", "multi_file", "glob_patterns", "replace_all", "dry_run", "case_insensitive", "multiline"]
+    },
+    {
+      "name": "search_files",
+      "reason": "Matched name tokens, description, parameters.",
+      "mutating": false,
+      "risk": "read_only"
+    }
+  ],
+  "notes": [
+    "Recommendation only: jinn_route does not execute tools.",
+    "Mutating recommendations can change files or persistent state; use dry_run where supported."
+  ]
+}
+```
 
-**Writing a good `need`.** Name the operation and the object — concrete verbs
-and targets route best:
+**Notes:**
 
-- "replace one exact string in a single file" → `edit_file`
-- "regex replace across many files" → `search_replace`
-- "get the size and encoding of a file without reading it" → `stat_file`
-- "do the thing" → no matches, plus a note asking for a more concrete task
+- Routing is deterministic and fully local -- no LLM, no network, no persistent
+  state. The same `need` always returns the same recommendations.
+- Tools are scored by lexical overlap between the `need` and each tool's name,
+  description, parameter names, enum values, and feature tags, plus curated
+  task-intent rules -- "revert my last change" routes to `undo` without naming
+  the tool.
+- Matches below a relevance floor are dropped rather than padded. A vague
+  `need` returns empty `matches` and a corrective note:
 
-Set `include_mutating: false` to restrict recommendations to read-only tools
-(for example while an agent is in a plan or review phase).
+  ```json
+  {"query": "do the thing", "matches": [], "notes": ["No confident route found. Try a more concrete task, object, or operation name."]}
+  ```
+
+- Phrase `need` as operation + object: "replace one exact string in a single
+  file" routes to `edit_file`; "get the size and encoding of a file without
+  reading it" routes to `stat_file`.
+- `include_mutating: false` restricts recommendations to read-only tools,
+  useful while an agent is in a plan or review phase.
+- `include_schema: true` attaches a lean schema (parameter descriptions
+  stripped) to each returned match only.
 
 ### detect_project
 

@@ -250,13 +250,10 @@ Example client config:
 }
 ```
 
-Routing is deterministic — no LLM, no network — and suppresses weak matches: a
-vague `need` ("do the thing") returns zero matches plus a guidance note instead
-of guesses. Phrase requests as operation + object: "regex replace across many
-files", "revert my last change", "what framework and language is this
-codebase". Pass `include_mutating: false` to restrict recommendations to
-read-only tools. See [tool-reference.md](tool-reference.md#mcp-jinn_route) for
-the full input table and scoring behavior.
+Routing is deterministic and local; weak matches are dropped rather than
+guessed, and a vague `need` returns a corrective note. See
+[tool-reference.md](tool-reference.md#mcp-jinn_route) for the input table, a
+captured response, and `need` phrasing guidance.
 
 ## Persistent Memory
 
