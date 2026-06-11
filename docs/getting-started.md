@@ -307,5 +307,6 @@ Supported actions: `definition`, `references`, `hover`, `symbols`, `diagnostics`
 
 ## What's Next
 
+- [Harness Integrations](harness-integrations.md) -- recipes for Claude Code, Codex CLI, and custom agent loops
 - [Tool Reference](tool-reference.md) -- every tool with full parameter tables and examples
 - [Security](security.md) -- path confinement, TOCTOU protection, atomic writes, and the risk classifier

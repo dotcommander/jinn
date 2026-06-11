@@ -22,6 +22,20 @@ Giving an LLM direct access to `os.system()` or `open()` is risky and error-pron
 
 ---
 
+## Already Using Claude Code, Codex, or Another Harness?
+
+Your harness ships its own read/edit/shell tools — jinn complements them instead of competing:
+
+- **`lsp_query`** — definition/references/hover/diagnostics as a one-shot subprocess; no MCP server to run.
+- **Risk classification without execution** — `run_shell` + `dry_run: true` powers semantic permission hooks (e.g., a Claude Code `PreToolUse` guard).
+- **`memory` with expiry** — project-scoped SQLite store with `kind`, `pin`, `expires_in`, and `gc`. Memory that doesn't grow forever.
+- **`apply_patch`** — validates and atomically applies Codex-format patches (`*** Begin Patch … *** End Patch`) outside the Codex harness.
+- **A tool layer for your fleet** — subagents and cheap worker models get the same sandboxed surface your harness gives its main model.
+
+Recipes for Claude Code, Codex CLI, and custom loops: [docs/harness-integrations.md](docs/harness-integrations.md).
+
+---
+
 ## Install
 
 ```bash
