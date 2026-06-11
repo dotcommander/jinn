@@ -80,6 +80,9 @@ func TestWriteFile_PreservesPermissions(t *testing.T) {
 	if err := os.WriteFile(p, []byte("#!/bin/sh\necho v1"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Chmod(p, 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	// Read then overwrite via writeFile.
 	_, _ = e.readFile(args("path", "script.sh"))
