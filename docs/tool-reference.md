@@ -527,6 +527,27 @@ The response is a JSON text block with `query`, `matches`, and `notes`. Each
 match includes the tool name, description, rationale, mutation flag, risk
 (`read_only`, `mutating`, or `shell`), features, and optional schema.
 
+**How routing works.** Routing is deterministic and fully local: no LLM, no
+network, no persistent state — the same `need` always returns the same
+recommendations. Each tool is scored by lexical overlap between the `need` and
+the tool's name, description, parameter names, enum values, and feature tags,
+plus curated task-intent rules, so "revert my last change" routes to `undo`
+and "what framework and language is this codebase" routes to `detect_project`
+even though neither mentions a tool name. Matches below a relevance floor are
+dropped rather than padded: a vague `need` returns zero matches and a `notes`
+hint instead of noisy guesses.
+
+**Writing a good `need`.** Name the operation and the object — concrete verbs
+and targets route best:
+
+- "replace one exact string in a single file" → `edit_file`
+- "regex replace across many files" → `search_replace`
+- "get the size and encoding of a file without reading it" → `stat_file`
+- "do the thing" → no matches, plus a note asking for a more concrete task
+
+Set `include_mutating: false` to restrict recommendations to read-only tools
+(for example while an agent is in a plan or review phase).
+
 ### detect_project
 
 Detect language, framework, and build commands from project config files.

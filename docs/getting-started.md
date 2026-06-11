@@ -250,6 +250,14 @@ Example client config:
 }
 ```
 
+Routing is deterministic — no LLM, no network — and suppresses weak matches: a
+vague `need` ("do the thing") returns zero matches plus a guidance note instead
+of guesses. Phrase requests as operation + object: "regex replace across many
+files", "revert my last change", "what framework and language is this
+codebase". Pass `include_mutating: false` to restrict recommendations to
+read-only tools. See [tool-reference.md](tool-reference.md#mcp-jinn_route) for
+the full input table and scoring behavior.
+
 ## Persistent Memory
 
 The `memory` tool stores key/value pairs across jinn invocations in a SQLite database at `~/.config/jinn/memory.db`, scoped per project:
