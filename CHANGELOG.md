@@ -7,6 +7,28 @@ and jinn adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-06-23
+
+### Added
+
+- `jinn_route` (MCP): routing corpus and intent rules covering tools that were
+  previously unrouted, so a natural-language "need" maps to the right existing
+  tools.
+- Inspector web UI (`--inspect`): a jinn-themed interface for browsing the
+  available tools and the live schema.
+
+### Fixed
+
+- Unify the binary-detection window to 8192 bytes on the read path for
+  consistent file classification.
+
+### Documentation
+
+- Harness integration guide (Claude Code, Codex, and custom agent loops) and a
+  pi-extension bridge example.
+
+## [0.9.2] - 2026-06-04
+
 ### Removed
 
 - `checksum_tree` tool: low-value for coding agents; `git` and
@@ -14,6 +36,22 @@ and jinn adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `related_context` tool and its `config.json` (`related_context.paths`)
   support: value was gated on a local KB/skills corpus that most callers
   lack. The request envelope `client` field is now inert.
+
+### Changed
+
+- Internal refactor pass: split files exceeding the 300-line tripwire (edit,
+  `multi_edit`, `read`, `search`, `search_replace`, `lsp`, `compress`, `patch`,
+  `output`) and decomposed high-cognitive-complexity functions; consolidated
+  duplicate detection/edit/read helpers.
+
+### Fixed
+
+- Escape regex metacharacters in `globToRegex`.
+- Make `lspClient.stop` idempotent via `sync.Once`.
+- Validate blob paths stay within the history store before reading.
+- Harden the LSP client against hostile or buggy language servers.
+- Set structured error `Code` on symlink-outside-sandbox and path/LSP/undo
+  errors.
 
 ## [0.9.1] - 2026-05-30
 
