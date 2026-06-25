@@ -244,7 +244,7 @@
     "type": "function",
     "function": {
       "name": "memory",
-      "description": "Persistent key/value memory for the agent. Save, recall, list, forget, or garbage-collect keys across sessions. Stored in a SQLite DB at ~/.config/jinn/memory.db (or $JINN_CONFIG_DIR/jinn/memory.db). Keys are isolated by scope: omit scope for the auto-detected project, or use scope=\"global\", \"project\", \"task\", or \"agent\".",
+      "description": "Persistent key/value memory for the agent. Save, recall, list, forget, or garbage-collect keys across sessions. Stored in a SQLite DB at ~/Library/Application Support/jinn/memory.db on macOS (~/.config/jinn/memory.db on Linux, or $JINN_CONFIG_DIR/jinn/memory.db when set). Keys are isolated by scope: omit scope for the auto-detected project, or use scope=\"global\", \"project\", \"task\", or \"agent\".",
       "parameters": {
         "type": "object",
         "properties": {

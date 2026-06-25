@@ -161,13 +161,13 @@ stores:
       - { stage: "writeFile", access: "w", note: "write → chmod → sync → rename to target" }
       - { stage: "editFile", access: "w", note: "same atomic pattern" }
       - { stage: "multiEdit", access: "w", note: "one temp per file in apply phase" }
-  - name: "~/.config/jinn/history/ (undo snapshots)"
+  - name: "~/Library/Application Support/jinn/history/ on macOS, ~/.config/jinn/history/ on Linux (undo snapshots; override base dir via $JINN_CONFIG_DIR)"
     writers:
       - { stage: "writeFile", access: "w", note: "snapshot before mutation · gzip/raw blob codec" }
       - { stage: "editFile", access: "w", note: "snapshot before mutation" }
       - { stage: "multiEdit", access: "w", note: "snapshot before mutation" }
       - { stage: "applyPatch", access: "w", note: "snapshot before mutation" }
       - { stage: "undoTool", access: "r/w", note: "list · preview · restore · clear · 50-entry/20 MiB ring" }
-  - name: "~/.config/jinn/memory.db"
+  - name: "~/Library/Application Support/jinn/memory.db on macOS, ~/.config/jinn/memory.db on Linux (override base dir via $JINN_CONFIG_DIR)"
     writers:
       - { stage: "memoryTool", access: "r/w", note: "scoped SQLite key/value store · save/recall/list/forget · per-project + global" }

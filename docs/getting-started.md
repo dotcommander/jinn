@@ -257,7 +257,7 @@ captured response, and `need` phrasing guidance.
 
 ## Persistent Memory
 
-The `memory` tool stores key/value pairs across jinn invocations in a SQLite database at `~/.config/jinn/memory.db`, scoped per project:
+The `memory` tool stores key/value pairs across jinn invocations in a SQLite database at `~/Library/Application Support/jinn/memory.db` on macOS (`~/.config/jinn/memory.db` on Linux; override base dir with `JINN_CONFIG_DIR`), scoped per project:
 
 ```bash
 # Save a value

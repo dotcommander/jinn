@@ -153,7 +153,7 @@ The repeated line collapse replaces 3 or more identical consecutive output lines
 
 ## Memory Persistence
 
-The `memory` tool stores its data in a SQLite database at `~/.config/jinn/memory.db` (or `$JINN_CONFIG_DIR/jinn/memory.db` when the env var is set). The directory is created with mode `0700`. Writes use WAL journaling with a 5s busy_timeout, providing cross-process safety so concurrent jinn invocations cannot corrupt the store. Keys are isolated per project scope.
+The `memory` tool stores its data in a SQLite database at `~/Library/Application Support/jinn/memory.db` on macOS (`~/.config/jinn/memory.db` on Linux), or at `$JINN_CONFIG_DIR/jinn/memory.db` when that env var is set. The directory is created with mode `0700`. Writes use WAL journaling with a 5s busy_timeout, providing cross-process safety so concurrent jinn invocations cannot corrupt the store. Keys are isolated per project scope.
 
 ---
 

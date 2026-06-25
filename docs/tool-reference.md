@@ -647,7 +647,7 @@ echo '{"tool":"memory","args":{"action":"save","key":"project.notes","value":"au
 
 **Notes:**
 
-- Stored in a SQLite database at `~/.config/jinn/memory.db`. Override the base dir with `JINN_CONFIG_DIR` (the DB lives at `$JINN_CONFIG_DIR/jinn/memory.db`).
+- Stored in a SQLite database at `~/Library/Application Support/jinn/memory.db` on macOS (`~/.config/jinn/memory.db` on Linux). Override the base dir with `JINN_CONFIG_DIR` (the DB lives at `$JINN_CONFIG_DIR/jinn/memory.db`).
 - Keys are scoped by `(scope, scope_id)`. With no `scope`, jinn uses `project` and auto-detects the nearest `.git` ancestor of its working directory, falling back to the working directory itself.
 - `scope: "project"` accepts an optional `scope_id` path. `scope: "task"` and `scope: "agent"` require a caller-supplied `scope_id`. `scope: "global"` cannot have a `scope_id`.
 - The DB directory is created with mode `0700`. Writes use WAL journaling with a 5s busy timeout for cross-process safety.
