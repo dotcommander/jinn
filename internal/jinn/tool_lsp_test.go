@@ -604,6 +604,7 @@ func TestFormatWorkspaceEdit_Empty(t *testing.T) {
 	}{
 		{"nil", nil},
 		{"empty changes", &lspWorkspaceEdit{Changes: map[string][]lspTextEdit{}}},
+		{"empty document changes", &lspWorkspaceEdit{DocumentChanges: []lspTextDocumentEdit{{}}}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -613,6 +614,30 @@ func TestFormatWorkspaceEdit_Empty(t *testing.T) {
 				t.Errorf("expected 'no changes', got: %q", out)
 			}
 		})
+	}
+}
+
+func TestFormatWorkspaceEdit_DocumentChanges(t *testing.T) {
+	t.Parallel()
+	var change lspTextDocumentEdit
+	change.TextDocument.URI = "file:///work/doc.go"
+	change.Edits = []lspTextEdit{
+		{Range: lspRange{Start: struct {
+			Line      int `json:"line"`
+			Character int `json:"character"`
+		}{Line: 2, Character: 0}}, NewText: "docRename"},
+	}
+	edit := &lspWorkspaceEdit{DocumentChanges: []lspTextDocumentEdit{change}}
+
+	out := formatWorkspaceEdit(edit, "/work")
+	if !strings.Contains(out, "doc.go") {
+		t.Errorf("expected documentChanges filename in output, got: %q", out)
+	}
+	if !strings.Contains(out, "line 3") {
+		t.Errorf("expected documentChanges line in output, got: %q", out)
+	}
+	if !strings.Contains(out, "docRename") {
+		t.Errorf("expected documentChanges edit text in output, got: %q", out)
 	}
 }
 
@@ -648,30 +673,19 @@ func TestUnmarshalLocations_SingleLocation(t *testing.T) {
 }
 
 // TestUnmarshalLocations_LocationLinks verifies the LocationLink branch.
-// lspLocationLink fields (targetUri, targetRange) do not map to lspLocation
-// fields (uri, range), so a []lspLocationLink payload decodes via the first
-// branch as a []lspLocation with zero-value URIs. The link branch fires only
-// when the raw JSON is an explicit LocationLink array that fails the Location
-// unmarshal — which requires crafting JSON that is not a valid []lspLocation.
-// Here we test the branch directly using raw JSON with targetUri keys, verifying
-// that unmarshalLocations returns a non-nil slice (len > 0).
 func TestUnmarshalLocations_LocationLinks(t *testing.T) {
 	t.Parallel()
-	// Raw JSON matching lspLocationLink struct tags — not decodable as lspLocation
-	// because lspLocation has no "targetUri" field and URI would be empty.
-	// The slice branch fires first (len > 0 with zero URI), so we assert on that.
 	raw := json.RawMessage(`[{"targetUri":"file:///link.go","targetRange":{"start":{"line":7,"character":3}},"targetSelectionRange":{"start":{"line":7,"character":3}}}]`)
 	locs := unmarshalLocations(raw)
-	// The first branch succeeds (JSON is a valid array), producing 1 zero-value
-	// lspLocation. We assert the slice is non-nil and has the expected length.
 	if len(locs) != 1 {
 		t.Fatalf("expected 1 location entry, got %d", len(locs))
 	}
-	// URI is empty because lspLocation has no "targetUri" mapping — this is
-	// intentional: the test documents actual parsing behavior, not idealized behavior.
-	// The LocationLink branch in unmarshalLocations is a fallback for servers that
-	// return a JSON shape that truly fails []lspLocation decode.
-	_ = locs[0]
+	if locs[0].URI != "file:///link.go" {
+		t.Errorf("expected LocationLink target URI, got %q", locs[0].URI)
+	}
+	if locs[0].Range.Start.Line != 7 || locs[0].Range.Start.Character != 3 {
+		t.Errorf("expected LocationLink target range start, got %+v", locs[0].Range.Start)
+	}
 }
 
 func TestUnmarshalLocations_InvalidJSON(t *testing.T) {

@@ -194,27 +194,16 @@ func TestLspCachedLines_ReadError(t *testing.T) {
 
 func TestUnmarshalLocations_TrueLocationLinkBranch(t *testing.T) {
 	t.Parallel()
-	// Craft JSON that IS a valid []lspLocationLink but where the first branch
-	// ([]lspLocation) produces zero-value URIs (empty strings), causing the
-	// first branch's len > 0 check to pass with empty URIs.
-	//
-	// The key insight: unmarshalLocations checks `len(locs) > 0`, not URI != "".
-	// So a []lspLocationLink payload also decodes as []lspLocation (with empty URI)
-	// and the first branch wins. The LocationLink branch (3rd) is only reachable
-	// when the raw JSON cannot be decoded as []lspLocation at all.
-	//
-	// We document the actual behavior: first branch always wins for valid arrays.
 	raw := json.RawMessage(`[{"targetUri":"file:///link.go","targetRange":{"start":{"line":2,"character":4},"end":{"line":2,"character":9}},"targetSelectionRange":{"start":{"line":2,"character":4},"end":{"line":2,"character":9}}}]`)
 	locs := unmarshalLocations(raw)
-	// First branch succeeds (valid JSON array) → 1 entry with empty URI.
 	if len(locs) != 1 {
-		t.Fatalf("expected 1 location entry (first branch), got %d", len(locs))
+		t.Fatalf("expected 1 LocationLink entry, got %d", len(locs))
 	}
-	// URI is empty because lspLocation has no "targetUri" JSON tag.
-	// This is the documented behavior — the LocationLink branch is effectively
-	// unreachable via the normal JSON-RPC path for this parser.
-	if locs[0].URI != "" {
-		t.Logf("note: URI=%q (non-empty means server returns both uri and targetUri fields)", locs[0].URI)
+	if locs[0].URI != "file:///link.go" {
+		t.Fatalf("expected LocationLink target URI, got %q", locs[0].URI)
+	}
+	if locs[0].Range.Start.Line != 2 || locs[0].Range.Start.Character != 4 {
+		t.Fatalf("expected targetRange start 2:4, got %+v", locs[0].Range.Start)
 	}
 }
 
