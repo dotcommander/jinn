@@ -44,7 +44,17 @@ type lspRange struct {
 
 // lspWorkspaceEdit is the result of textDocument/rename.
 type lspWorkspaceEdit struct {
-	Changes map[string][]lspTextEdit `json:"changes,omitempty"`
+	Changes         map[string][]lspTextEdit `json:"changes,omitempty"`
+	DocumentChanges []lspTextDocumentEdit    `json:"documentChanges,omitempty"`
+}
+
+// lspTextDocumentEdit is the text-edit subset of WorkspaceEdit.documentChanges.
+// Resource operations are intentionally ignored by the preview formatter.
+type lspTextDocumentEdit struct {
+	TextDocument struct {
+		URI string `json:"uri"`
+	} `json:"textDocument"`
+	Edits []lspTextEdit `json:"edits"`
 }
 
 // lspTextEdit is a single text replacement in a document.
@@ -140,12 +150,13 @@ func lspFormatContext(lines []string, targetLine, contextSize int) string {
 // formatWorkspaceEdit formats rename results as "file: N edit(s)" + per-edit lines.
 // workDir is used to compute relative paths for readability.
 func formatWorkspaceEdit(edit *lspWorkspaceEdit, workDir string) string {
-	if edit == nil || len(edit.Changes) == 0 {
+	fileEdits := collectWorkspaceEditFileEdits(edit)
+	if len(fileEdits) == 0 {
 		return "no changes"
 	}
 	var sb strings.Builder
 	totalEdits := 0
-	for uri, edits := range edit.Changes {
+	for uri, edits := range fileEdits {
 		path := strings.TrimPrefix(uri, "file://")
 		rel := path
 		if workDir != "" {
@@ -160,6 +171,26 @@ func formatWorkspaceEdit(edit *lspWorkspaceEdit, workDir string) string {
 		}
 		totalEdits += len(edits)
 	}
-	fmt.Fprintf(&sb, "\n%d file(s), %d edit(s) total", len(edit.Changes), totalEdits)
+	fmt.Fprintf(&sb, "\n%d file(s), %d edit(s) total", len(fileEdits), totalEdits)
 	return sb.String()
+}
+
+func collectWorkspaceEditFileEdits(edit *lspWorkspaceEdit) map[string][]lspTextEdit {
+	if edit == nil {
+		return nil
+	}
+	if len(edit.DocumentChanges) > 0 {
+		fileEdits := make(map[string][]lspTextEdit)
+		for _, change := range edit.DocumentChanges {
+			uri := change.TextDocument.URI
+			if uri == "" || len(change.Edits) == 0 {
+				continue
+			}
+			fileEdits[uri] = append(fileEdits[uri], change.Edits...)
+		}
+		if len(fileEdits) > 0 {
+			return fileEdits
+		}
+	}
+	return edit.Changes
 }

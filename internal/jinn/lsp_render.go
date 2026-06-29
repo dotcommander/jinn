@@ -11,8 +11,11 @@ import (
 // []Location, single Location, or []LocationLink (normalized to []lspLocation).
 func unmarshalLocations(raw json.RawMessage) []lspLocation {
 	var locs []lspLocation
-	if err := json.Unmarshal(raw, &locs); err == nil && len(locs) > 0 {
-		return locs
+	if err := json.Unmarshal(raw, &locs); err == nil {
+		locs = nonEmptyURILocations(locs)
+		if len(locs) > 0 {
+			return locs
+		}
 	}
 	var single lspLocation
 	if err := json.Unmarshal(raw, &single); err == nil && single.URI != "" {
@@ -29,6 +32,17 @@ func unmarshalLocations(raw json.RawMessage) []lspLocation {
 		return locs
 	}
 	return nil
+}
+
+func nonEmptyURILocations(locs []lspLocation) []lspLocation {
+	out := locs[:0]
+	for _, loc := range locs {
+		if loc.URI == "" {
+			continue
+		}
+		out = append(out, loc)
+	}
+	return out
 }
 
 // renderLocations formats a list of LSP locations as "file:line:col" headers with
