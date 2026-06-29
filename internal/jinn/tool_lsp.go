@@ -136,7 +136,10 @@ func (e *Engine) parseLSPArgs(args map[string]interface{}) (lspRequest, error) {
 	ext := strings.ToLower(filepath.Ext(absPath))
 	argv, err := lspServerForExt(ext)
 	if err != nil {
-		return lspRequest{}, err
+		if !(action == "symbols" && ext == ".go") {
+			return lspRequest{}, err
+		}
+		argv = nil
 	}
 
 	// rename requires new_name
@@ -257,6 +260,9 @@ func (e *Engine) lspQueryWithLauncher(ctx context.Context, args map[string]inter
 	}
 	if launcher == nil && req.action == "diagnostics" && req.ext == ".go" {
 		return e.goDiagnostics(ctx, req, timeout)
+	}
+	if launcher == nil && req.action == "symbols" && req.ext == ".go" && len(req.argv) == 0 {
+		return goASTSymbols(req.absPath)
 	}
 
 	type result struct {

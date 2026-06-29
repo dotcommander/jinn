@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode/utf16"
 )
 
 // lspLocation is shared by definition and references responses.
@@ -87,14 +88,14 @@ func tdPos(absPath string, line, char int) map[string]any {
 }
 
 // findSymbolColumn reads line (0-based) from absPath and returns the 0-based
-// character offset of the first occurrence of symbol. The offset is in runes
-// (UTF-16 code units are close enough for BMP; jinn targets ASCII-heavy source).
+// UTF-16 character offset of the first occurrence of symbol, matching the LSP
+// Position.character contract.
 func findSymbolColumn(absPath string, line int, symbol string) (int, error) {
 	data, err := os.ReadFile(absPath)
 	if err != nil {
 		return 0, fmt.Errorf("find symbol column: %w", err)
 	}
-	lines := strings.Split(string(data), "\n")
+	lines := splitLSPLines(string(data))
 	if line < 0 || line >= len(lines) {
 		return 0, fmt.Errorf("line %d out of range (file has %d lines)", line+1, len(lines))
 	}
@@ -103,7 +104,15 @@ func findSymbolColumn(absPath string, line int, symbol string) (int, error) {
 	if !ok {
 		return 0, fmt.Errorf("symbol %q not found on line %d", symbol, line+1)
 	}
-	return len([]rune(before)), nil
+	return utf16CodeUnitLen(before), nil
+}
+
+func splitLSPLines(source string) []string {
+	return strings.Split(strings.ReplaceAll(source, "\r\n", "\n"), "\n")
+}
+
+func utf16CodeUnitLen(s string) int {
+	return len(utf16.Encode([]rune(s)))
 }
 
 // lspCachedLines reads a file into a line slice, caching results for the

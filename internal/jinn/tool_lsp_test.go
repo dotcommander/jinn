@@ -450,8 +450,8 @@ func TestFindSymbolColumn_LineOutOfBounds(t *testing.T) {
 
 func TestFindSymbolColumn_Unicode(t *testing.T) {
 	t.Parallel()
-	// "αβγ Foo" — three 2-byte runes before the space, then "Foo".
-	// Rune offset of "Foo" is 4 (αβγ + space). Byte offset would be 7 (6 bytes + 1).
+	// "αβγ Foo" — three BMP runes before the space, then "Foo".
+	// BMP rune count and UTF-16 code-unit count are both 4 here.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "src.go")
 	if err := os.WriteFile(path, []byte("αβγ Foo\n"), 0o644); err != nil {
@@ -461,9 +461,106 @@ func TestFindSymbolColumn_Unicode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// rune count of "αβγ " is 4
 	if col != 4 {
-		t.Errorf("expected rune column 4, got %d", col)
+		t.Errorf("expected UTF-16 column 4, got %d", col)
+	}
+}
+
+func TestFindSymbolColumn_UTF16Astral(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "src.go")
+	if err := os.WriteFile(path, []byte("😀 Foo\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	col, err := findSymbolColumn(path, 0, "Foo")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if col != 3 {
+		t.Errorf("expected UTF-16 column 3, got %d", col)
+	}
+}
+
+func TestFindSymbolColumn_CRLF(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "src.go")
+	if err := os.WriteFile(path, []byte("package main\r\nfunc Foo() {}\r\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	col, err := findSymbolColumn(path, 1, "Foo")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if col != 5 {
+		t.Errorf("expected column 5, got %d", col)
+	}
+}
+
+func TestGoASTSymbols_ShallowOutline(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "src.go")
+	src := strings.Join([]string{
+		"package main",
+		"type Config struct{}",
+		"type Runner interface{ Run() }",
+		"const Answer = 42",
+		"var Value = Answer",
+		"func Top() {",
+		"  func() {}()",
+		"}",
+		"func (Config) Method() {}",
+		"",
+	}, "\n")
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := goASTSymbols(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, want := range []string{
+		"Struct Config (line 2)",
+		"Interface Runner (line 3)",
+		"Constant Answer (line 4)",
+		"Variable Value (line 5)",
+		"Function Top (line 6)",
+		"Method Method (line 9)",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("expected %q in output:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "anonymous") {
+		t.Errorf("fallback outline should stay shallow, got:\n%s", out)
+	}
+}
+
+func TestLSPGoSymbolsFallbackWithoutGopls(t *testing.T) {
+	dir := t.TempDir()
+	e := New(dir, "dev")
+	t.Setenv("PATH", "")
+	writeTestFile(t, dir, "src.go", strings.Join([]string{
+		"package main",
+		"type Config struct{}",
+		"func Top() {}",
+		"",
+	}, "\n"))
+
+	out, err := e.lspQueryWithLauncher(context.Background(), lspArgs(
+		"action", "symbols",
+		"path", "src.go",
+	), nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "Struct Config (line 2)") {
+		t.Errorf("expected Go AST struct symbol in output:\n%s", out)
+	}
+	if !strings.Contains(out, "Function Top (line 3)") {
+		t.Errorf("expected Go AST function symbol in output:\n%s", out)
 	}
 }
 
