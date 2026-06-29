@@ -1,86 +1,99 @@
-# jinn 🧞
+# jinn
 
-**Secure, atomic tool execution for AI coding agents.**
+```bash
+go install github.com/dotcommander/jinn@latest
+echo '{"tool":"read_file","args":{"path":"go.mod"}}' | jinn
+echo '{"tool":"run_shell","args":{"command":"go test ./..."}}' | jinn
+```
 
-`jinn` is a sandboxed executor that provides AI agents with a safe, standardized interface to the filesystem and shell. It handles the "boring but dangerous" parts of tool execution—path sanitization, race condition prevention, and output management—so you can focus on building your agent.
+`jinn` is a single-binary tool executor for AI coding agents. It reads one JSON
+request on stdin, runs one tool inside the current workspace, and writes one JSON
+response on stdout.
 
-- **Zero dependencies.** Built with Go's standard library only.
-- **Single binary.** Trivial to distribute and run.
-- **Security by default.** Path confinement, TOCTOU protection, and a risk classifier that blocks destructive commands.
+Use it when you need a small, deterministic tool layer for an agent loop,
+subagent, hook, CI job, or harness integration.
 
----
-
-## Why jinn?
-
-Giving an LLM direct access to `os.system()` or `open()` is risky and error-prone. `jinn` solves the common pitfalls of AI tool use:
-
-- **Path Hallucinations:** Prevents agents from traversing into `.git`, `.ssh`, or outside the workspace.
-- **Race Conditions:** Uses **TOCTOU protection** (Time-of-Check to Time-of-Use) to ensure an agent doesn't overwrite changes made by a human while the agent was "thinking."
-- **Encoding Hell:** Automatically handles CRLF/LF normalization, UTF-8 BOMs, and "fuzzy" whitespace matching when an LLM makes minor formatting mistakes.
-- **Token Bloat:** Intelligently collapses repeated output lines and truncates huge files to keep your context window lean.
-- **Atomic Reliability:** Every write is atomic (temp file + rename). No partial or corrupted files if the process is interrupted.
-
----
-
-## Already Using Claude Code, Codex, or Another Harness?
-
-Your harness ships its own read/edit/shell tools — jinn complements them instead of competing:
-
-- **`lsp_query`** — definition/references/hover/diagnostics as a one-shot subprocess; no MCP server to run.
-- **Risk classification without execution** — `run_shell` + `dry_run: true` powers semantic permission hooks (e.g., a Claude Code `PreToolUse` guard).
-- **`memory` with expiry** — project-scoped SQLite store with `kind`, `pin`, `expires_in`, and `gc`. Memory that doesn't grow forever.
-- **`apply_patch`** — validates and atomically applies Codex-format patches (`*** Begin Patch … *** End Patch`) outside the Codex harness.
-- **A tool layer for your fleet** — subagents and cheap worker models get the same sandboxed surface your harness gives its main model.
-
-Recipes for Claude Code, Codex CLI, and custom loops: [docs/harness-integrations.md](docs/harness-integrations.md).
-
----
+- **No daemon:** spawn `jinn` once per tool call.
+- **No runtime dependencies:** built with the Go standard library.
+- **Workspace confinement:** paths stay inside the working directory.
+- **Safer mutation:** file writes use atomic replacement and undo snapshots.
+- **Shell guardrails:** `run_shell` classifies commands as `safe`, `caution`, or
+  `dangerous` before execution.
 
 ## Install
 
 ```bash
 go install github.com/dotcommander/jinn@latest
+jinn --version
 ```
 
----
+Build from source:
 
-## Quick Start
+```bash
+git clone https://github.com/dotcommander/jinn.git
+cd jinn
+go build -o jinn ./cmd/jinn/
+```
 
-`jinn` follows a simple **one-shot protocol**: one JSON request on `stdin` → one JSON response on `stdout`.
+## First calls
 
-### 1. Get the Schema
-Tell your LLM what tools are available. `jinn` emits a full OpenAI-compatible function-calling schema.
+Read a file:
+
+```bash
+echo '{"tool":"read_file","args":{"path":"go.mod"}}' | jinn
+```
+
+Run a command:
+
+```bash
+echo '{"tool":"run_shell","args":{"command":"go test ./..."}}' | jinn
+```
+
+Inspect a command without running it:
+
+```bash
+echo '{"tool":"run_shell","args":{"command":"rm -rf build","dry_run":true}}' | jinn
+```
+
+The response is always a JSON envelope:
+
+```json
+{"ok": true, "result": "..."}
+```
+
+`run_shell` also includes risk and exit-code classifications:
+
+```json
+{"ok": true, "result": "[dry-run] would execute: rm -rf build", "risk": "dangerous", "classification": "success"}
+```
+
+Errors use the same envelope and often include a next-step hint:
+
+```json
+{"ok": false, "error": "file not found: missing.go", "suggestion": "verify the path exists with list_dir on the parent, or check for typos"}
+```
+
+## Discover tools
+
+Print the OpenAI-compatible function schema:
 
 ```bash
 jinn --schema
 ```
 
-### 2. Execute a Tool
-Pipe a JSON request to `jinn`.
+Ask from inside the protocol:
 
 ```bash
-# Read a file
-echo '{"tool":"read_file","args":{"path":"main.go"}}' | jinn
-
-# Run a shell command (scrubbed environment, 30s timeout)
-echo '{"tool":"run_shell","args":{"command":"go test ./..."}}' | jinn
+echo '{"tool":"list_tools","args":{"include_schema":false}}' | jinn
 ```
 
-### 3. Open the Inspector
-Start a local browser UI for trying tool requests and viewing JSON responses.
+Start the browser inspector:
 
 ```bash
 jinn --inspect 127.0.0.1:8787
 ```
 
-Then open `http://127.0.0.1:8787`. The inspector loads tool definitions from the live schema and runs requests through the same engine as the stdin protocol.
-
-### 4. Use MCP Discovery Mode
-`jinn --mcp` starts a stdio MCP server that exposes exactly one tool: `jinn_route`.
-It is a discovery broker, not a full MCP adapter. `jinn_route` recommends the
-existing jinn tools for a task -- deterministically, with no LLM and no network --
-and can optionally include lean schemas only for the matched tools, keeping MCP
-context small.
+Use MCP discovery mode:
 
 ```json
 {
@@ -92,6 +105,28 @@ context small.
   }
 }
 ```
+
+`jinn --mcp` exposes one MCP tool, `jinn_route`. It recommends matching jinn
+tools for a task and can return lean schemas for only those tools. It does not
+execute filesystem or shell operations itself.
+
+## When to use jinn with another harness
+
+Claude Code, Codex, pi, and similar tools already have native read/edit/shell
+surfaces. Add jinn for gaps that are useful as one-shot subprocesses:
+
+- `lsp_query` for definition, references, hover, diagnostics, symbols, and
+  rename previews without running an MCP server.
+- `run_shell` with `dry_run: true` for permission hooks that need semantic risk
+  classification before a shell command runs.
+- `memory` for scoped SQLite-backed facts, directives, and lessons with optional
+  expiry and garbage collection.
+- `apply_patch` to validate and atomically apply Codex-style patches outside the
+  Codex harness.
+- `list_tools` or `--schema` when a custom loop needs a compact tool surface.
+
+Recipes for Claude Code, Codex CLI, pi, and custom loops:
+[docs/harness-integrations.md](docs/harness-integrations.md).
 
 ---
 
