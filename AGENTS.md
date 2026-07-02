@@ -67,8 +67,9 @@ Every `run_shell` response includes a `classification` annotation after the outp
 | `grep`, `rg`, `ag` | Pattern not found — this is success |
 | `diff`, `cmp` | Files differ — this is the result, not an error |
 | `test`, `[` | Condition is false — this is the result |
-| `find` | No files found or minor warning |
 | `curl` exit 22 | HTTP 4xx/5xx — server responded, check the body |
+
+`find` returns 0 even when zero files match (no results ≠ failure for `find`), so a nonzero `find` exit is always classified `error`, consistent with `exitTable`.
 
 **Rule**: Always inspect `classification` before deciding whether to retry on a non-zero exit. Retrying an `expected_nonzero` result wastes turns and context.
 
