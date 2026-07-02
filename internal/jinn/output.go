@@ -7,8 +7,9 @@ import (
 
 // Default limits for tool output truncation, matching pi conventions.
 const (
-	DefaultMaxLines = 2000
-	DefaultMaxBytes = 50 * 1024 // 50KB
+	DefaultMaxLines         = 2000
+	DefaultMaxBytes         = 50 * 1024            // 50KB
+	PlanTranscriptMaxBytes  = 200 * 1024           // aggregate transcript cap for run_plan, oldest-node-first trim
 )
 
 // formatSize returns a human-readable byte size (e.g. "50.0KB").

@@ -70,6 +70,7 @@ type PlanOpResult struct {
 	Error          string `json:"error,omitempty"`
 	Classification string `json:"classification,omitempty"`
 	Risk           string `json:"risk,omitempty"`
+	ExitCode       int    `json:"exit_code,omitempty"` // process exit code for Shell ops
 }
 
 type PlanNodeResult struct {
