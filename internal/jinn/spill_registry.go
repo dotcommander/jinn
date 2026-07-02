@@ -60,30 +60,36 @@ func registerShellSpill(path string) {
 		return
 	}
 
-	reg := readSpillRegistry(regPath)
-	now := time.Now().Unix()
-	rec := spillRegistryRecord{
-		Path:      filepath.Clean(path),
-		Dev:       ident.dev,
-		Ino:       ident.ino,
-		Size:      info.Size(),
-		MTimeNano: info.ModTime().UnixNano(),
-		CreatedAt: now,
-	}
-
-	kept := make([]spillRegistryRecord, 0, len(reg.Records)+1)
-	for _, existing := range reg.Records {
-		if existing.Path == rec.Path || now-existing.CreatedAt > int64(spillRegistryMaxAge.Seconds()) {
-			continue
+	// Cross-process lock: concurrent run_shell spills must not drop each
+	// other's registrations (read-modify-write below). Reads stay lock-free —
+	// atomicWriteJSON renames atomically, so readers always see a consistent
+	// snapshot. Best-effort, like the rest of this function.
+	_ = withFileLock(regPath+".lock", func() error {
+		reg := readSpillRegistry(regPath)
+		now := time.Now().Unix()
+		rec := spillRegistryRecord{
+			Path:      filepath.Clean(path),
+			Dev:       ident.dev,
+			Ino:       ident.ino,
+			Size:      info.Size(),
+			MTimeNano: info.ModTime().UnixNano(),
+			CreatedAt: now,
 		}
-		kept = append(kept, existing)
-	}
-	kept = append(kept, rec)
-	if len(kept) > spillRegistryMaxEntries {
-		kept = kept[len(kept)-spillRegistryMaxEntries:]
-	}
-	reg.Records = kept
-	_ = atomicWriteJSON(regPath, reg)
+
+		kept := make([]spillRegistryRecord, 0, len(reg.Records)+1)
+		for _, existing := range reg.Records {
+			if existing.Path == rec.Path || now-existing.CreatedAt > int64(spillRegistryMaxAge.Seconds()) {
+				continue
+			}
+			kept = append(kept, existing)
+		}
+		kept = append(kept, rec)
+		if len(kept) > spillRegistryMaxEntries {
+			kept = kept[len(kept)-spillRegistryMaxEntries:]
+		}
+		reg.Records = kept
+		return atomicWriteJSON(regPath, reg)
+	})
 }
 
 func readSpillRegistry(path string) spillRegistryFile {
