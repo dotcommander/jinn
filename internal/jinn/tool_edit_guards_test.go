@@ -2,6 +2,8 @@ package jinn
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -96,5 +98,50 @@ func TestEditFile_RejectsNoOpEdit(t *testing.T) {
 	}
 	if !strings.Contains(s.Suggestion, "equivalent") {
 		t.Errorf("expected suggestion about equivalence, got: %s", s.Suggestion)
+	}
+}
+
+func TestEditFile_IfChecksum_Mismatch(t *testing.T) {
+	t.Parallel()
+	e, dir := testEngine(t)
+	writeTestFile(t, dir, "a.txt", "hello world\n")
+
+	stale := sha256Hex([]byte("something I read earlier"))
+	_, err := e.editFile(args("path", "a.txt", "old_text", "hello", "new_text", "goodbye", "if_checksum", stale))
+	var sErr *ErrWithSuggestion
+	if !errors.As(err, &sErr) || sErr.Code != ErrCodeStaleFile {
+		t.Fatalf("expected ErrCodeStaleFile, got: %v", err)
+	}
+	got, _ := os.ReadFile(filepath.Join(dir, "a.txt"))
+	if string(got) != "hello world\n" {
+		t.Errorf("file was modified despite stale checksum: %q", got)
+	}
+}
+
+func TestEditFile_IfChecksum_Match(t *testing.T) {
+	t.Parallel()
+	e, dir := testEngine(t)
+	writeTestFile(t, dir, "a.txt", "hello world\n")
+
+	sum := sha256Hex([]byte("hello world\n"))
+	if _, err := e.editFile(args("path", "a.txt", "old_text", "hello", "new_text", "goodbye", "if_checksum", sum)); err != nil {
+		t.Fatalf("expected edit to succeed, got: %v", err)
+	}
+	got, _ := os.ReadFile(filepath.Join(dir, "a.txt"))
+	if string(got) != "goodbye world\n" {
+		t.Errorf("content = %q, want %q", got, "goodbye world\n")
+	}
+}
+
+func TestEditFile_NoChecksum_Unchanged(t *testing.T) {
+	t.Parallel()
+	e, dir := testEngine(t)
+	writeTestFile(t, dir, "a.txt", "hello world\n")
+	if _, err := e.editFile(args("path", "a.txt", "old_text", "hello", "new_text", "hi")); err != nil {
+		t.Fatalf("plain edit should succeed: %v", err)
+	}
+	got, _ := os.ReadFile(filepath.Join(dir, "a.txt"))
+	if string(got) != "hi world\n" {
+		t.Errorf("content = %q, want %q", got, "hi world\n")
 	}
 }

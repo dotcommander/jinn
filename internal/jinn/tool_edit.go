@@ -188,6 +188,13 @@ func (e *Engine) editFile(args map[string]interface{}) (*ToolResult, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Cross-process staleness guard on the bytes just read (see
+	// verifyIfChecksum in tool_write.go). Belt-and-suspenders over old_text
+	// matching: catches a stale old_text that still matches while the
+	// surrounding content changed.
+	if err := verifyIfChecksum(args, path, data, true); err != nil {
+		return nil, err
+	}
 
 	updated, fuzzy, info, err := applyEdit(data, oldText, newText, fuzzyIndent)
 	if err != nil {
