@@ -52,7 +52,7 @@ echo '{"tool":"read_file","args":{"path":"main.go"}}' | jinn
 | `line_numbers` | bool | No | `true` | Prefix each output line with a right-justified line number. Set `false` for raw content without numbering. |
 | `truncate` | string | No | `"head"` | Strategy when windowed output exceeds the line limit: `head` (keep first N lines, paginate with `start_line`), `tail` (keep last N lines, useful for logs), `middle` (keep both ends, elide center), `none` (no line-level truncation, byte cap still applies), `smart` (brace-depth heuristic — cuts at block boundaries for C-syntax files `.go`/`.rs`/`.ts`/`.js`/`.java`/`.c`/`.cpp`/`.h`/`.hpp`/`.tsx`/`.jsx`, falls back to `head` for others). |
 | `include_checksum` | bool | No | `false` | Include a SHA-256 checksum in `meta.sha256` |
-| `if_checksum` | string | No | -- | Return `[unchanged: sha256 matches]` when the current file checksum matches this value |
+| `if_checksum` | string | No | -- | Skip the body when the current checksum matches this value (returns `{"unchanged":true,...}`). On `write_file`/`edit_file` the same arg is a stale-write guard instead. |
 
 **Notes:**
 
@@ -145,6 +145,7 @@ echo '{"tool":"write_file","args":{"path":"hello.txt","content":"Hello, world.\n
 | `path` | string | Yes | -- | File path relative to working directory |
 | `content` | string | Yes | -- | Content to write |
 | `dry_run` | bool | No | `false` | Preview the write without modifying the file |
+| `if_checksum` | string | No | -- | SHA-256 from a previous read (`meta.sha256`). Mismatch rejects the write with `error_code: "stale_file"` |
 
 **Notes:**
 
@@ -152,6 +153,7 @@ echo '{"tool":"write_file","args":{"path":"hello.txt","content":"Hello, world.\n
 - Parent directories are created automatically.
 - If the file already exists, jinn preserves its permissions.
 - If you previously read the file, jinn checks that it hasn't changed since. See [Security: TOCTOU](security.md#toctou-protection).
+- Pass `if_checksum` (from `read_file` with `include_checksum: true`) to reject the write when the file changed since your read — the in-process check above cannot cross jinn invocations; `if_checksum` can.
 - `dry_run` on an existing file returns a unified diff. On a new file, it returns `[dry-run] would create path (N bytes)`.
 
 Preview a write without applying it:
@@ -178,6 +180,7 @@ echo '{"tool":"edit_file","args":{"path":"main.go","old_text":"fmt.Println","new
 | `dry_run` | bool | No | `false` | Preview the edit as a unified diff |
 | `fuzzy_indent` | bool | No | `false` | Detect indentation at match site, re-indent `new_text` to match |
 | `show_context` | int | No | `0` | Return N surrounding lines around the edit with `*` markers on changed lines |
+| `if_checksum` | string | No | -- | SHA-256 from a previous read (`meta.sha256`). Mismatch rejects the edit with `error_code: "stale_file"` |
 
 **Notes:**
 
@@ -228,7 +231,7 @@ Each edit object:
 **Notes:**
 
 - **Validate first.** jinn validates every edit (path security, TOCTOU, match uniqueness) before applying any. If any edit fails validation, zero edits are applied.
-- **Per-file atomic writes.** Each changed file is written via temp+rename. If a write fails after validation, earlier successful file writes are not rolled back.
+- **Per-file atomic writes.** Each changed file is written via temp+rename. If a write fails after validation, earlier successful file writes are not rolled back; the error enumerates them with undo ids (`partial apply — N of M files already written: ... (undo id=...)`) so you can restore or retry the remainder.
 - `old_text` cannot be empty in any edit entry. An empty value returns an error immediately, before any edits are applied.
 - **Overlap detection.** Edits targeting overlapping byte ranges in the same file are rejected in the validation phase. The error names which two edit indices conflict. Split them into separate `multi_edit` calls or combine them into a single edit.
 - If any edit's `old_text` and `new_text` are equivalent (including after fuzzy normalization), jinn returns an error and applies nothing.
@@ -261,7 +264,7 @@ echo '{"tool":"apply_patch","args":{"patch":"*** Begin Patch\n*** Update File: m
 **Notes:**
 
 - All operations are validated before writing starts.
-- Writes are per-file atomic. If a later write fails after validation, earlier successful writes are not rolled back.
+- Writes are per-file atomic. If a later write fails after validation, earlier successful writes are not rolled back; the error enumerates them with undo ids so you can `undo` each or retry the remainder.
 - Update hunks support progressive fuzzy matching when exact context fails.
 
 ### undo
@@ -393,7 +396,7 @@ echo '{"tool":"search_replace","args":{"pattern":"oldName","replacement":"newNam
 **Notes:**
 
 - Each file is validated before any writes are applied.
-- Writes are per-file atomic. If a later write fails after validation, earlier successful writes are not rolled back.
+- Writes are per-file atomic. If a later write fails after validation, earlier successful writes are not rolled back; the error enumerates them with undo ids.
 - Binary files are skipped with structured per-file errors.
 - Empty `replacement` is valid and deletes the matched text.
 

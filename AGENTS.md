@@ -283,6 +283,25 @@ To fix: extend `old_text` to include a few surrounding lines that are unique to 
 
 ---
 
+## write_file / edit_file — if_checksum stale-write guard
+
+`write_file` and `edit_file` accept an optional `if_checksum`: the SHA-256 hex digest from a previous `read_file` response (`meta.sha256`, requested with `include_checksum: true`). When set, the mutation is rejected with `error_code: "stale_file"` if the file's current content no longer hashes to that digest. Each jinn call is a separate process, so this is the only cross-call lost-update guard — prefer it on any `write_file` whose content was derived from an earlier read.
+
+```bash
+echo '{"tool":"read_file","args":{"path":"demo.txt","include_checksum":true}}' | jinn
+echo '{"tool":"write_file","args":{"path":"demo.txt","content":"...","if_checksum":"<meta.sha256>"}}' | jinn
+```
+
+A stale write returns:
+
+```json
+{"ok":false,"error":"stale write rejected: demo.txt changed since read (checksum 7ea0d98262e9… != expected a948904f2f0f…)","suggestion":"re-read the file, then retry with the new checksum","error_code":"stale_file"}
+```
+
+On `stale_file`: re-read the file, reconcile your change with the current content, retry with the fresh checksum.
+
+---
+
 ## search_replace — regex replace across many files
 
 `search_replace` applies one regex substitution across explicit files, globs, or directories in a single call. Use it for repo-wide renames instead of looping `edit_file`.
@@ -297,7 +316,7 @@ To fix: extend `old_text` to include a few surrounding lines that are unique to 
 | `multiline` | no | `^`/`$` match line boundaries (default true) |
 | `dry_run` | no | Preview per-file diffs and match counts without writing |
 
-Every file is validated before any write; writes are per-file atomic. Binary files are skipped with structured per-file errors. Always run with `dry_run: true` first on a wide pattern to confirm the match count before committing.
+Every file is validated before any write; writes are per-file atomic. A mid-batch write failure enumerates already-written files with undo ids (same shape as apply_patch below). Binary files are skipped with structured per-file errors. Always run with `dry_run: true` first on a wide pattern to confirm the match count before committing.
 
 ```json
 {"tool": "search_replace", "args": {"pattern": "oldName", "replacement": "newName", "files": "**/*.go", "dry_run": true}}
@@ -336,7 +355,13 @@ When exact line matching fails, `apply_patch` applies progressive fuzzy matching
 
 ### Atomicity
 
-All operations are validated in a preflight pass before any file is mutated. If any operation fails validation (e.g., context not found, file doesn't exist), the entire patch is rejected. Undo snapshots are recorded for each mutated file.
+All operations are validated in a preflight pass before any file is mutated. If any operation fails validation (e.g., context not found, file doesn't exist), the entire patch is rejected. Undo snapshots are recorded for each mutated file. Validation failures reject the whole patch before any write. If a WRITE fails mid-batch (e.g. permissions, disk), already-written files stay written and the error enumerates them with their undo ids so you can `undo action="restore"` each or fix and retry the remainder:
+
+```json
+{"ok":false,"error":"apply_patch: partial apply — 1 of 3 files already written: a/f.txt (undo id=88ab3f0fbc8e1de6); update b/f.txt: open /tmp/demo/b/.blob-1351876685: permission denied","suggestion":"restore already-applied files with undo action=\"restore\" id=\u003cid\u003e, then fix the error and retry","error_code":"conflict"}
+```
+
+The same partial-apply error shape applies to `multi_edit` and `search_replace`.
 
 ### Parameters
 
@@ -350,3 +375,82 @@ All operations are validated in a preflight pass before any file is mutated. If 
 - Multi-file changes that should be validated together before per-file atomic writes (create + update + delete in one call)
 - Hunk-based edits where context lines are more natural than old_text/new_text pairs
 - Interoperability with tools that emit Codex-style patches
+
+---
+
+## run_plan — condition-gated plan tree execution
+
+`run_plan` executes a plan tree: a `PlanTree` of `PlanNode`s connected by first-match-wins conditional `PlanEdge`s. The engine walks the tree deterministically in-process, starting at `root` and stopping at a leaf node, a max-depth limit, a no-matching-edge dead end, a blocked mutation, context cancellation, or an internal error.
+
+### PlanTree and PlanNode
+
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `root` | **yes** | — | ID of the starting node |
+| `nodes` | **yes** | — | Array of `PlanNode` objects |
+| `cwd` | no | working dir | Working directory for command execution |
+| `max_depth` | no | 8 | Maximum node depth before the run stops with `stopped_reason: "max_depth"` |
+| `force` | no | `false` | Plan-level gate: required (with node-level `force`) for dangerous mutations to execute |
+
+Each `PlanNode` has:
+
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `id` | **yes** | — | Unique node identifier |
+| `commands` | **yes** | — | Array of `PlanOp` to execute |
+| `parallel` | no | `false` | Run this node's commands concurrently |
+| `mutates` | no | `false` | Enable Phase 2 mutation gating (see below) |
+| `force` | no | `false` | Node-level gate: required (with plan-level `force`) for dangerous mutations to execute |
+| `edges` | no | — | Array of `PlanEdge` — evaluated after all commands complete, against the last op's result |
+
+Each `PlanOp` sets exactly one of `shell` (a shell command string) or `tool` + `args` (a tool name and its arguments map).
+
+### Mutation gating
+
+Nodes without `mutates: true` (Phase 1) are read-only: only `safe`-risk shell commands and a fixed allowlist of tools (`read_file`, `multi_read`, `list_dir`, `search_files`, `find_files`, `stat_file`, `lsp_query`) are permitted. Any non-safe shell or non-allowlist tool is blocked.
+
+Nodes with `mutates: true` (Phase 2) allow mutations under a risk gate:
+- `caution`-risk operations execute normally.
+- `dangerous`-risk operations require **both** `plan.force: true` **and** `node.force: true`. If either is missing, the op is blocked and the run stops with `stopped_reason: "mutation_blocked"`.
+
+### Edges and conditions
+
+Edges are evaluated in order against the last op result; the **first matching edge wins**. Each `PlanEdge` has a `when` (`Condition`) and a `to` (target node `id`).
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `kind` | **yes** | Condition kind: `exitCode`, `fileExists`, `jsonPath`, `numeric`, `match`, `always` |
+| `op` | no | Comparison operator: `eq`, `ne`, `lt`, `lte`, `gt`, `gte` |
+| `value` | no | Expected value to compare against |
+| `path` | no | File path (`fileExists`) or dot-separated JSON path (`jsonPath`) |
+| `extract` | no | Regex with capture group to extract a numeric value (`numeric` kind) |
+| `regex` | no | Regex to match against the op result (`match` kind) |
+| `stream` | no | For `match` only: `stdout` or `stderr` (both test against the combined result string) |
+| `negate` | no | Invert the condition result |
+
+The `match` kind is low-confidence and cannot gate an edge targeting a `mutates: true` node — such edges are rejected at validation time.
+
+### Response
+
+The response carries the plan run result in `meta.plan_run`:
+
+| Field | Description |
+|-------|-------------|
+| `transcript` | Array of `PlanNodeResult` — per-node results: `node_id`, `depth`, `ops` (each with `ok`, `result`, `error`, `classification`, `risk`, `exit_code`) |
+| `path_taken` | Ordered list of node IDs visited |
+| `depth_reached` | Depth at which the run stopped |
+| `stopped_reason` | One of: `leaf`, `no_edge_match`, `max_depth`, `mutation_blocked`, `aborted`, `error` |
+| `edges_evaluated` | Total number of edge conditions tested |
+| `edges_matched` | Total number of conditions that matched |
+
+### Stats logging
+
+Each completed `run_plan` call fire-and-forget appends a stats row to `~/.config/jinn/stats/run_plan.jsonl` (respecting `JINN_CONFIG_DIR`). The row includes a `requests_saved` estimate, stop reason, node/op/edge counts, and a timestamp. Stats logging is best-effort — errors are swallowed and never affect the tool's result.
+
+### Example
+
+A two-node plan: the root checks for `go.mod`, and on success (exit code 0) routes to a build node.
+
+```bash
+echo '{"tool":"run_plan","args":{"plan":{"root":"check","nodes":[{"id":"check","commands":[{"shell":"test -f go.mod && echo found"}],"edges":[{"when":{"kind":"exitCode","op":"eq","value":0},"to":"build"}]},{"id":"build","commands":[{"shell":"go build ./..."}],"mutates":true}]}}}' | jinn
+```
