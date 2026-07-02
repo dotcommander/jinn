@@ -108,7 +108,7 @@ func (e *Engine) readImageFile(resolved, path, detected string, args map[string]
 
 	info, serr := os.Stat(resolved)
 	if serr == nil {
-		e.tracker.record(resolved, info.ModTime())
+		e.tracker.record(resolved, info.ModTime(), info.Size())
 	}
 
 	var checksum string

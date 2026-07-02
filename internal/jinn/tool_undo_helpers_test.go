@@ -43,6 +43,6 @@ func undoMkFile(t *testing.T, e *Engine, workDir, name, content string) string {
 	t.Helper()
 	p := filepath.Join(workDir, name)
 	writeTestFile(t, workDir, name, content)
-	e.tracker.record(p, undoFileModTime(t, p))
+	e.tracker.record(p, undoFileModTime(t, p), int64(len(content)))
 	return p
 }

@@ -73,7 +73,7 @@ func TestUndoRestore_AbsPathMismatch(t *testing.T) {
 	// Force tracker to allow it.
 	p2 := filepath.Join(workDir, "different.txt")
 	info, _ := os.Stat(p2)
-	e.tracker.record(p2, info.ModTime())
+	e.tracker.record(p2, info.ModTime(), info.Size())
 
 	_, err := e.undoTool(args("action", "restore", "id", id))
 	if err == nil {

@@ -43,7 +43,7 @@ func (e *Engine) atomicWriteFile(resolved, content string) error {
 
 	// Record the post-write mtime so the staleness tracker stays consistent.
 	if info, err := os.Stat(resolved); err == nil {
-		e.tracker.record(resolved, info.ModTime())
+		e.tracker.record(resolved, info.ModTime(), info.Size())
 	}
 	return nil
 }

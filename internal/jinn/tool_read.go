@@ -167,7 +167,7 @@ func (e *Engine) readAndClassify(resolved string, info os.FileInfo, needChecksum
 		return nil, "", err
 	}
 
-	e.tracker.record(resolved, info.ModTime())
+	e.tracker.record(resolved, info.ModTime(), info.Size())
 
 	ext := strings.ToLower(filepath.Ext(resolved))
 

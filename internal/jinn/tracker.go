@@ -7,20 +7,29 @@ import (
 	"time"
 )
 
+// fileStamp is the recorded identity of a file at read/write time. Size is
+// tracked alongside mtime because mtime has filesystem-tick granularity: a
+// rewrite landing in the same tick as the recorded read is invisible to the
+// mtime check alone.
+type fileStamp struct {
+	mtime time.Time
+	size  int64
+}
+
 type fileTracker struct {
-	times map[string]time.Time
+	stamps map[string]fileStamp
 }
 
 func newFileTracker() *fileTracker {
-	return &fileTracker{times: make(map[string]time.Time)}
+	return &fileTracker{stamps: make(map[string]fileStamp)}
 }
 
-func (ft *fileTracker) record(path string, t time.Time) {
-	ft.times[path] = t
+func (ft *fileTracker) record(path string, mtime time.Time, size int64) {
+	ft.stamps[path] = fileStamp{mtime: mtime, size: size}
 }
 
 func (ft *fileTracker) checkStale(resolved string) error {
-	readTime, tracked := ft.times[resolved]
+	rec, tracked := ft.stamps[resolved]
 	if !tracked {
 		return nil // new file or never read — allow
 	}
@@ -28,8 +37,8 @@ func (ft *fileTracker) checkStale(resolved string) error {
 	if err != nil {
 		return nil //nolint:nilerr // file removed since read — allow write to recreate
 	}
-	if info.ModTime().After(readTime) {
-		return fmt.Errorf("file modified since last read (mtime changed). Re-read before writing: %s",
+	if info.ModTime().After(rec.mtime) || info.Size() != rec.size {
+		return fmt.Errorf("file modified since last read (mtime or size changed). Re-read before writing: %s",
 			filepath.Base(resolved))
 	}
 	return nil
