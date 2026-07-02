@@ -170,7 +170,7 @@ func (e *Engine) runMutatingOp(ctx context.Context, node *PlanNode, planForce bo
 	}
 
 	if op.Shell != "" {
-		text, meta, err := e.runShell(ctx, map[string]interface{}{"command": op.Shell})
+		text, meta, err := e.runShell(ctx, map[string]interface{}{"command": op.Shell, "force": risk == RiskDangerous})
 		res := PlanOpResult{OK: err == nil, Result: text}
 		if err != nil {
 			res.Error = err.Error()
