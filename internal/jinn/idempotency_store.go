@@ -100,6 +100,11 @@ func replayIdempotent(ctx context.Context, db *sql.DB, agent, requestID string, 
 	).Scan(&resultJSON); selErr != nil {
 		return nil, fmt.Errorf("load idempotency row: %w", selErr)
 	}
+	// Defensive only: INSERT+fn+UPDATE+COMMIT run in ONE transaction, so a
+	// crash rolls the claim row back and a committed empty result_json cannot
+	// occur under the current design. Keep the guard — it becomes load-bearing
+	// the moment anyone splits the claim and the completion into separate
+	// transactions. Do not "simplify" it away.
 	if strings.TrimSpace(resultJSON) == "" {
 		// Prior attempt crashed before completing.
 		return nil, &ErrWithSuggestion{
