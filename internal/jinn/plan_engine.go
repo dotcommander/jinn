@@ -369,14 +369,14 @@ func (e *Engine) runPlanTree(ctx context.Context, plan *PlanTree) (*PlanRunResul
 		node := byID[currentID]
 		pathTaken = append(pathTaken, currentID)
 
-		if node.Mutates {
-			transcript = append(transcript, PlanNodeResult{NodeID: currentID, Depth: depth})
-			return &PlanRunResult{Transcript: transcript, PathTaken: pathTaken, DepthReached: depth, StoppedReason: StopMutationBlocked, EdgesEvaluated: edgesEvaluated, EdgesMatched: edgesMatched}, nil
-		}
-
 		nodeResult := PlanNodeResult{NodeID: currentID, Depth: depth}
 		var lastOpResult PlanOpResult
 		blocked := false
+
+		runOp := func(op PlanOp) (PlanOpResult, bool) { return e.runPlanOp(ctx, op) }
+		if node.Mutates {
+			runOp = func(op PlanOp) (PlanOpResult, bool) { return e.runMutatingOp(ctx, node, plan.Force, op) }
+		}
 
 		if node.Parallel && len(node.Commands) > 1 {
 			ops := make([]PlanOpResult, len(node.Commands))
@@ -386,7 +386,7 @@ func (e *Engine) runPlanTree(ctx context.Context, plan *PlanTree) (*PlanRunResul
 				wg.Add(1)
 				go func(i int, op PlanOp) {
 					defer wg.Done()
-					ops[i], blockedFlags[i] = e.runPlanOp(ctx, op)
+					ops[i], blockedFlags[i] = runOp(op)
 				}(i, op)
 			}
 			wg.Wait()
@@ -400,7 +400,7 @@ func (e *Engine) runPlanTree(ctx context.Context, plan *PlanTree) (*PlanRunResul
 			}
 		} else {
 			for _, op := range node.Commands {
-				opRes, isBlocked := e.runPlanOp(ctx, op)
+				opRes, isBlocked := runOp(op)
 				nodeResult.Ops = append(nodeResult.Ops, opRes)
 				lastOpResult = opRes
 				if isBlocked {

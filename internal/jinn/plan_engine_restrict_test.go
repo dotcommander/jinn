@@ -10,10 +10,10 @@ import (
 func TestRunPlanPhase1Restrictions(t *testing.T) {
 	t.Parallel()
 
-	t.Run("mutates_node_hard_stop", func(t *testing.T) {
+	t.Run("mutates_node_dangerous_blocked", func(t *testing.T) {
 		t.Parallel()
 		e, dir := testEngine(t)
-		targetPath := filepath.Join(dir, "should_not_exist.txt")
+		targetPath := filepath.Join(dir, "should_not_exist")
 		plan := &PlanTree{
 			Root: "n1",
 			Nodes: []PlanNode{
@@ -21,7 +21,7 @@ func TestRunPlanPhase1Restrictions(t *testing.T) {
 					ID:      "n1",
 					Mutates: true,
 					Commands: []PlanOp{
-						{Shell: "touch " + targetPath},
+						{Shell: "rm -rf " + targetPath},
 					},
 				},
 			},
@@ -33,9 +33,11 @@ func TestRunPlanPhase1Restrictions(t *testing.T) {
 		if result.StoppedReason != StopMutationBlocked {
 			t.Errorf("expected StoppedReason %q, got %q", StopMutationBlocked, result.StoppedReason)
 		}
-		_, statErr := os.Stat(targetPath)
-		if !os.IsNotExist(statErr) {
-			t.Errorf("expected file %q to not exist, but it does", targetPath)
+		if len(result.Transcript) < 1 || len(result.Transcript[0].Ops) < 1 {
+			t.Fatalf("expected at least one transcript entry with one op")
+		}
+		if result.Transcript[0].Ops[0].OK {
+			t.Error("expected op OK == false for dangerous mutation without force flags")
 		}
 	})
 
