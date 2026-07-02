@@ -1,6 +1,10 @@
 package jinn
 
-import _ "embed"
+import (
+	_ "embed"
+	"encoding/json"
+	"fmt"
+)
 
 // Schema is the tool definitions in OpenAI function-calling format.
 //
@@ -49,6 +53,49 @@ type ContentBlock struct {
 	Text     string `json:"text,omitempty"`     // for type="text"
 	Data     string `json:"data,omitempty"`     // base64-encoded, for type="image"
 	MimeType string `json:"mimeType,omitempty"` // e.g. "image/png", for type="image"
+}
+
+// UnmarshalJSON implements json.Unmarshaler for Request, repairing the
+// common LLM misbehavior of double-encoding args as a JSON string.
+func (r *Request) UnmarshalJSON(data []byte) error {
+	type aliasRequest struct {
+		Tool      string          `json:"tool"`
+		Args      json.RawMessage `json:"args"`
+		Client    string          `json:"client,omitempty"`
+		Compress  bool            `json:"compress,omitempty"`
+		RequestID string          `json:"request_id,omitempty"`
+	}
+	var a aliasRequest
+	if err := json.Unmarshal(data, &a); err != nil {
+		return err
+	}
+	r.Tool = a.Tool
+	r.Client = a.Client
+	r.Compress = a.Compress
+	r.RequestID = a.RequestID
+
+	if len(a.Args) == 0 || string(a.Args) == "null" {
+		r.Args = nil
+		return nil
+	}
+
+	// Try direct map decode (normal case).
+	var m map[string]interface{}
+	if err := json.Unmarshal(a.Args, &m); err == nil {
+		r.Args = m
+		return nil
+	}
+
+	// Try double-encoded string: "{\"command\":\"ls\"}"
+	var s string
+	if err := json.Unmarshal(a.Args, &s); err != nil {
+		return fmt.Errorf("args must be a JSON object")
+	}
+	if err := json.Unmarshal([]byte(s), &m); err != nil {
+		return fmt.Errorf("args is a JSON-encoded string but does not contain a JSON object")
+	}
+	r.Args = m
+	return nil
 }
 
 // Response is the one-shot tool result envelope.
