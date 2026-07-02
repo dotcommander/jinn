@@ -96,9 +96,7 @@ func TestRecordSnapshot_TooLargeSkipsSilently(t *testing.T) {
 	big := make([]byte, historyMaxBlobBytes+1)
 	e.recordSnapshot(absPath, "large.bin", "write_file", big)
 	// Index should be empty — snapshot was silently skipped.
-	histMu.Lock()
-	hf, _ := e.loadHistory()
-	histMu.Unlock()
+	hf, _ := e.loadHistoryLocked()
 	if len(hf.Entries) != 0 {
 		t.Errorf("expected 0 entries (skipped), got %d", len(hf.Entries))
 	}

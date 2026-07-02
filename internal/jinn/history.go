@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sync"
 	"time"
 )
 
@@ -36,23 +35,6 @@ type historyFile struct {
 	Entries []historyEntry `json:"entries"` // oldest first
 }
 
-// histMu guards all reads and writes to the on-disk history store.
-//
-// It is intentionally a single package-level mutex, NOT a per-Engine field
-// (cf. Engine.memMu) and NOT a per-workDir keyed map. The lock domain is the
-// on-disk store, which is keyed by a hash of workDir in historyDir(). Because
-// New(workDir, ...) may be called more than once in a single process for the
-// SAME workDir, two distinct *Engine instances can map to the identical
-// index.json + blobs/ directory. A per-Engine mutex would let those siblings
-// race on the shared index and corrupt it. The package-level mutex is the
-// cross-engine invariant that prevents that.
-//
-// The coarse granularity (engines on *different* workDirs also serialize) is
-// an accepted trade-off: history ops are infrequent, best-effort, and
-// non-blocking (every failure path returns nil), so contention is negligible
-// and not worth the leak/eviction complexity of a per-workDir mutex map.
-var histMu sync.Mutex
-
 // historyDir returns the per-workdir history directory.
 func (e *Engine) historyDir() string {
 	hash := sha256.Sum256([]byte(e.workDir))
@@ -77,6 +59,31 @@ func (e *Engine) indexPath() string {
 // blobsDir returns the path to the blobs subdirectory.
 func (e *Engine) blobsDir() string {
 	return filepath.Join(e.historyDir(), "blobs")
+}
+
+// historyLockPath returns the cross-process lock file guarding this
+// workdir's history store. It is a SIBLING of historyDir(), deliberately
+// outside it: undoClear RemoveAll's the dir, and unlinking a held lock file
+// would let two processes hold "the lock" on different inodes.
+//
+// The lock domain is the on-disk store shared by concurrent PROCESSES —
+// jinn runs one process per tool call, so an in-process mutex protects
+// nothing in production. flock also serializes goroutines within one
+// process (each withFileLock call opens its own fd), so it fully subsumes
+// the old package-level mutex this replaces.
+func (e *Engine) historyLockPath() string {
+	return e.historyDir() + ".lock"
+}
+
+// loadHistoryLocked reads the index under the cross-process history lock.
+func (e *Engine) loadHistoryLocked() (historyFile, error) {
+	var hf historyFile
+	err := withFileLock(e.historyLockPath(), func() error {
+		var loadErr error
+		hf, loadErr = e.loadHistory()
+		return loadErr
+	})
+	return hf, err
 }
 
 // loadHistory reads and unmarshals the history index.
@@ -121,9 +128,16 @@ func (e *Engine) recordSnapshot(absPath, displayPath, op string, preContent []by
 		return
 	}
 
-	histMu.Lock()
-	defer histMu.Unlock()
+	// Best-effort: a lock failure skips the snapshot, never blocks the write.
+	_ = withFileLock(e.historyLockPath(), func() error {
+		e.recordSnapshotLocked(absPath, displayPath, op, preContent)
+		return nil
+	})
+}
 
+// recordSnapshotLocked performs the load→blob-write→append→evict→save
+// sequence. Caller holds the history file lock.
+func (e *Engine) recordSnapshotLocked(absPath, displayPath, op string, preContent []byte) {
 	hf, err := e.loadHistory()
 	if err != nil {
 		return // non-blocking
@@ -204,7 +218,7 @@ func (e *Engine) writeBlobForSnapshot(id string, preContent []byte) (snapshotBlo
 }
 
 // evictHistory trims the ring-buffer to satisfy entry count and total size limits.
-// It removes blobs for evicted entries. Called with histMu held.
+// It removes blobs for evicted entries. Caller holds the history file lock.
 func (e *Engine) evictHistory(hf *historyFile) {
 	// Trim by entry count (oldest first).
 	for len(hf.Entries) > historyMaxEntries {

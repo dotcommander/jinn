@@ -18,9 +18,7 @@ func undoEngine(t *testing.T) (*Engine, string) {
 // firstSnapshotID returns the ID of the first (oldest) entry in history.
 func firstSnapshotID(t *testing.T, e *Engine) string {
 	t.Helper()
-	histMu.Lock()
-	hf, err := e.loadHistory()
-	histMu.Unlock()
+	hf, err := e.loadHistoryLocked()
 	if err != nil {
 		t.Fatalf("loadHistory: %v", err)
 	}

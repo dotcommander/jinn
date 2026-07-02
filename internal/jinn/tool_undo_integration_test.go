@@ -16,9 +16,7 @@ func TestWriteFile_SnapshotsBeforeWrite(t *testing.T) {
 		t.Fatalf("writeFile: %v", err)
 	}
 
-	histMu.Lock()
-	hf, _ := e.loadHistory()
-	histMu.Unlock()
+	hf, _ := e.loadHistoryLocked()
 	if len(hf.Entries) != 1 {
 		t.Fatalf("expected 1 history entry, got %d", len(hf.Entries))
 	}
@@ -39,9 +37,7 @@ func TestEditFile_SnapshotsBeforeEdit(t *testing.T) {
 		t.Fatalf("editFile: %v", err)
 	}
 
-	histMu.Lock()
-	hf, _ := e.loadHistory()
-	histMu.Unlock()
+	hf, _ := e.loadHistoryLocked()
 	if len(hf.Entries) != 1 {
 		t.Fatalf("expected 1 entry, got %d", len(hf.Entries))
 	}
@@ -65,9 +61,7 @@ func TestMultiEdit_SnapshotsEachFile(t *testing.T) {
 		t.Fatalf("multiEdit: %v", err)
 	}
 
-	histMu.Lock()
-	hf, _ := e.loadHistory()
-	histMu.Unlock()
+	hf, _ := e.loadHistoryLocked()
 	if len(hf.Entries) != 2 {
 		t.Fatalf("expected 2 entries, got %d", len(hf.Entries))
 	}
@@ -86,9 +80,7 @@ func TestWriteFile_DryRunNoSnapshot(t *testing.T) {
 		t.Fatalf("writeFile dry: %v", err)
 	}
 
-	histMu.Lock()
-	hf, _ := e.loadHistory()
-	histMu.Unlock()
+	hf, _ := e.loadHistoryLocked()
 	if len(hf.Entries) != 0 {
 		t.Errorf("dry-run must not create snapshots, got %d entries", len(hf.Entries))
 	}

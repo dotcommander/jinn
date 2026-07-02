@@ -211,9 +211,7 @@ func TestUndoRestore_BlobIntegrityFails(t *testing.T) {
 		t.Fatalf("writeFile: %v", err)
 	}
 
-	histMu.Lock()
-	hf, _ := e.loadHistory()
-	histMu.Unlock()
+	hf, _ := e.loadHistoryLocked()
 	if len(hf.Entries) == 0 {
 		t.Fatal("expected entry in history")
 	}

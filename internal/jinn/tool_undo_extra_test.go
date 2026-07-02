@@ -62,11 +62,11 @@ func TestUndoRestore_AbsPathMismatch(t *testing.T) {
 	id := firstSnapshotID(t, e)
 
 	// Mangle the AbsPath in the stored entry so it won't match the resolved path.
-	histMu.Lock()
-	hf, _ := e.loadHistory()
-	hf.Entries[0].AbsPath = filepath.Join(workDir, "different.txt")
-	_ = e.saveHistory(hf)
-	histMu.Unlock()
+	_ = withFileLock(e.historyLockPath(), func() error {
+		hf, _ := e.loadHistory()
+		hf.Entries[0].AbsPath = filepath.Join(workDir, "different.txt")
+		return e.saveHistory(hf)
+	})
 
 	// Also create the differently-named file so checkPath succeeds but mismatch is caught.
 	writeTestFile(t, workDir, "different.txt", "unrelated")

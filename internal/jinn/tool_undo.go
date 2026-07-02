@@ -40,9 +40,7 @@ func (e *Engine) undoList(args map[string]interface{}) (string, error) {
 		limit = int(v)
 	}
 
-	histMu.Lock()
-	hf, err := e.loadHistory()
-	histMu.Unlock()
+	hf, err := e.loadHistoryLocked()
 	if err != nil {
 		return "", err
 	}
@@ -177,11 +175,10 @@ func (e *Engine) undoRestore(args map[string]interface{}) (string, error) {
 
 // undoClear deletes all history for this workdir.
 func (e *Engine) undoClear() (string, error) {
-	histMu.Lock()
-	defer histMu.Unlock()
-
-	dir := e.historyDir()
-	if err := os.RemoveAll(dir); err != nil {
+	err := withFileLock(e.historyLockPath(), func() error {
+		return os.RemoveAll(e.historyDir())
+	})
+	if err != nil {
 		return "", fmt.Errorf("undo clear: %w", err)
 	}
 	return "cleared history for this workdir", nil
@@ -189,9 +186,7 @@ func (e *Engine) undoClear() (string, error) {
 
 // findEntry looks up a snapshot entry by ID prefix. Returns ErrWithSuggestion when not found.
 func (e *Engine) findEntry(id string) (historyEntry, error) {
-	histMu.Lock()
-	hf, err := e.loadHistory()
-	histMu.Unlock()
+	hf, err := e.loadHistoryLocked()
 	if err != nil {
 		return historyEntry{}, err
 	}

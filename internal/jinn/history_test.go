@@ -57,9 +57,7 @@ func TestRecordSnapshot_BasicRoundtrip(t *testing.T) {
 	preContent := []byte("hello world")
 	e.recordSnapshot(absPath, "test.txt", "write_file", preContent)
 
-	histMu.Lock()
-	hf, err := e.loadHistory()
-	histMu.Unlock()
+	hf, err := e.loadHistoryLocked()
 	if err != nil {
 		t.Fatalf("loadHistory: %v", err)
 	}
@@ -90,9 +88,7 @@ func TestRecordSnapshot_NewFile(t *testing.T) {
 	absPath := filepath.Join(workDir, "new.txt")
 	e.recordSnapshot(absPath, "new.txt", "write_file", nil)
 
-	histMu.Lock()
-	hf, _ := e.loadHistory()
-	histMu.Unlock()
+	hf, _ := e.loadHistoryLocked()
 	if len(hf.Entries) != 1 {
 		t.Fatalf("entries: got %d, want 1", len(hf.Entries))
 	}
@@ -114,9 +110,7 @@ func TestEvictHistory_ByEntryCount(t *testing.T) {
 		e.recordSnapshot(absPath, "f.txt", "write_file", content)
 	}
 
-	histMu.Lock()
-	hf, err := e.loadHistory()
-	histMu.Unlock()
+	hf, err := e.loadHistoryLocked()
 	if err != nil {
 		t.Fatalf("loadHistory: %v", err)
 	}
@@ -136,9 +130,7 @@ func TestEvictHistory_ByTotalSize(t *testing.T) {
 		e.recordSnapshot(absPath, "big.txt", "write_file", chunk)
 	}
 
-	histMu.Lock()
-	hf, err := e.loadHistory()
-	histMu.Unlock()
+	hf, err := e.loadHistoryLocked()
 	if err != nil {
 		t.Fatalf("loadHistory: %v", err)
 	}
@@ -159,9 +151,7 @@ func TestRecordSnapshot_OversizeBlobSkipped(t *testing.T) {
 	huge := make([]byte, 6*1024*1024)
 	e.recordSnapshot(absPath, "huge.txt", "write_file", huge)
 
-	histMu.Lock()
-	hf, _ := e.loadHistory()
-	histMu.Unlock()
+	hf, _ := e.loadHistoryLocked()
 	if len(hf.Entries) != 0 {
 		t.Errorf("oversize blob should not be recorded, got %d entries", len(hf.Entries))
 	}
@@ -228,9 +218,9 @@ func TestAtomicWriteBytes_CreatesAndVerifies(t *testing.T) {
 	}
 }
 
-// TestRecordSnapshot_SameWorkdirTwoEngines verifies the histMu invariant: two
+// TestRecordSnapshot_SameWorkdirTwoEngines verifies the cross-process store invariant: two
 // distinct *Engine instances rooted at the SAME workDir share one on-disk store
-// and serialize through the package-level mutex without corrupting index.json.
+// and serialize through the history file lock (flock) without corrupting index.json.
 // Must NOT call t.Parallel() — t.Setenv is serial only.
 func TestRecordSnapshot_SameWorkdirTwoEngines(t *testing.T) {
 	e1, workDir := historyEngine(t)
@@ -256,9 +246,7 @@ func TestRecordSnapshot_SameWorkdirTwoEngines(t *testing.T) {
 	}
 	wg.Wait()
 
-	histMu.Lock()
-	hf, err := e1.loadHistory()
-	histMu.Unlock()
+	hf, err := e1.loadHistoryLocked()
 	if err != nil {
 		t.Fatalf("loadHistory: %v", err)
 	}
