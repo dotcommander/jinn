@@ -145,6 +145,58 @@ func (e *Engine) runPlanOp(ctx context.Context, op PlanOp) (PlanOpResult, bool) 
 	return PlanOpResult{OK: false, Error: "plan op must set exactly one of shell or tool"}, true
 }
 
+// runMutatingOp executes op on a node with Mutates:true, under the Phase 2
+// risk gate: RiskSafe/RiskCaution execute normally; RiskDangerous requires
+// BOTH planForce and node.Force, else it blocks. Mirrors runPlanOp's
+// (result, blocked) shape so runPlanTree can select either per node.Mutates.
+// Deliberately reuses ClassifyCommand/planToolRisk rather than a separate
+// destructive-command scanner — command_risk.go's tokenizer already covers
+// the false-positive matrix (e.g. redirects to /dev/null) more precisely
+// than a regex scan would.
+func (e *Engine) runMutatingOp(ctx context.Context, node *PlanNode, planForce bool, op PlanOp) (PlanOpResult, bool) {
+	var risk RiskLevel
+	switch {
+	case op.Shell != "":
+		risk, _ = ClassifyCommand(op.Shell)
+	case op.Tool != "":
+		action, _ := op.Args["action"].(string)
+		risk = planToolRisk(op.Tool, action)
+	default:
+		return PlanOpResult{OK: false, Error: "plan op must set exactly one of shell or tool"}, true
+	}
+
+	if risk == RiskDangerous && !(planForce && node.Force) {
+		return PlanOpResult{OK: false, Error: "blocked: dangerous mutation requires plan.force and node.force"}, true
+	}
+
+	if op.Shell != "" {
+		text, meta, err := e.runShell(ctx, map[string]interface{}{"command": op.Shell})
+		res := PlanOpResult{OK: err == nil, Result: text}
+		if err != nil {
+			res.Error = err.Error()
+		}
+		if v, ok := meta["classification"].(string); ok {
+			res.Classification = v
+		}
+		if v, ok := meta["risk"].(string); ok {
+			res.Risk = v
+		}
+		if v, ok := meta["exit_code"].(int); ok {
+			res.ExitCode = v
+		}
+		return res, false
+	}
+
+	tr, _, err := e.Dispatch(ctx, op.Tool, op.Args)
+	res := PlanOpResult{OK: err == nil}
+	if err != nil {
+		res.Error = err.Error()
+	} else if tr != nil {
+		res.Result = tr.Text
+	}
+	return res, false
+}
+
 func compareNumeric(a, b float64, op string) bool {
 	switch op {
 	case "eq":
