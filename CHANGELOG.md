@@ -7,6 +7,44 @@ and jinn adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-07-02
+
+### Added
+
+- `run_plan` tool: condition-gated plan tree execution — a deterministic
+  in-process walk of a `PlanTree` connected by first-match-wins conditional
+  edges (`exitCode`, `fileExists`, `jsonPath`, `numeric`, `match`, `always`).
+  Phase 1 nodes are read-only (safe shell + allowlisted tools only); Phase 2
+  `mutates: true` nodes risk-gate mutations (`caution` runs automatically,
+  `dangerous` requires both plan- and node-level `force`). Completed runs
+  fire-and-forget a stats row to `~/.config/jinn/stats/run_plan.jsonl`.
+- `if_checksum` precondition on `write_file`/`edit_file`: rejects a stale
+  overwrite when the file changed since the checksum was read, returning
+  `error_code: "stale_file"` so the caller can re-read and retry.
+- Cross-process `flock` guard for the history/spill registry read-modify-write,
+  replacing an in-process mutex that missed races between concurrent `jinn`
+  shells.
+- Double-encoded args in the request envelope are now coerced automatically.
+
+### Fixed
+
+- `search_replace`/`multi_edit`/`apply_patch` partial-apply errors enumerate
+  already-written files with undo ids so a mid-batch failure can be recovered
+  without reapplying successful writes.
+- Risk classifier treats `[[ ]]` and `(( ))` comparisons as non-redirection.
+- `TestRouteToolsCorpus` paraphrase routing for `search_files`.
+- Same-mtime-tick file modifications are now detected by size in the tracker.
+- Pre-redesign memory tables are additively migrated (missing columns added)
+  and rebuilt without losing existing rows.
+
+### Documentation
+
+- `if_checksum` precondition and partial-apply error shape documented in
+  AGENTS.md.
+- Memory DB path corrected to `os.UserConfigDir` (macOS Library path).
+- `find` exit-code doc corrected — a nonzero exit is always an error.
+- README first-use guide improved.
+
 ## [0.10.0] - 2026-06-23
 
 ### Added
