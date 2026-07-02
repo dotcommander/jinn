@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 var planPhase1ToolAllowlist = map[string]bool{
@@ -270,4 +271,128 @@ func (e *Engine) evaluateCondition(last PlanOpResult, cond Condition, cwd string
 	default:
 		return false, nil
 	}
+}
+
+func (e *Engine) runPlanTree(ctx context.Context, plan *PlanTree) (*PlanRunResult, error) {
+	maxDepth := plan.MaxDepth
+	if maxDepth == 0 {
+		maxDepth = DefaultMaxDepth
+	}
+	byID := make(map[string]*PlanNode, len(plan.Nodes))
+	for i := range plan.Nodes {
+		byID[plan.Nodes[i].ID] = &plan.Nodes[i]
+	}
+	depth := 0
+	currentID := plan.Root
+	var pathTaken []string
+	var transcript []PlanNodeResult
+	edgesEvaluated, edgesMatched := 0, 0
+
+	for {
+		if err := ctx.Err(); err != nil {
+			return &PlanRunResult{Transcript: transcript, PathTaken: pathTaken, DepthReached: depth, StoppedReason: StopAborted, EdgesEvaluated: edgesEvaluated, EdgesMatched: edgesMatched}, nil
+		}
+		if depth > maxDepth {
+			return &PlanRunResult{Transcript: transcript, PathTaken: pathTaken, DepthReached: depth, StoppedReason: StopMaxDepth, EdgesEvaluated: edgesEvaluated, EdgesMatched: edgesMatched}, nil
+		}
+		node := byID[currentID]
+		pathTaken = append(pathTaken, currentID)
+
+		if node.Mutates {
+			transcript = append(transcript, PlanNodeResult{NodeID: currentID, Depth: depth})
+			return &PlanRunResult{Transcript: transcript, PathTaken: pathTaken, DepthReached: depth, StoppedReason: StopMutationBlocked, EdgesEvaluated: edgesEvaluated, EdgesMatched: edgesMatched}, nil
+		}
+
+		nodeResult := PlanNodeResult{NodeID: currentID, Depth: depth}
+		var lastOpResult PlanOpResult
+		blocked := false
+
+		if node.Parallel && len(node.Commands) > 1 {
+			ops := make([]PlanOpResult, len(node.Commands))
+			blockedFlags := make([]bool, len(node.Commands))
+			var wg sync.WaitGroup
+			for i, op := range node.Commands {
+				wg.Add(1)
+				go func(i int, op PlanOp) {
+					defer wg.Done()
+					ops[i], blockedFlags[i] = e.runPlanOp(ctx, op)
+				}(i, op)
+			}
+			wg.Wait()
+			for i, b := range blockedFlags {
+				nodeResult.Ops = append(nodeResult.Ops, ops[i])
+				lastOpResult = ops[i]
+				if b {
+					blocked = true
+					break
+				}
+			}
+		} else {
+			for _, op := range node.Commands {
+				opRes, isBlocked := e.runPlanOp(ctx, op)
+				nodeResult.Ops = append(nodeResult.Ops, opRes)
+				lastOpResult = opRes
+				if isBlocked {
+					blocked = true
+					break
+				}
+			}
+		}
+
+		transcript = append(transcript, nodeResult)
+		if blocked {
+			return &PlanRunResult{Transcript: transcript, PathTaken: pathTaken, DepthReached: depth, StoppedReason: StopMutationBlocked, EdgesEvaluated: edgesEvaluated, EdgesMatched: edgesMatched}, nil
+		}
+
+		matched := false
+		for _, edge := range node.Edges {
+			edgesEvaluated++
+			ok, _ := e.evaluateCondition(lastOpResult, edge.When, plan.Cwd)
+			if ok {
+				edgesMatched++
+				matched = true
+				currentID = edge.To
+				depth++
+				break
+			}
+		}
+		if !matched {
+			reason := StopNoEdgeMatch
+			if len(node.Edges) == 0 {
+				reason = StopLeaf
+			}
+			return &PlanRunResult{Transcript: transcript, PathTaken: pathTaken, DepthReached: depth, StoppedReason: reason, EdgesEvaluated: edgesEvaluated, EdgesMatched: edgesMatched}, nil
+		}
+	}
+}
+
+func shapePlanTranscript(nodes []PlanNodeResult) []PlanNodeResult {
+	total := 0
+	for _, n := range nodes {
+		for _, op := range n.Ops {
+			total += len(op.Result)
+		}
+	}
+	if total <= PlanTranscriptMaxBytes {
+		return nodes
+	}
+	result := make([]PlanNodeResult, len(nodes))
+	copy(result, nodes)
+	for i := range result {
+		nodeTotal := 0
+		for _, op := range result[i].Ops {
+			nodeTotal += len(op.Result)
+		}
+		newOps := make([]PlanOpResult, len(result[i].Ops))
+		for j, op := range result[i].Ops {
+			newOps[j] = op
+			newOps[j].Result = "[omitted: transcript cap exceeded]"
+		}
+		result[i].Ops = newOps
+		total -= nodeTotal
+		if total <= PlanTranscriptMaxBytes {
+			break
+		}
+	}
+	return result
 }
