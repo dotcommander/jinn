@@ -35,8 +35,8 @@ func TestInspector_ListToolsAndSchema(t *testing.T) {
 	if err := json.NewDecoder(schemaResp.Body).Decode(&schema); err != nil {
 		t.Fatalf("decode schema: %v", err)
 	}
-	if len(schema) != 18 {
-		t.Fatalf("expected 18 schema tools, got %d", len(schema))
+	if len(schema) != 19 {
+		t.Fatalf("expected 19 schema tools, got %d", len(schema))
 	}
 
 	capsReq, err := http.NewRequest(http.MethodGet, "/api/list_tools", nil)
