@@ -33,6 +33,7 @@ func (e *Engine) dispatchPlanOps(ctx context.Context, args map[string]interface{
 		return nil, true, err
 	}
 	result.Transcript = shapePlanTranscript(result.Transcript)
+	recordPlanStats(result)
 
 	return &ToolResult{
 		Meta: map[string]any{"plan_run": result},
