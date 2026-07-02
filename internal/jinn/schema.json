@@ -78,7 +78,8 @@
         "properties": {
           "path": {"type": "string", "description": "file path to write"},
           "content": {"type": "string", "description": "file content"},
-          "dry_run": {"type": "boolean", "description": "preview changes without writing (default: false)"}
+          "dry_run": {"type": "boolean", "description": "preview changes without writing (default: false)"},
+          "if_checksum": {"type": "string", "description": "SHA-256 hex digest from a previous read_file response (meta.sha256). When set, the write is rejected with error_code=stale_file if the file's current content no longer hashes to this digest — protects against lost updates when the file changed since you read it."}
         },
         "required": ["path", "content"]
       }
@@ -97,7 +98,8 @@
           "new_text": {"type": "string", "description": "replacement text"},
           "dry_run": {"type": "boolean", "description": "preview changes without writing (default: false)"},
           "fuzzy_indent": {"type": "boolean", "description": "auto-detect indentation at match site and apply to new_text (default: false)"},
-          "show_context": {"type": "integer", "description": "Number of context lines to show around the edit after applying. 0 = no context.", "default": 0}
+          "show_context": {"type": "integer", "description": "Number of context lines to show around the edit after applying. 0 = no context.", "default": 0},
+          "if_checksum": {"type": "string", "description": "SHA-256 hex digest from a previous read_file response (meta.sha256). When set, the edit is rejected with error_code=stale_file if the file's current content no longer hashes to this digest — protects against lost updates when the file changed since you read it."}
         },
         "required": ["path", "old_text", "new_text"]
       }
