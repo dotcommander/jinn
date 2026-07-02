@@ -94,6 +94,9 @@ func (e *Engine) Dispatch(ctx context.Context, tool string, args map[string]inte
 	if res, ok, err := e.dispatchMemoryMeta(ctx, args, tool); ok {
 		return res, nil, err
 	}
+	if res, ok, err := e.dispatchPlanOps(ctx, args, tool); ok {
+		return res, nil, err
+	}
 	return nil, nil, fmt.Errorf("unknown tool: %s", tool)
 }
 
