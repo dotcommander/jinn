@@ -2,6 +2,77 @@
   {
     "type": "function",
     "function": {
+      "name": "run_plan",
+      "description": "Execute a condition-gated tree of tool/shell operations in one deterministic engine walk, returned as a single transcript. No model call between nodes.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "plan": {
+            "type": "object",
+            "properties": {
+              "root": {"type": "string"},
+              "nodes": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {"type": "string"},
+                    "commands": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "shell": {"type": "string"},
+                          "tool": {"type": "string"},
+                          "args": {"type": "object"}
+                        }
+                      }
+                    },
+                    "parallel": {"type": "boolean"},
+                    "mutates": {"type": "boolean"},
+                    "force": {"type": "boolean"},
+                    "edges": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "when": {
+                            "type": "object",
+                            "properties": {
+                              "kind": {"type": "string", "enum": ["exitCode", "fileExists", "jsonPath", "numeric", "match", "always"]},
+                              "op": {"type": "string"},
+                              "value": {},
+                              "path": {"type": "string"},
+                              "extract": {"type": "string"},
+                              "regex": {"type": "string"},
+                              "stream": {"type": "string", "enum": ["stdout", "stderr"]},
+                              "negate": {"type": "boolean"}
+                            },
+                            "required": ["kind"]
+                          },
+                          "to": {"type": "string"}
+                        },
+                        "required": ["when", "to"]
+                      }
+                    }
+                  },
+                  "required": ["id", "commands"]
+                }
+              },
+              "cwd": {"type": "string"},
+              "max_depth": {"type": "integer"},
+              "force": {"type": "boolean"}
+            },
+            "required": ["root", "nodes"]
+          }
+        },
+        "required": ["plan"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
       "name": "run_shell",
       "description": "Run a bash command. Returns stdout/stderr (separated in meta as 'stdout'/'stderr' fields). Truncated to last 2000 lines or 50KB. Prefixed with [exit: N], classification, and optional [hint: ...] for recovery. Error responses include error_code.",
       "parameters": {

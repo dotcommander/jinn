@@ -20,6 +20,8 @@ const (
 	ErrCodeInvalidArgs        = "invalid_args"
 	ErrCodeCanceled           = "canceled"
 	ErrCodeConflict           = "conflict"
+	ErrCodePlanInvalid        = "plan_invalid"
+	ErrCodePlanCoerceFailed   = "plan_coerce_failed"
 )
 
 // ErrWithSuggestion wraps an error with a user-facing suggestion and an

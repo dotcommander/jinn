@@ -35,6 +35,7 @@ var toolFeatures = map[string][]string{
 	"list_dir":       {"changed_since"},
 	"diff_files":     {"context_lines"},
 	"search_replace": {"regex", "capture_groups", "multi_file", "glob_patterns", "replace_all", "dry_run", "case_insensitive", "multiline"},
+	"run_plan":      {},
 	"lsp_query":      {"definition", "references", "hover", "symbols", "diagnostics", "rename", "symbol_column", "context_lines"},
 }
 
