@@ -97,3 +97,29 @@ func TestPlanMutation(t *testing.T) {
 		}
 	})
 }
+
+func TestPlanMutationFalsePositiveMatrix(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		cmd  string
+	}{
+		{"stderr_redirect_devnull", "echo ok 2>/dev/null"},
+		{"stdout_redirect_devnull", "echo ok > /dev/null"},
+		{"awk_numeric_comparison", "awk $1 > 200"},
+		{"bash_test_comparison", "[[ $x > 3 ]]"},
+		{"bash_arithmetic_comparison", "(( 4 > 2 ))"},
+		{"quoted_js_comparison", `echo "const f = (x) => x >= 3;"`},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			risk, reason := ClassifyCommand(tc.cmd)
+			if risk == RiskDangerous {
+				t.Errorf("ClassifyCommand(%q) = RiskDangerous (%s), want != RiskDangerous — false positive", tc.cmd, reason)
+			}
+		})
+	}
+}
