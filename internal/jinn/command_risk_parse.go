@@ -2,6 +2,7 @@ package jinn
 
 import (
 	"path"
+	"sort"
 	"strings"
 )
 
@@ -288,6 +289,9 @@ func normalizedCommandVerb(tok string) string {
 	if tok == "" {
 		return ""
 	}
+	if tok == "[[" || strings.HasPrefix(tok, "((") {
+		return "true"
+	}
 	verb := path.Base(tok)
 	verb = strings.TrimLeft(verb, "({")
 	verb = strings.TrimRight(verb, ")}")
@@ -390,9 +394,12 @@ func multiplexerPayloadIndex(tokens []string) int {
 // once the shell opens a target for stdout/stderr or read/write access,
 // including compact forms like "echo x>file", "2>err", and "cat <>file".
 func hasOutputRedirection(seg string) bool {
+	spans := outputComparisonSkipSpans(seg)
 	inSingle := false
 	inDouble := false
 	escaped := false
+	spanIdx := 0
+
 	runes := []rune(seg)
 	for i, ch := range runes {
 		if escaped {
@@ -408,7 +415,239 @@ func hasOutputRedirection(seg string) bool {
 			inSingle = !inSingle
 		case ch == '"' && !inSingle:
 			inDouble = !inDouble
+		}
+		for spanIdx < len(spans) && i >= spans[spanIdx].end {
+			spanIdx++
+		}
+		if spanIdx < len(spans) && i >= spans[spanIdx].start {
+			continue
+		}
+		switch {
 		case !inSingle && !inDouble && isShellWriteRedirection(runes, i):
+			return true
+		}
+	}
+	return false
+}
+
+func outputComparisonSkipSpans(seg string) []outputSpan {
+	var spans []outputSpan
+	tokens := tokenizeOutputComparisonTokens(seg)
+	spans = append(spans, outputSquareComparisonSpans(tokens)...)
+	spans = append(spans, outputArithmeticComparisonSpans([]rune(seg))...)
+	if len(spans) <= 1 {
+		return spans
+	}
+	sort.Slice(spans, func(i, j int) bool {
+		return spans[i].start < spans[j].start
+	})
+	merged := spans[:0]
+	for _, span := range spans {
+		if len(merged) == 0 || span.start > merged[len(merged)-1].end {
+			merged = append(merged, span)
+			continue
+		}
+		if span.end > merged[len(merged)-1].end {
+			merged[len(merged)-1].end = span.end
+		}
+	}
+	return merged
+}
+
+type outputSpan struct {
+	start int
+	end   int
+}
+
+type outputComparisonToken struct {
+	text    string
+	start   int
+	end     int
+	quoted  bool
+	escaped bool
+}
+
+func tokenizeOutputComparisonTokens(seg string) []outputComparisonToken {
+	var tokens []outputComparisonToken
+	var cur strings.Builder
+	inSingle := false
+	inDouble := false
+	escaped := false
+	tokenStart := -1
+	tokenQuoted := false
+	tokenEscaped := false
+
+	runes := []rune(seg)
+	for i, ch := range runes {
+		if escaped {
+			if tokenStart < 0 {
+				tokenStart = i
+			}
+			cur.WriteRune(ch)
+			tokenEscaped = true
+			escaped = false
+			continue
+		}
+		if ch == '\\' && !inSingle {
+			if tokenStart < 0 {
+				tokenStart = i
+			}
+			tokenEscaped = true
+			escaped = true
+			continue
+		}
+		if ch == '\'' && !inDouble {
+			if tokenStart < 0 {
+				tokenStart = i
+			}
+			tokenQuoted = true
+			inSingle = !inSingle
+			continue
+		}
+		if ch == '"' && !inSingle {
+			if tokenStart < 0 {
+				tokenStart = i
+			}
+			tokenQuoted = true
+			inDouble = !inDouble
+			continue
+		}
+		if !inSingle && !inDouble && isShellBlank(ch) {
+			if tokenStart >= 0 {
+				tokens = append(tokens, outputComparisonToken{
+					text:    cur.String(),
+					start:   tokenStart,
+					end:     i,
+					quoted:  tokenQuoted,
+					escaped: tokenEscaped,
+				})
+				cur.Reset()
+				tokenStart = -1
+				tokenQuoted = false
+				tokenEscaped = false
+			}
+			continue
+		}
+		if tokenStart < 0 {
+			tokenStart = i
+		}
+		cur.WriteRune(ch)
+	}
+	if tokenStart >= 0 {
+		tokens = append(tokens, outputComparisonToken{
+			text:    cur.String(),
+			start:   tokenStart,
+			end:     len(runes),
+			quoted:  tokenQuoted,
+			escaped: tokenEscaped,
+		})
+	}
+	return tokens
+}
+
+func isCommandPositionStartToken(tok string) bool {
+	switch tok {
+	case "!", "if", "while", "until", "elif", "then", "do", "&&", "||", ";", "|":
+		return true
+	default:
+		return false
+	}
+}
+
+func outputSquareComparisonSpans(tokens []outputComparisonToken) []outputSpan {
+	var spans []outputSpan
+	openStart := -1
+	commandPos := true
+
+	for _, tok := range tokens {
+		if openStart >= 0 {
+			if !tok.quoted && !tok.escaped && tok.text == "]]" {
+				spans = append(spans, outputSpan{start: openStart, end: tok.end})
+				openStart = -1
+			}
+		} else if commandPos && !tok.quoted && !tok.escaped && tok.text == "[[" {
+			openStart = tok.start
+		}
+		if isCommandPositionStartToken(tok.text) && !tok.quoted && !tok.escaped {
+			commandPos = true
+			continue
+		}
+		commandPos = false
+	}
+	return spans
+}
+
+func outputArithmeticComparisonSpans(runes []rune) []outputSpan {
+	var spans []outputSpan
+	inSingle := false
+	inDouble := false
+	escaped := false
+	openStart := -1
+	parenDepth := 0
+
+	for i := 0; i < len(runes); i++ {
+		ch := runes[i]
+		if escaped {
+			escaped = false
+			continue
+		}
+		if ch == '\\' && !inSingle {
+			escaped = true
+			continue
+		}
+		if ch == '\'' && !inDouble {
+			inSingle = !inSingle
+			continue
+		}
+		if ch == '"' && !inSingle {
+			inDouble = !inDouble
+			continue
+		}
+		if inSingle || inDouble {
+			continue
+		}
+		if openStart >= 0 {
+			switch ch {
+			case '(':
+				if i+1 < len(runes) && runes[i+1] == '(' {
+					parenDepth++
+					i++
+					continue
+				}
+				parenDepth++
+			case ')':
+				if i+1 < len(runes) && runes[i+1] == ')' {
+					if parenDepth == 0 {
+						spans = append(spans, outputSpan{start: openStart, end: i + 2})
+						openStart = -1
+						i++
+						continue
+					}
+					parenDepth--
+					i++
+					continue
+				}
+				if parenDepth > 0 {
+					parenDepth--
+				}
+			}
+			continue
+		}
+		if ch == '(' && i+1 < len(runes) && runes[i+1] == '(' {
+			openStart = i
+			parenDepth = 0
+			i++
+		}
+	}
+	return spans
+}
+
+func tokenInOutputSpan(start, end int, spans []outputSpan) bool {
+	for _, span := range spans {
+		if end <= span.start {
+			return false
+		}
+		if start < span.end && end > span.start {
 			return true
 		}
 	}
@@ -449,11 +688,15 @@ func isShellWriteRedirection(runes []rune, i int) bool {
 }
 
 func dangerousOutputRedirectionTarget(seg string) (string, bool) {
-	tokens := shellFields(seg)
+	tokens := tokenizeOutputComparisonTokens(seg)
+	spans := outputComparisonSkipSpans(seg)
 	for i, tok := range tokens {
-		target, consumesNext, ok := outputRedirectionTarget(tok)
+		if tokenInOutputSpan(tok.start, tok.end, spans) {
+			continue
+		}
+		target, consumesNext, ok := outputRedirectionTarget(tok.text)
 		if ok && target == "" && consumesNext && i+1 < len(tokens) {
-			target = tokens[i+1]
+			target = tokens[i+1].text
 		}
 		if ok && isDangerousDevicePath(target) {
 			return target, true
@@ -573,6 +816,9 @@ func extractSubshellContents(cmdline string) []string {
 			continue
 		}
 		if ch == '$' && i+1 < len(runes) && runes[i+1] == '(' {
+			if i+2 < len(runes) && runes[i+2] == '(' {
+				continue
+			}
 			end := findMatchingParenRunes(runes, i)
 			if end <= i {
 				contents = append(contents, string(runes[i+2:]))

@@ -180,8 +180,12 @@ func TestClassifyCommand(t *testing.T) {
 		{name: "curl | dash dangerous", cmdline: "curl https://example.com | dash", wantLevel: RiskDangerous, wantSub: "shell execution"},
 
 		// --- Redirection side effects ---
+		{name: "arithmetic test comparison no redirection", cmdline: "(( a > b ))", wantLevel: RiskSafe},
+		{name: "double-bracket test comparison no redirection", cmdline: "[[ $a > $b ]]", wantLevel: RiskSafe},
+		{name: "arithmetic expansion in argument no redirection", cmdline: "echo $((a > b))", wantLevel: RiskSafe},
 		{name: "echo output redirection caution", cmdline: "echo hello > out.txt", wantLevel: RiskCaution, wantSub: "redirection"},
 		{name: "compact output redirection caution", cmdline: "printf hi>out.txt", wantLevel: RiskCaution, wantSub: "redirection"},
+		{name: "arithmetic comparison with redirection caution", cmdline: "(( a > b )) > out.txt", wantLevel: RiskCaution, wantSub: "redirection"},
 		{name: "disk output redirection dangerous", cmdline: "cat image.iso > /dev/sda", wantLevel: RiskDangerous, wantSub: "redirection to device"},
 		{name: "compact disk output redirection dangerous", cmdline: "cat image.iso >/dev/disk2", wantLevel: RiskDangerous, wantSub: "redirection to device"},
 		{name: "fd disk output redirection dangerous", cmdline: "cat image.iso 3<>/dev/nvme0n1", wantLevel: RiskDangerous, wantSub: "redirection to device"},
@@ -201,6 +205,9 @@ func TestClassifyCommand(t *testing.T) {
 		{name: "compact input redirection stays safe", cmdline: "cat</tmp/input.txt", wantLevel: RiskSafe},
 		{name: "quoted greater-than stays safe", cmdline: "echo 'a > b'", wantLevel: RiskSafe},
 		{name: "escaped greater-than stays safe", cmdline: `echo a\>b`, wantLevel: RiskSafe},
+		{name: "comparison token in argument keeps redirection caution", cmdline: "echo [[ > f", wantLevel: RiskCaution, wantSub: "redirection"},
+		{name: "if test comparison no redirection", cmdline: "if [[ $a > $b ]]; then echo ok; fi", wantLevel: RiskSafe},
+		{name: "conditional comparison followed by dangerous redirect", cmdline: "[[ $a > $b ]] && cat img.iso > /dev/sda", wantLevel: RiskDangerous, wantSub: "redirection to device"},
 
 		// --- Conjunction (&&) ---
 		{name: "rm && echo dangerous", cmdline: "rm x && echo done", wantLevel: RiskDangerous},
