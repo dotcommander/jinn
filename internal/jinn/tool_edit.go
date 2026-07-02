@@ -221,7 +221,7 @@ func (e *Engine) editFile(args map[string]interface{}) (*ToolResult, error) {
 		}, nil
 	}
 
-	if writeErr := e.snapshotAndWrite(resolved, path, "edit_file", data, updated); writeErr != nil {
+	if _, writeErr := e.snapshotAndWrite(resolved, path, "edit_file", data, updated); writeErr != nil {
 		return nil, writeErr
 	}
 

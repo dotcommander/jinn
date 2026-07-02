@@ -127,7 +127,7 @@ func dryRunResult(edits []pendingEdit) *ToolResult {
 func (e *Engine) writePendingEdits(edits []pendingEdit) (writeResult, error) {
 	var wr writeResult
 	for _, ed := range edits {
-		if werr := e.snapshotAndWrite(ed.resolved, ed.path, "multi_edit", ed.preContent, ed.updated); werr != nil {
+		if _, werr := e.snapshotAndWrite(ed.resolved, ed.path, "multi_edit", ed.preContent, ed.updated); werr != nil {
 			return writeResult{}, fmt.Errorf("%s: %w", ed.path, werr)
 		}
 		line := fmt.Sprintf("edited %s", ed.path)

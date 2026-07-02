@@ -212,7 +212,7 @@ func (e *Engine) applyAdd(r resolvedOp, pre preflightResult) (applyOpResult, err
 		return applyOpResult{}, fmt.Errorf("add %s: mkdir: %w", r.op.path, err)
 	}
 	preContent, _ := os.ReadFile(r.resolved)
-	if err := e.snapshotAndWrite(r.resolved, r.op.path, "apply_patch", preContent, pre.newContent); err != nil {
+	if _, err := e.snapshotAndWrite(r.resolved, r.op.path, "apply_patch", preContent, pre.newContent); err != nil {
 		return applyOpResult{}, fmt.Errorf("add %s: %w", r.op.path, err)
 	}
 	return applyOpResult{summary: fmt.Sprintf("added %s", r.op.path)}, nil
@@ -235,7 +235,7 @@ func (e *Engine) applyUpdate(r resolvedOp, pre preflightResult) (applyOpResult, 
 	if err := e.tracker.checkStale(r.resolved); err != nil {
 		return applyOpResult{}, fmt.Errorf("update %s: %w", r.op.path, err)
 	}
-	if err := e.snapshotAndWrite(r.resolved, r.op.path, "apply_patch", []byte(pre.oldContent), pre.newContent); err != nil {
+	if _, err := e.snapshotAndWrite(r.resolved, r.op.path, "apply_patch", []byte(pre.oldContent), pre.newContent); err != nil {
 		return applyOpResult{}, fmt.Errorf("update %s: %w", r.op.path, err)
 	}
 	dr := generateDiff(pre.oldContent, pre.newContent, r.op.path, 3)

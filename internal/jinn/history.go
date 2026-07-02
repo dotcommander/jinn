@@ -115,32 +115,36 @@ func (e *Engine) saveHistory(hf historyFile) error {
 	return nil
 }
 
-// recordSnapshot saves a pre-mutation snapshot of absPath.
+// recordSnapshot saves a pre-mutation snapshot of absPath and returns the
+// new entry's undo id ("" when the snapshot was skipped).
 // Never blocks a mutation — all recoverable failures are swallowed (best-effort).
 // preContent == nil means the file did not exist before the operation.
 //
 // Blobs are compressed with adaptive gzip (adapted from agented's blob codec).
 // This reduces disk usage for text-heavy edit histories without overhead on
 // small edits or already-compressed content.
-func (e *Engine) recordSnapshot(absPath, displayPath, op string, preContent []byte) {
+func (e *Engine) recordSnapshot(absPath, displayPath, op string, preContent []byte) string {
 	if len(preContent) > historyMaxBlobBytes {
 		// File too large to snapshot — skip silently, don't block the write.
-		return
+		return ""
 	}
 
 	// Best-effort: a lock failure skips the snapshot, never blocks the write.
+	var id string
 	_ = withFileLock(e.historyLockPath(), func() error {
-		e.recordSnapshotLocked(absPath, displayPath, op, preContent)
+		id = e.recordSnapshotLocked(absPath, displayPath, op, preContent)
 		return nil
 	})
+	return id
 }
 
 // recordSnapshotLocked performs the load→blob-write→append→evict→save
-// sequence. Caller holds the history file lock.
-func (e *Engine) recordSnapshotLocked(absPath, displayPath, op string, preContent []byte) {
+// sequence and returns the entry id ("" on any skipped path). Caller holds
+// the history file lock.
+func (e *Engine) recordSnapshotLocked(absPath, displayPath, op string, preContent []byte) string {
 	hf, err := e.loadHistory()
 	if err != nil {
-		return // non-blocking
+		return "" // non-blocking
 	}
 
 	// Build unique entry ID from workdir+path+timestamp.
@@ -158,7 +162,7 @@ func (e *Engine) recordSnapshotLocked(absPath, displayPath, op string, preConten
 	if !created {
 		blob, werr := e.writeBlobForSnapshot(id, preContent)
 		if werr != nil {
-			return // non-blocking
+			return "" // non-blocking
 		}
 		blobHash, blobPath, blobSize = blob.hash, blob.path, blob.size
 	}
@@ -183,8 +187,9 @@ func (e *Engine) recordSnapshotLocked(absPath, displayPath, op string, preConten
 		if blobPath != "" {
 			_ = os.Remove(blobPath)
 		}
-		return
+		return ""
 	}
+	return id
 }
 
 // snapshotBlob is the result of writing a pre-edit blob to disk.

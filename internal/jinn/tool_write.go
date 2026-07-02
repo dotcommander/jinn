@@ -49,10 +49,11 @@ func (e *Engine) atomicWriteFile(resolved, content string) error {
 }
 
 // snapshotAndWrite records an undo snapshot then atomically writes content.
-// Combining them keeps the invariant structural: no mutating write skips history.
-func (e *Engine) snapshotAndWrite(resolved, displayPath, op string, preContent []byte, content string) error {
-	e.recordSnapshot(resolved, displayPath, op, preContent)
-	return e.atomicWriteFile(resolved, content)
+// Combining them keeps the invariant structural: no mutating write skips
+// history. Returns the undo id ("" when the snapshot was skipped).
+func (e *Engine) snapshotAndWrite(resolved, displayPath, op string, preContent []byte, content string) (string, error) {
+	id := e.recordSnapshot(resolved, displayPath, op, preContent)
+	return id, e.atomicWriteFile(resolved, content)
 }
 
 // verifyIfChecksum enforces the optional if_checksum write precondition:

@@ -219,7 +219,7 @@ func srDryRunResult(fileResults []searchReplaceFileResult, pending []searchRepla
 func (e *Engine) srApplyWrites(fileResults []searchReplaceFileResult, pending []searchReplacePending) (*ToolResult, error) {
 	var applied []string
 	for _, p := range pending {
-		if err := e.snapshotAndWrite(p.candidate.resolved, p.candidate.path, "search_replace", p.preData, p.updated); err != nil {
+		if _, err := e.snapshotAndWrite(p.candidate.resolved, p.candidate.path, "search_replace", p.preData, p.updated); err != nil {
 			// Write failure — abort remaining but report what succeeded.
 			return nil, fmt.Errorf("%s: %w", p.candidate.path, err)
 		}
