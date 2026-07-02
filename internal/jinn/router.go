@@ -297,10 +297,19 @@ func parameterTokens(params map[string]any) (map[string]bool, map[string]bool) {
 
 var tokenRE = regexp.MustCompile(`[a-z0-9]+`)
 
+// stopwords are common English function words that carry no semantic signal
+// for tool routing. Filtering them prevents irrelevant tools from scoring
+// highly on grammatical noise in their parameter descriptions.
+var stopwords = map[string]bool{
+	"a": true, "an": true, "the": true,
+	"in": true, "on": true, "at": true, "of": true,
+	"is": true, "this": true, "that": true, "to": true,
+}
+
 func tokenSet(s string) map[string]bool {
 	out := map[string]bool{}
 	for _, tok := range tokenRE.FindAllString(strings.ToLower(strings.ReplaceAll(s, "_", " ")), -1) {
-		if len(tok) < 2 {
+		if len(tok) < 2 || stopwords[tok] {
 			continue
 		}
 		out[singularize(tok)] = true
