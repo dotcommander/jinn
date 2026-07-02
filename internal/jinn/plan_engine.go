@@ -22,6 +22,25 @@ var planPhase1ToolAllowlist = map[string]bool{
 	"lsp_query":    true,
 }
 
+// planToolRisk classifies a mutating-node tool op for the Phase 2 risk gate.
+// Unlike mutatingActions (mutating_registry.go), this covers file-mutating
+// tools (write_file/edit_file/multi_edit/apply_patch/search_replace) in
+// addition to memory actions — mutatingActions intentionally excludes them.
+func planToolRisk(tool, action string) RiskLevel {
+	switch tool {
+	case "write_file", "edit_file", "multi_edit", "apply_patch", "search_replace":
+		return RiskCaution
+	case "memory":
+		if action == "gc" {
+			return RiskDangerous
+		}
+		if action == "save" || action == "forget" {
+			return RiskCaution
+		}
+	}
+	return RiskSafe
+}
+
 func validatePlan(plan *PlanTree) error {
 	if len(plan.Nodes) == 0 {
 		return &ErrWithSuggestion{
