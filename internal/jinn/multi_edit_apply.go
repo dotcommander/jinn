@@ -126,10 +126,13 @@ func dryRunResult(edits []pendingEdit) *ToolResult {
 // returning per-edit result lines, the first changed line, and collected diffs.
 func (e *Engine) writePendingEdits(edits []pendingEdit) (writeResult, error) {
 	var wr writeResult
+	var applied []appliedRef
 	for _, ed := range edits {
-		if _, werr := e.snapshotAndWrite(ed.resolved, ed.path, "multi_edit", ed.preContent, ed.updated); werr != nil {
-			return writeResult{}, fmt.Errorf("%s: %w", ed.path, werr)
+		id, werr := e.snapshotAndWrite(ed.resolved, ed.path, "multi_edit", ed.preContent, ed.updated)
+		if werr != nil {
+			return writeResult{}, partialApplyErr("multi_edit", applied, len(edits), fmt.Errorf("%s: %w", ed.path, werr))
 		}
+		applied = append(applied, appliedRef{path: ed.path, undoID: id})
 		line := fmt.Sprintf("edited %s", ed.path)
 		if ed.fuzzy {
 			line += " (fuzzy match)"

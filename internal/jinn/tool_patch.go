@@ -164,6 +164,7 @@ type applyOpResult struct {
 	summary          string
 	diff             string
 	firstChangedLine int
+	undoID           string
 }
 
 // applyPatchOps performs phase 2: apply all operations with per-file atomic
@@ -172,6 +173,7 @@ func (e *Engine) applyPatchOps(resolved []resolvedOp, preflights []preflightResu
 	var results []string
 	var allDiffs []string
 	var firstLine int
+	var applied []appliedRef
 
 	for i, r := range resolved {
 		h, ok := patchOpHandlers[r.op.kind]
@@ -180,8 +182,9 @@ func (e *Engine) applyPatchOps(resolved []resolvedOp, preflights []preflightResu
 		}
 		res, err := h.apply(e, r, preflights[i])
 		if err != nil {
-			return nil, err
+			return nil, partialApplyErr("apply_patch", applied, len(resolved), err)
 		}
+		applied = append(applied, appliedRef{path: r.op.path, undoID: res.undoID})
 		results = append(results, res.summary)
 		if res.diff != "" {
 			allDiffs = append(allDiffs, res.diff)
@@ -212,21 +215,22 @@ func (e *Engine) applyAdd(r resolvedOp, pre preflightResult) (applyOpResult, err
 		return applyOpResult{}, fmt.Errorf("add %s: mkdir: %w", r.op.path, err)
 	}
 	preContent, _ := os.ReadFile(r.resolved)
-	if _, err := e.snapshotAndWrite(r.resolved, r.op.path, "apply_patch", preContent, pre.newContent); err != nil {
+	id, err := e.snapshotAndWrite(r.resolved, r.op.path, "apply_patch", preContent, pre.newContent)
+	if err != nil {
 		return applyOpResult{}, fmt.Errorf("add %s: %w", r.op.path, err)
 	}
-	return applyOpResult{summary: fmt.Sprintf("added %s", r.op.path)}, nil
+	return applyOpResult{summary: fmt.Sprintf("added %s", r.op.path), undoID: id}, nil
 }
 
 // applyDelete removes a file after recording an undo snapshot.
 func (e *Engine) applyDelete(r resolvedOp, pre preflightResult) (applyOpResult, error) {
 	_ = pre // pre unused: delete needs no preflight payload
 	preContent, _ := os.ReadFile(r.resolved)
-	e.recordSnapshot(r.resolved, r.op.path, "apply_patch", preContent)
+	id := e.recordSnapshot(r.resolved, r.op.path, "apply_patch", preContent)
 	if err := os.Remove(r.resolved); err != nil {
 		return applyOpResult{}, fmt.Errorf("delete %s: %w", r.op.path, err)
 	}
-	return applyOpResult{summary: fmt.Sprintf("deleted %s", r.op.path)}, nil
+	return applyOpResult{summary: fmt.Sprintf("deleted %s", r.op.path), undoID: id}, nil
 }
 
 // applyUpdate writes updated content after a staleness check, recording an
@@ -235,7 +239,8 @@ func (e *Engine) applyUpdate(r resolvedOp, pre preflightResult) (applyOpResult, 
 	if err := e.tracker.checkStale(r.resolved); err != nil {
 		return applyOpResult{}, fmt.Errorf("update %s: %w", r.op.path, err)
 	}
-	if _, err := e.snapshotAndWrite(r.resolved, r.op.path, "apply_patch", []byte(pre.oldContent), pre.newContent); err != nil {
+	id, err := e.snapshotAndWrite(r.resolved, r.op.path, "apply_patch", []byte(pre.oldContent), pre.newContent)
+	if err != nil {
 		return applyOpResult{}, fmt.Errorf("update %s: %w", r.op.path, err)
 	}
 	dr := generateDiff(pre.oldContent, pre.newContent, r.op.path, 3)
@@ -243,5 +248,6 @@ func (e *Engine) applyUpdate(r resolvedOp, pre preflightResult) (applyOpResult, 
 		summary:          fmt.Sprintf("updated %s", r.op.path),
 		diff:             dr.Diff,
 		firstChangedLine: dr.FirstChangedLine,
+		undoID:           id,
 	}, nil
 }
