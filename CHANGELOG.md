@@ -7,6 +7,21 @@ and jinn adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-07-03
+
+### Changed
+
+- Bump `modernc.org/sqlite` to v1.53.0, pulling in updated `libc`, `x/sys`, and
+  `go-isatty` transitive dependencies.
+
+### Documentation
+
+- Correct the advertised tool count to 19 in the README and tool reference.
+- Document `run_plan` and `diff_files` in the tool reference, and add `run_plan`
+  to the README toolset table.
+- Repair the CHANGELOG version-comparison links: add the missing `0.11.0`,
+  `0.10.0`, and `0.9.2` entries and point `[Unreleased]` at the latest tag.
+
 ## [0.11.0] - 2026-07-02
 
 ### Added
@@ -241,7 +256,11 @@ and jinn adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `--schema` flag to emit tool definitions
 - `--version` flag with ldflags and VCS fallback
 
-[Unreleased]: https://github.com/dotcommander/jinn/compare/v0.9.1...HEAD
+[Unreleased]: https://github.com/dotcommander/jinn/compare/v0.11.1...HEAD
+[0.11.1]: https://github.com/dotcommander/jinn/compare/v0.11.0...v0.11.1
+[0.11.0]: https://github.com/dotcommander/jinn/compare/v0.10.0...v0.11.0
+[0.10.0]: https://github.com/dotcommander/jinn/compare/v0.9.2...v0.10.0
+[0.9.2]: https://github.com/dotcommander/jinn/compare/v0.9.1...v0.9.2
 [0.9.1]: https://github.com/dotcommander/jinn/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/dotcommander/jinn/compare/v0.8.14...v0.9.0
 [0.8.14]: https://github.com/dotcommander/jinn/compare/v0.8.13...v0.8.14

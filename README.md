@@ -132,7 +132,7 @@ Recipes for Claude Code, Codex CLI, pi, and custom loops:
 
 ## Toolset
 
-`jinn` exposes 18 specialized tools for coding agents:
+`jinn` exposes 19 specialized tools for coding agents:
 
 | Tool | Description |
 | :--- | :--- |
@@ -145,6 +145,7 @@ Recipes for Claude Code, Codex CLI, pi, and custom loops:
 | `search_files` | Fast grep/regex search with glob filtering, context lines, and a `literal` flag for fixed-string matching. |
 | `search_replace` | Regex search-and-replace across explicit files or glob patterns. Supports capture groups, dry runs, and per-file atomic writes. |
 | `run_shell` | Controlled bash execution with risk classification. Process-group kill ensures background children are also terminated on timeout. Dangerous commands blocked unless `force: true`. |
+| `run_plan` | Execute a condition-gated plan tree of tool/shell operations in one deterministic engine walk. Read-only nodes by default; mutating nodes are risk-gated behind plan- and node-level `force`. |
 | `stat_file` | Get metadata (size, lines, mtime) without reading contents. |
 | `list_dir` | Recursive directory tree exploration (skips hidden files). Directories suffixed with `/` in output. |
 | `find_files` | Find files by glob pattern. Uses `fd` when available (respects `.gitignore`), falls back to POSIX `find`. |

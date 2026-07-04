@@ -1,6 +1,6 @@
 # Tool Reference
 
-jinn exposes 18 tools through a JSON-over-stdin/stdout protocol. You call them by piping a request object:
+jinn exposes 19 tools through a JSON-over-stdin/stdout protocol. You call them by piping a request object:
 
 ```bash
 echo '{"tool":"read_file","args":{"path":"main.go"}}' | jinn
@@ -305,6 +305,28 @@ echo '{"tool":"undo","args":{"action":"list"}}' | jinn
 echo '{"tool":"undo","args":{"action":"restore","id":"a1b2c3"}}' | jinn
 ```
 
+### diff_files
+
+Compare two files and return a unified diff.
+
+```bash
+echo '{"tool":"diff_files","args":{"path_a":"old.go","path_b":"new.go"}}' | jinn
+```
+
+**Parameters:**
+
+| Name | Type | Required | Default | Description |
+|------|------|----------|---------|-------------|
+| `path_a` | string | Yes | -- | First file to compare |
+| `path_b` | string | Yes | -- | Second file to compare |
+| `context_lines` | int | No | `3` | Lines of context around each change |
+
+**Notes:**
+
+- Uses the same diff engine as the `edit_file` dry-run preview.
+- `meta` carries `is_identical` (bool) and `first_changed_line` (int).
+- Both paths are confined to the working directory.
+
 ---
 
 ## Search and Discovery
@@ -490,6 +512,37 @@ Preview without executing:
 ```bash
 echo '{"tool":"run_shell","args":{"command":"rm -rf /tmp/test","dry_run":true}}' | jinn
 ```
+
+### run_plan
+
+Execute a condition-gated plan tree of tool and shell operations in one deterministic engine walk — no model call between nodes. The walk starts at `root` and follows first-match-wins conditional edges until it reaches a leaf, a dead end, the depth limit, or a blocked mutation.
+
+```bash
+echo '{"tool":"run_plan","args":{"plan":{"root":"check","nodes":[{"id":"check","commands":[{"shell":"test -f go.mod"}],"edges":[{"when":{"kind":"exitCode","op":"eq","value":0},"to":"build"}]},{"id":"build","commands":[{"shell":"go build ./..."}],"mutates":true}]}}}' | jinn
+```
+
+**Parameters:**
+
+| Name | Type | Required | Default | Description |
+|------|------|----------|---------|-------------|
+| `plan` | object | Yes | -- | The plan tree to execute (fields below) |
+
+The `plan` object:
+
+| Name | Type | Required | Default | Description |
+|------|------|----------|---------|-------------|
+| `root` | string | Yes | -- | ID of the starting node |
+| `nodes` | array | Yes | -- | Plan nodes, each with `commands` and optional `edges` |
+| `cwd` | string | No | working dir | Working directory for command execution |
+| `max_depth` | int | No | `8` | Maximum node depth before the walk stops |
+| `force` | bool | No | `false` | Plan-level gate; with a node's own `force`, permits `dangerous` mutations |
+
+**Notes:**
+
+- Read-only by default: a node without `mutates: true` allows only `safe` shell commands and read-only tools. A `mutates: true` node runs `caution` operations automatically; `dangerous` ones require both `plan.force` and the node's `force`.
+- Edges are evaluated against the last op's result; condition kinds are `exitCode`, `fileExists`, `jsonPath`, `numeric`, `match`, and `always`.
+- The result carries the run in `meta.plan_run` (`transcript`, `path_taken`, `stopped_reason`, and edge counts).
+- Full `PlanNode` / `PlanEdge` / condition reference lives in the `run_plan` section of [AGENTS.md](../AGENTS.md).
 
 ---
 
