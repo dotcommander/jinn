@@ -247,7 +247,7 @@ If the binary is not on `PATH`, the response includes a `suggestion` with the in
 | `diagnostics` | `path` | Pull diagnostics for the file as `file:line:col severity source/code: message` |
 | `rename` | `path`, `line`, `character`, `new_name` | Preview of rename edits across files — does not write |
 
-`line` and `character` are 1-based. `symbols` and `diagnostics` do not require a position. Pass `symbol` (the identifier name) instead of `character` to let jinn resolve the column automatically.
+`line` and `character` are 1-based. `symbols` and `diagnostics` do not require a position. Pass `symbol` (the identifier name) instead of `line`/`character` to let jinn resolve the declaration position automatically (with a line but no character it resolves just the column); jinn errors if the name is missing or matches more than one declaration.
 
 ```bash
 echo '{"tool":"lsp_query","args":{"action":"hover","path":"main.go","line":12,"character":5}}' | jinn

@@ -137,26 +137,27 @@ type lspDocSymbol struct {
 	Children []lspDocSymbol `json:"children,omitempty"`
 }
 
-func (c *lspClient) symbols(absPath string) (string, error) {
+// documentSymbols fetches the file's symbols and normalizes both server response
+// shapes — hierarchical DocumentSymbol[] and flat SymbolInformation[] — into one
+// []lspDocSymbol tree. Returns nil (and no error) when the server reports none.
+func (c *lspClient) documentSymbols(absPath string) ([]lspDocSymbol, error) {
 	raw, empty, err := c.lspSendCheck("textDocument/documentSymbol", map[string]any{
 		"textDocument": map[string]string{"uri": pathToURI(absPath)},
 	})
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	if empty {
-		return "no symbols found", nil
+		return nil, nil
 	}
 
-	// Try hierarchical DocumentSymbol[] first (has selectionRange + children).
+	// Hierarchical DocumentSymbol[] (has selectionRange + children).
 	var docSyms []lspDocSymbol
 	if err := json.Unmarshal(raw, &docSyms); err == nil && len(docSyms) > 0 {
-		var sb strings.Builder
-		formatSymbolTree(&sb, docSyms, 0)
-		return strings.TrimRight(sb.String(), "\n"), nil
+		return docSyms, nil
 	}
 
-	// Fall back to flat SymbolInformation[] (has location.uri).
+	// Flat SymbolInformation[] (has location.uri) — normalize into lspDocSymbol.
 	type symInfo struct {
 		Name     string      `json:"name"`
 		Kind     int         `json:"kind"`
@@ -164,7 +165,6 @@ func (c *lspClient) symbols(absPath string) (string, error) {
 	}
 	var syms []symInfo
 	if err := json.Unmarshal(raw, &syms); err == nil && len(syms) > 0 && syms[0].Location.URI != "" {
-		// Normalize flat symbols into lspDocSymbol for unified formatting.
 		docSyms = make([]lspDocSymbol, len(syms))
 		for i, s := range syms {
 			docSyms[i].Name = s.Name
@@ -173,12 +173,71 @@ func (c *lspClient) symbols(absPath string) (string, error) {
 			docSyms[i].SelectionRange.Start.Line = s.Location.Range.Start.Line
 			docSyms[i].SelectionRange.Start.Character = s.Location.Range.Start.Character
 		}
-		var sb strings.Builder
-		formatSymbolTree(&sb, docSyms, 0)
-		return strings.TrimRight(sb.String(), "\n"), nil
+		return docSyms, nil
 	}
 
-	return "no symbols found", nil
+	return nil, nil
+}
+
+func (c *lspClient) symbols(absPath string) (string, error) {
+	docSyms, err := c.documentSymbols(absPath)
+	if err != nil {
+		return "", err
+	}
+	if len(docSyms) == 0 {
+		return "no symbols found", nil
+	}
+	var sb strings.Builder
+	formatSymbolTree(&sb, docSyms, 0)
+	return strings.TrimRight(sb.String(), "\n"), nil
+}
+
+// resolveSymbolPosition finds the 1-based line/character of a symbol's
+// declaration by name from the file's document symbols. It returns a clear
+// error when the name matches zero or multiple declarations rather than
+// guessing a position.
+func (c *lspClient) resolveSymbolPosition(absPath, symbol string) (line, char int, err error) {
+	docSyms, err := c.documentSymbols(absPath)
+	if err != nil {
+		return 0, 0, err
+	}
+	var matches []lspDocSymbol
+	collectSymbolMatches(docSyms, symbol, &matches)
+
+	switch len(matches) {
+	case 1:
+		sel := matches[0].SelectionRange.Start
+		return sel.Line + 1, sel.Character + 1, nil
+	case 0:
+		return 0, 0, &ErrWithSuggestion{
+			Err:        fmt.Errorf("lsp_query: symbol %q not found in the file", symbol),
+			Suggestion: "run action \"symbols\" to list the file's declarations, or pass an explicit 'line'",
+			Code:       ErrCodeInvalidArgs,
+		}
+	default:
+		lines := make([]string, len(matches))
+		for i, m := range matches {
+			lines[i] = strconv.Itoa(m.SelectionRange.Start.Line + 1)
+		}
+		return 0, 0, &ErrWithSuggestion{
+			Err:        fmt.Errorf("lsp_query: symbol %q is ambiguous — declared on lines %s", symbol, strings.Join(lines, ", ")),
+			Suggestion: "pass an explicit 'line' (with 'symbol' or 'character') to select the intended declaration",
+			Code:       ErrCodeInvalidArgs,
+		}
+	}
+}
+
+// collectSymbolMatches recurses the document-symbol tree, appending every symbol
+// whose name equals the target.
+func collectSymbolMatches(syms []lspDocSymbol, name string, out *[]lspDocSymbol) {
+	for _, s := range syms {
+		if s.Name == name {
+			*out = append(*out, s)
+		}
+		if len(s.Children) > 0 {
+			collectSymbolMatches(s.Children, name, out)
+		}
+	}
 }
 
 func (c *lspClient) diagnostics(absPath string) (string, error) {

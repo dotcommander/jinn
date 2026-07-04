@@ -765,9 +765,9 @@ echo '{"tool":"lsp_query","args":{"action":"hover","path":"main.go","line":12,"c
 |------|------|----------|---------|-------------|
 | `action` | string | Yes | -- | `definition`, `references`, `hover`, `symbols`, `diagnostics`, or `rename` |
 | `path` | string | Yes | -- | File path relative to working directory |
-| `line` | int | For position actions | -- | 1-based line number of the symbol |
-| `character` | int | For position actions | -- | 1-based character offset within the line |
-| `symbol` | string | No | -- | Identifier name. Supply instead of `character` and jinn resolves the column on `line` automatically. |
+| `line` | int | Unless `symbol` | -- | 1-based line number of the symbol |
+| `character` | int | No | -- | 1-based character offset within the line |
+| `symbol` | string | No | -- | Identifier name. Supply instead of `line`/`character` and jinn resolves the declaration position from the file's document symbols (errors if the name is missing or not unique); with an explicit `line` it resolves just the column. |
 | `new_name` | string | For `rename` | -- | New identifier name. Required when `action` is `rename`. |
 
 **Supported extensions and servers:**

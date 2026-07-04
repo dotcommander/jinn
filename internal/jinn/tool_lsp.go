@@ -101,6 +101,7 @@ type lspRequest struct {
 	argv    []string
 	line    int
 	char    int
+	symbol  string
 	newName string
 }
 
@@ -163,6 +164,7 @@ func (e *Engine) parseLSPArgs(args map[string]interface{}) (lspRequest, error) {
 		argv:    argv,
 		line:    line,
 		char:    char,
+		symbol:  symbol,
 		newName: newName,
 	}, nil
 }
@@ -178,9 +180,14 @@ func resolveLSPPosition(action, absPath string, line, char int, symbol string) (
 	}
 
 	if line <= 0 {
+		// A symbol without a line is resolved later from the file's document
+		// symbols (that needs an open document, so it happens in the session).
+		if symbol != "" {
+			return 0, nil
+		}
 		return 0, &ErrWithSuggestion{
 			Err:        fmt.Errorf("lsp_query: 'line' is required for action %q", action),
-			Suggestion: "provide a 1-based line number for the symbol under the cursor",
+			Suggestion: "provide a 1-based line number, or set 'symbol' to resolve the position automatically",
 			Code:       ErrCodeInvalidArgs,
 		}
 	}
@@ -244,7 +251,26 @@ func (e *Engine) runLSPSession(client *lspClient, req lspRequest) (string, error
 	if err := client.didOpen(req.absPath, langIDForExt(req.ext)); err != nil {
 		return "", err
 	}
+	// Symbol-only position actions: resolve line+char from document symbols now
+	// that the document is open, then dispatch at the resolved position.
+	if req.needsSymbolResolution() {
+		line, char, err := client.resolveSymbolPosition(req.absPath, req.symbol)
+		if err != nil {
+			return "", err
+		}
+		req.line, req.char = line, char
+	}
 	return e.dispatchLSPAction(client, req)
+}
+
+// needsSymbolResolution reports whether the request is a position action that
+// arrived with a symbol but no line, so its position must be resolved from the
+// file's document symbols before dispatch.
+func (r lspRequest) needsSymbolResolution() bool {
+	if r.action == "symbols" || r.action == "diagnostics" {
+		return false
+	}
+	return r.line <= 0 && r.symbol != ""
 }
 
 // lspQueryWithLauncher is the testable variant — tests inject a fake launcher.

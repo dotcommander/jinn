@@ -362,9 +362,9 @@
         "properties": {
           "action":    {"type": "string", "enum": ["definition", "references", "hover", "symbols", "diagnostics", "rename"], "description": "Query type. diagnostics returns pull diagnostics; rename returns a preview of changes (does not apply them)."},
           "path":      {"type": "string", "description": "Path to source file, relative to workDir."},
-          "line":      {"type": "integer", "description": "1-based line number. Required for definition/references/hover/rename."},
-          "character": {"type": "integer", "description": "1-based character offset within the line. Required for definition/references/hover/rename unless symbol is provided."},
-          "symbol":    {"type": "string", "description": "Symbol name to find on the line. When provided and character is absent, auto-detects the column by searching for this string on the given line."},
+          "line":      {"type": "integer", "description": "1-based line number. Optional when 'symbol' is set — jinn resolves the line from the file's document symbols. Otherwise required for definition/references/hover/rename."},
+          "character": {"type": "integer", "description": "1-based character offset within the line. Optional when 'symbol' is set. Otherwise required for definition/references/hover/rename."},
+          "symbol":    {"type": "string", "description": "Identifier name. Supply instead of line/character and jinn resolves the symbol's declaration position from the file's document symbols; with a line but no character it resolves just the column. Errors if the name matches zero or multiple declarations."},
           "new_name":  {"type": "string", "description": "New name for the symbol. Required when action is rename."}
         },
         "required": ["action", "path"]

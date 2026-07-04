@@ -7,6 +7,16 @@ and jinn adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.11.2] - 2026-07-03
+
+### Fixed
+
+- `lsp_query`: position actions (`definition`, `references`, `hover`, `rename`)
+  now accept a `symbol` without a `line` — jinn resolves the symbol's
+  declaration position from the file's document symbols, and returns a clear
+  error when the name matches zero or multiple declarations instead of failing
+  with `'line' is required`.
+
 ## [0.11.1] - 2026-07-03
 
 ### Changed
@@ -256,7 +266,8 @@ and jinn adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `--schema` flag to emit tool definitions
 - `--version` flag with ldflags and VCS fallback
 
-[Unreleased]: https://github.com/dotcommander/jinn/compare/v0.11.1...HEAD
+[Unreleased]: https://github.com/dotcommander/jinn/compare/v0.11.2...HEAD
+[0.11.2]: https://github.com/dotcommander/jinn/compare/v0.11.1...v0.11.2
 [0.11.1]: https://github.com/dotcommander/jinn/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/dotcommander/jinn/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/dotcommander/jinn/compare/v0.9.2...v0.10.0
