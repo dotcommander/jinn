@@ -7,6 +7,30 @@ and jinn adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.11.3] - 2026-07-14
+
+### Fixed
+
+- `jinn_route` now classifies `run_plan` conservatively as mutation-capable and
+  excludes it when `include_mutating:false`.
+- Discovery and routing now fail closed on registry/schema parity errors, and
+  dispatch distinguishes registered-but-unhandled tools from unknown input.
+
+### Changed
+
+- Consolidate registered tool names, discovery features, and route-risk
+  classification in one internal catalog with defensive-copy semantics.
+- `just test` now runs the race-enabled root suite and the nested
+  `examples/pi-go-tool-bridge/bin` module.
+
+### Documentation
+
+- Correct the public `go install` path to target `cmd/jinn`.
+- Clarify that the single binary embeds pure-Go SQLite rather than claiming a
+  standard-library-only implementation.
+- Bring the architecture map and MCP mutation-risk reference in sync with the
+  live 19-tool surface.
+
 ## [0.11.2] - 2026-07-03
 
 ### Fixed
@@ -266,7 +290,8 @@ and jinn adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `--schema` flag to emit tool definitions
 - `--version` flag with ldflags and VCS fallback
 
-[Unreleased]: https://github.com/dotcommander/jinn/compare/v0.11.2...HEAD
+[Unreleased]: https://github.com/dotcommander/jinn/compare/v0.11.3...HEAD
+[0.11.3]: https://github.com/dotcommander/jinn/compare/v0.11.2...v0.11.3
 [0.11.2]: https://github.com/dotcommander/jinn/compare/v0.11.1...v0.11.2
 [0.11.1]: https://github.com/dotcommander/jinn/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/dotcommander/jinn/compare/v0.10.0...v0.11.0
