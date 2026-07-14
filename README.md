@@ -1,7 +1,7 @@
 # jinn
 
 ```bash
-go install github.com/dotcommander/jinn@latest
+go install github.com/dotcommander/jinn/cmd/jinn@latest
 echo '{"tool":"read_file","args":{"path":"go.mod"}}' | jinn
 echo '{"tool":"run_shell","args":{"command":"go test ./..."}}' | jinn
 ```
@@ -14,7 +14,8 @@ Use it when you need a small, deterministic tool layer for an agent loop,
 subagent, hook, CI job, or harness integration.
 
 - **No daemon:** spawn `jinn` once per tool call.
-- **No runtime dependencies:** built with the Go standard library.
+- **Single-binary distribution:** no external runtime services; embedded state
+  uses pure-Go SQLite.
 - **Workspace confinement:** paths stay inside the working directory.
 - **Safer mutation:** file writes use atomic replacement and undo snapshots.
 - **Shell guardrails:** `run_shell` classifies commands as `safe`, `caution`, or
@@ -23,7 +24,7 @@ subagent, hook, CI job, or harness integration.
 ## Install
 
 ```bash
-go install github.com/dotcommander/jinn@latest
+go install github.com/dotcommander/jinn/cmd/jinn@latest
 jinn --version
 ```
 
@@ -194,7 +195,9 @@ For TypeScript, Go, PHP, and shell-script integrations, see [docs/getting-starte
 
 ## Contributing
 
-`jinn` aims for zero dependencies and maximum reliability. Please ensure `go test -race ./...` passes before submitting PRs.
+`jinn` prioritizes single-binary distribution and maximum reliability. Run
+`just test` before submitting PRs; it is the race-enabled gate for both the
+root module and the nested example module.
 
 ## License
 

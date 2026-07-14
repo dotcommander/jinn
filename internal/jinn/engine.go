@@ -10,12 +10,15 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
 	"path/filepath"
 	"runtime/debug"
 	"sync"
 )
+
+var errRegisteredToolNotDispatched = errors.New("registered tool has no dispatcher")
 
 // Engine is a sandboxed tool executor bound to a working directory.
 type Engine struct {
@@ -77,6 +80,9 @@ func textResult(s string) *ToolResult {
 //
 // Tools that don't set meta return a nil map. Callers should treat nil as empty.
 func (e *Engine) Dispatch(ctx context.Context, tool string, args map[string]interface{}) (*ToolResult, map[string]any, error) {
+	if _, ok := lookupToolDescriptor(tool); !ok {
+		return nil, nil, fmt.Errorf("unknown tool: %s", tool)
+	}
 	// run_shell is the only tool returning meta; handle it directly.
 	if tool == "run_shell" {
 		result, meta, err := e.runShell(ctx, args)
@@ -97,19 +103,18 @@ func (e *Engine) Dispatch(ctx context.Context, tool string, args map[string]inte
 	if res, ok, err := e.dispatchPlanOps(ctx, args, tool); ok {
 		return res, nil, err
 	}
-	return nil, nil, fmt.Errorf("unknown tool: %s", tool)
+	return nil, nil, fmt.Errorf("%w: %s", errRegisteredToolNotDispatched, tool)
 }
 
 // dispatchListTools handles the list_tools capability/schema reporting case.
 func (e *Engine) dispatchListTools(args map[string]interface{}) (*ToolResult, map[string]any, error) {
-	tools, err := SchemaToolNames()
-	if err != nil {
-		return nil, nil, fmt.Errorf("list tool names: %w", err)
+	if err := validateToolCatalogSchemaParity(); err != nil {
+		return nil, nil, fmt.Errorf("validate tool catalog: %w", err)
 	}
 	caps := ToolCapabilities{
 		JinnVersion: ResolveVersion(e.version),
-		Tools:       tools,
-		Features:    toolFeatures,
+		Tools:       registeredToolNames(),
+		Features:    registeredToolFeatures(),
 	}
 	capsJSON, err := json.Marshal(caps)
 	if err != nil {

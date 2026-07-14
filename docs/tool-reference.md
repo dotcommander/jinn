@@ -586,6 +586,11 @@ printf '%s\n' \
 | `include_schema` | boolean | No | `false` | Include lean schemas only for returned tools |
 | `include_mutating` | boolean | No | `true` | Allow recommendations for mutating tools |
 
+`mutating` is a maximum-capability classification: it is true when at least one
+valid invocation of the tool may mutate files or persistent state. Therefore,
+`include_mutating:false` excludes `run_plan` even when the particular plan a
+caller intends to submit would be read-only.
+
 **Returns:** the tool result is one text content block containing route JSON.
 The request above returns (second match abbreviated):
 

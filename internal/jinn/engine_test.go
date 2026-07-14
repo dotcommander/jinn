@@ -4,18 +4,26 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 )
 
+var expectedSchemaToolNames = []string{
+	"run_plan", "run_shell", "read_file", "multi_read", "write_file",
+	"edit_file", "multi_edit", "apply_patch", "search_files", "stat_file",
+	"list_dir", "find_files", "list_tools", "detect_project", "memory",
+	"undo", "lsp_query", "diff_files", "search_replace",
+}
+
 func TestSchema_Valid(t *testing.T) {
 	t.Parallel()
-	var tools []json.RawMessage
+	var tools []schemaTool
 	if err := json.Unmarshal([]byte(Schema), &tools); err != nil {
 		t.Fatalf("Schema is not valid JSON: %v", err)
 	}
-	if len(tools) != 19 {
-		t.Fatalf("expected 19 tools, got %d", len(tools))
+	if got := schemaToolNames(tools); !reflect.DeepEqual(got, expectedSchemaToolNames) {
+		t.Fatalf("schema tools = %v, want %v", got, expectedSchemaToolNames)
 	}
 }
 
@@ -28,12 +36,12 @@ func TestCompactSchema_Valid(t *testing.T) {
 	if strings.Contains(schema, "\n") {
 		t.Fatal("compact schema should not contain newlines")
 	}
-	var tools []json.RawMessage
+	var tools []schemaTool
 	if err := json.Unmarshal([]byte(schema), &tools); err != nil {
 		t.Fatalf("compact schema is not valid JSON: %v", err)
 	}
-	if len(tools) != 19 {
-		t.Fatalf("expected 19 tools, got %d", len(tools))
+	if got := schemaToolNames(tools); !reflect.DeepEqual(got, expectedSchemaToolNames) {
+		t.Fatalf("compact schema tools = %v, want %v", got, expectedSchemaToolNames)
 	}
 }
 
@@ -49,13 +57,21 @@ func TestLeanSchema_Valid(t *testing.T) {
 	if !strings.Contains(schema, "Read file contents") {
 		t.Fatal("lean schema should keep function descriptions")
 	}
-	var tools []json.RawMessage
+	var tools []schemaTool
 	if err := json.Unmarshal([]byte(schema), &tools); err != nil {
 		t.Fatalf("lean schema is not valid JSON: %v", err)
 	}
-	if len(tools) != 19 {
-		t.Fatalf("expected 19 tools, got %d", len(tools))
+	if got := schemaToolNames(tools); !reflect.DeepEqual(got, expectedSchemaToolNames) {
+		t.Fatalf("lean schema tools = %v, want %v", got, expectedSchemaToolNames)
 	}
+}
+
+func schemaToolNames(tools []schemaTool) []string {
+	names := make([]string, 0, len(tools))
+	for _, tool := range tools {
+		names = append(names, tool.Function.Name)
+	}
+	return names
 }
 
 func TestDispatch_UnknownTool(t *testing.T) {

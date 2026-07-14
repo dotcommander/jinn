@@ -13,17 +13,6 @@ const (
 	RouteMaxTools        = 8
 )
 
-var routeMutatingTools = map[string]bool{
-	"write_file":     true,
-	"edit_file":      true,
-	"multi_edit":     true,
-	"apply_patch":    true,
-	"search_replace": true,
-	"memory":         true,
-	"undo":           true,
-	"run_shell":      true,
-}
-
 type RouteRequest struct {
 	Need            string `json:"need"`
 	MaxTools        int    `json:"max_tools,omitempty"`
@@ -60,6 +49,7 @@ type schemaToolFunction struct {
 
 type routeCandidate struct {
 	tool        schemaTool
+	descriptor  toolDescriptor
 	score       int
 	reasonParts []string
 }
@@ -86,16 +76,22 @@ func RouteTools(req RouteRequest) (RouteResponse, error) {
 	if err != nil {
 		return resp, err
 	}
+	if err := validateToolCatalogSchemaParity(); err != nil {
+		return resp, fmt.Errorf("validate tool catalog: %w", err)
+	}
 
 	queryTokens := tokenSet(need)
 	candidates := make([]routeCandidate, 0, len(tools))
 	for _, tool := range tools {
 		name := tool.Function.Name
-		mutating := routeMutatingTools[name]
-		if mutating && !req.allowMutating() {
+		descriptor, ok := lookupToolDescriptor(name)
+		if !ok {
+			return resp, fmt.Errorf("tool metadata missing for %q", name)
+		}
+		if descriptor.mayMutate() && !req.allowMutating() {
 			continue
 		}
-		c := scoreRouteCandidate(tool, queryTokens, strings.ToLower(need))
+		c := scoreRouteCandidate(tool, descriptor, queryTokens, strings.ToLower(need))
 		if c.score >= 8 {
 			candidates = append(candidates, c)
 		}
@@ -112,14 +108,13 @@ func RouteTools(req RouteRequest) (RouteResponse, error) {
 	}
 
 	for _, c := range candidates {
-		name := c.tool.Function.Name
 		match := RouteMatch{
-			Name:        name,
+			Name:        c.tool.Function.Name,
 			Description: c.tool.Function.Description,
 			Reason:      routeReason(c.reasonParts),
-			Mutating:    routeMutatingTools[name],
-			Risk:        routeRisk(name),
-			Features:    toolFeatures[name],
+			Mutating:    c.descriptor.mayMutate(),
+			Risk:        string(c.descriptor.routeRisk),
+			Features:    cloneStrings(c.descriptor.features),
 		}
 		if req.IncludeSchema {
 			match.Schema = leanSchemaForTool(c.tool)
@@ -162,9 +157,9 @@ func parseSchemaTools() ([]schemaTool, error) {
 	return tools, nil
 }
 
-func scoreRouteCandidate(tool schemaTool, queryTokens map[string]bool, queryLower string) routeCandidate {
+func scoreRouteCandidate(tool schemaTool, descriptor toolDescriptor, queryTokens map[string]bool, queryLower string) routeCandidate {
 	fn := tool.Function
-	c := routeCandidate{tool: tool}
+	c := routeCandidate{tool: tool, descriptor: descriptor}
 	nameLower := strings.ToLower(fn.Name)
 	nameWords := strings.ReplaceAll(nameLower, "_", " ")
 	if strings.Contains(queryLower, nameLower) || strings.Contains(queryLower, nameWords) {
@@ -174,7 +169,7 @@ func scoreRouteCandidate(tool schemaTool, queryTokens map[string]bool, queryLowe
 
 	descTokens := tokenSet(fn.Description)
 	paramTokens, enumTokens := parameterTokens(fn.Parameters)
-	featureTokens := tokenSet(strings.Join(toolFeatures[fn.Name], " "))
+	featureTokens := tokenSet(strings.Join(descriptor.features, " "))
 	nameTokens := tokenSet(fn.Name)
 
 	c.score += weightedOverlap(queryTokens, nameTokens, 5, &c.reasonParts, "name tokens")
@@ -199,16 +194,6 @@ func routeReason(parts []string) string {
 		}
 	}
 	return "Matched " + strings.Join(out, ", ") + "."
-}
-
-func routeRisk(name string) string {
-	if name == "run_shell" {
-		return "shell"
-	}
-	if routeMutatingTools[name] {
-		return "mutating"
-	}
-	return "read_only"
 }
 
 func routeNotes(matches []RouteMatch) []string {

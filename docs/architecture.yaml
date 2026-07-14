@@ -11,14 +11,19 @@ phases:
           gate: "os.Args[1]"
           branches:
             - { condition: "--schema", label: "dump OpenAI schema", subtitle: "LeanSchema → function-calling JSON to stdout" }
+            - { condition: "--inspect", label: "start inspector", subtitle: "loopback HTTP UI → Engine.Dispatch" }
+            - { condition: "--mcp", label: "start MCP broker", subtitle: "stdio discovery → jinn_route" }
             - { condition: "--version", label: "resolve version", subtitle: "ldflags → VCS → module" }
             - { condition: "--help / -h", label: "print usage" }
             - { condition: "no args", label: "stdin guard", subtitle: "TTY → help · pipe → execute" }
       - { label: "signal handler", subtitle: "SIGINT + SIGTERM → ctx cancel" }
     files:
       - cmd/jinn/main.go
+      - cmd/jinn/inspect.go
+      - cmd/jinn/mcp.go
       - internal/jinn/schema.go
       - internal/jinn/schema_compact.go
+      - internal/jinn/router.go
 
   - name: Bootstrap
     kind: Parse
@@ -36,7 +41,6 @@ phases:
     files:
       - internal/jinn/engine.go
       - internal/jinn/tracker.go
-      - internal/jinn/config.go
 
   - name: Security
     kind: Gate
@@ -52,12 +56,13 @@ phases:
 
   - name: Dispatch
     kind: Execute
-    description: "route to one of twenty tool handlers"
+    description: "validate the registry/schema contract, then route registered names to explicit handlers"
     stages:
       - fork:
           gate: "tool name"
           branches:
             - { condition: "run_shell", label: "runShell", subtitle: "bash -c · env allow-list · 300s max · risk classify", wide: true }
+            - { condition: "run_plan", label: "runPlan", subtitle: "condition-gated plan tree · mutation authorization stays invocation-specific", wide: true }
             - { condition: "read_file", label: "readFile", subtitle: "50 MB guard · MIME detect · windowed lines · truncate strategy" }
             - { condition: "multi_read", label: "multiRead", subtitle: "batch ≤20 files · per-file errors", wide: true }
             - { condition: "write_file", label: "writeFile", subtitle: "stale check → atomic write → rename" }
@@ -70,7 +75,7 @@ phases:
             - { condition: "stat_file", label: "statFile", subtitle: "type + size + lines + mtime" }
             - { condition: "list_dir", label: "listDir", subtitle: "find → sort · hidden excluded" }
             - { condition: "find_files", label: "findFiles", subtitle: "fd → find · glob pattern" }
-            - { condition: "list_tools", label: "listTools", subtitle: "capability metadata · inline in engine.go" }
+            - { condition: "list_tools", label: "listTools", subtitle: "registry-backed capability metadata" }
             - { condition: "detect_project", label: "detectProject", subtitle: "language · framework · build/test/lint" }
             - { condition: "memory", label: "memoryTool", subtitle: "save · recall · list · forget · per-project scope" }
             - { condition: "undo", label: "undoTool", subtitle: "list · preview · restore · clear" }
@@ -82,7 +87,14 @@ phases:
             - { condition: "1 exact", label: "apply edit" }
             - { condition: "> 1", label: "ambiguous error" }
     files:
+      - internal/jinn/tool_registry.go
+      - internal/jinn/engine.go
       - internal/jinn/tool_shell.go
+      - internal/jinn/tool_run_plan.go
+      - internal/jinn/plan_engine.go
+      - internal/jinn/plan_types.go
+      - internal/jinn/plan_coerce.go
+      - internal/jinn/stats.go
       - internal/jinn/command_risk.go
       - internal/jinn/command_risk_parse.go
       - internal/jinn/exitcode.go
@@ -171,3 +183,6 @@ stores:
   - name: "~/Library/Application Support/jinn/memory.db on macOS, ~/.config/jinn/memory.db on Linux (override base dir via $JINN_CONFIG_DIR)"
     writers:
       - { stage: "memoryTool", access: "r/w", note: "scoped SQLite key/value store · save/recall/list/forget · per-project + global" }
+  - name: "~/Library/Application Support/jinn/stats/run_plan.jsonl on macOS, ~/.config/jinn/stats/run_plan.jsonl on Linux (override base dir via $JINN_CONFIG_DIR)"
+    writers:
+      - { stage: "runPlan", access: "w", note: "best-effort append-only plan-run statistics; failures never affect tool results" }

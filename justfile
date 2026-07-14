@@ -14,6 +14,7 @@ install: build
 # Run the full test suite with race detector
 test:
     go test -race ./...
+    GOWORK=off go -C examples/pi-go-tool-bridge/bin test -race ./...
 
 # Remove the local jinn binary
 clean:

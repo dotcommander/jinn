@@ -1,13 +1,13 @@
 # Getting Started
 
-jinn is a sandboxed tool executor for AI coding agents. You pipe it a JSON request, it runs one tool, and it prints a JSON response. Single binary, zero dependencies.
+jinn is a sandboxed tool executor for AI coding agents. You pipe it a JSON request, it runs one tool, and it prints a JSON response. It ships as a single binary with no external runtime services.
 
 ## Installation
 
 Install with Go:
 
 ```bash
-go install github.com/dotcommander/jinn@latest
+go install github.com/dotcommander/jinn/cmd/jinn@latest
 ```
 
 Or build from source:

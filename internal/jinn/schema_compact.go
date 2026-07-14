@@ -6,10 +6,8 @@ import (
 	"fmt"
 )
 
-// SchemaToolNames returns the ordered list of tool names declared in Schema.
-// This is the single source of truth — list_tools and other introspection
-// callers derive their tool list from here rather than maintaining a parallel
-// slice that drifts as tools are added or renamed.
+// SchemaToolNames returns the ordered tool names declared by the embedded wire
+// schema. The runtime registry validates exact parity with this declaration.
 func SchemaToolNames() ([]string, error) {
 	var raw []struct {
 		Function struct {

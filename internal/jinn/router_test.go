@@ -64,6 +64,41 @@ func TestRouteToolsIncludeMutatingFalse(t *testing.T) {
 	}
 }
 
+func TestRouteToolsRunPlanClassification(t *testing.T) {
+	t.Parallel()
+	resp, err := RouteTools(RouteRequest{Need: "run plan", MaxTools: RouteMaxTools, IncludeMutating: boolPtr(true)})
+	if err != nil {
+		t.Fatalf("RouteTools: %v", err)
+	}
+	match, ok := routeMatchNamed(resp.Matches, "run_plan")
+	if !ok {
+		t.Fatalf("run_plan missing from matches: %+v", resp.Matches)
+	}
+	if !match.Mutating || match.Risk != "mutating" {
+		t.Fatalf("run_plan classification = mutating:%v risk:%q", match.Mutating, match.Risk)
+	}
+}
+
+func TestRouteToolsRunPlanExcludedWhenMutatingDisabled(t *testing.T) {
+	t.Parallel()
+	resp, err := RouteTools(RouteRequest{Need: "run plan", MaxTools: RouteMaxTools, IncludeMutating: boolPtr(false)})
+	if err != nil {
+		t.Fatalf("RouteTools: %v", err)
+	}
+	if _, ok := routeMatchNamed(resp.Matches, "run_plan"); ok {
+		t.Fatalf("run_plan returned with include_mutating=false: %+v", resp.Matches)
+	}
+}
+
+func routeMatchNamed(matches []RouteMatch, name string) (RouteMatch, bool) {
+	for _, match := range matches {
+		if match.Name == name {
+			return match, true
+		}
+	}
+	return RouteMatch{}, false
+}
+
 func TestRouteToolsIncludeSchemaOnlyMatches(t *testing.T) {
 	t.Parallel()
 	resp, err := RouteTools(RouteRequest{Need: "read a file", MaxTools: 2, IncludeSchema: true, IncludeMutating: boolPtr(true)})

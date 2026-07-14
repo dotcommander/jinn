@@ -20,25 +20,6 @@ type ToolCapabilities struct {
 	Features    map[string][]string `json:"features"`
 }
 
-// toolFeatures lists the optional feature flags each tool supports.
-// Callers should check for a feature key in this map rather than
-// hard-coding support assumptions.
-var toolFeatures = map[string][]string{
-	"edit_file":      {"dry_run", "fuzzy_indent", "show_context"},
-	"multi_edit":     {"overlap_detection", "show_context", "dry_run"},
-	"run_shell":      {"risk_classification", "exit_classification", "dry_run", "stdout_stderr_split", "recovery_hints", "compress_output"},
-	"search_files":   {"literal", "context_lines", "format_json", "case_insensitive", "zero_match_reason"},
-	"read_file":      {"truncate_strategy", "include_checksum", "tail"},
-	"multi_read":     {"per_file_windowing", "partial_success"},
-	"write_file":     {"dry_run"},
-	"stat_file":      {"encoding_detection", "line_ending_detection", "bom_detection"},
-	"list_dir":       {"changed_since"},
-	"diff_files":     {"context_lines"},
-	"search_replace": {"regex", "capture_groups", "multi_file", "glob_patterns", "replace_all", "dry_run", "case_insensitive", "multiline"},
-	"run_plan":      {},
-	"lsp_query":      {"definition", "references", "hover", "symbols", "diagnostics", "rename", "symbol_column", "context_lines"},
-}
-
 // Request is the one-shot tool invocation envelope.
 type Request struct {
 	Tool      string                 `json:"tool"`

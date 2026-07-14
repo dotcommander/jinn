@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -35,8 +36,16 @@ func TestInspector_ListToolsAndSchema(t *testing.T) {
 	if err := json.NewDecoder(schemaResp.Body).Decode(&schema); err != nil {
 		t.Fatalf("decode schema: %v", err)
 	}
-	if len(schema) != 19 {
-		t.Fatalf("expected 19 schema tools, got %d", len(schema))
+	schemaNames := make([]string, 0, len(schema))
+	for _, tool := range schema {
+		schemaNames = append(schemaNames, tool.Function.Name)
+	}
+	wantNames, err := jinn.SchemaToolNames()
+	if err != nil {
+		t.Fatalf("schema tool names: %v", err)
+	}
+	if !reflect.DeepEqual(schemaNames, wantNames) {
+		t.Fatalf("inspector schema tools = %v, want %v", schemaNames, wantNames)
 	}
 
 	capsReq, err := http.NewRequest(http.MethodGet, "/api/list_tools", nil)
@@ -53,8 +62,8 @@ func TestInspector_ListToolsAndSchema(t *testing.T) {
 	if err := json.NewDecoder(capsResp.Body).Decode(&caps); err != nil {
 		t.Fatalf("decode capabilities: %v", err)
 	}
-	if len(caps.Tools) != len(schema) {
-		t.Fatalf("capability tool count %d != schema count %d", len(caps.Tools), len(schema))
+	if !reflect.DeepEqual(caps.Tools, wantNames) {
+		t.Fatalf("capability tools = %v, want %v", caps.Tools, wantNames)
 	}
 }
 

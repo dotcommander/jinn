@@ -42,9 +42,10 @@ Example:
 // non-JSON bytes into that stream and corrupt downstream parsers, so neither
 // stream may carry log output. There are currently no diagnostic call sites,
 // so a file-sink handler (writing under ~/.config/jinn/, gated by
-// JINN_CONFIG_DIR per internal/jinn/config.go) would add a log path, handler
-// lifecycle, and an on-disk file with no consumer. If diagnostic logging is
-// added later, route it ONLY to such a file sink — never to stdout/stderr.
+// JINN_CONFIG_DIR per the convention in internal/jinn/stats.go) would add a log
+// path, handler lifecycle, and an on-disk file with no consumer. If diagnostic
+// logging is added later, route it ONLY to such a file sink — never to
+// stdout/stderr.
 func main() {
 	if err := run(context.Background()); err != nil {
 		writeRunError(err)

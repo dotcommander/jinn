@@ -69,6 +69,51 @@ func TestMCPToolsCallRouteDoesNotExecute(t *testing.T) {
 	}
 }
 
+func TestMCPRouteRunPlanClassification(t *testing.T) {
+	t.Parallel()
+	resp := handleMCPTestLine(t, `{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"jinn_route","arguments":{"need":"run plan","include_mutating":true,"max_tools":8}}}`)
+	matches := decodeMCPRouteMatches(t, resp)
+	for _, match := range matches {
+		if match.Name == "run_plan" {
+			if !match.Mutating || match.Risk != "mutating" {
+				t.Fatalf("run_plan classification = mutating:%v risk:%q", match.Mutating, match.Risk)
+			}
+			return
+		}
+	}
+	t.Fatalf("run_plan missing from MCP route: %+v", matches)
+}
+
+func TestMCPRouteRunPlanExcludedWhenMutatingDisabled(t *testing.T) {
+	t.Parallel()
+	resp := handleMCPTestLine(t, `{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"jinn_route","arguments":{"need":"run plan","include_mutating":false,"max_tools":8}}}`)
+	for _, match := range decodeMCPRouteMatches(t, resp) {
+		if match.Name == "run_plan" {
+			t.Fatalf("run_plan returned with include_mutating=false: %+v", match)
+		}
+	}
+}
+
+type mcpRouteMatch struct {
+	Name     string `json:"name"`
+	Mutating bool   `json:"mutating"`
+	Risk     string `json:"risk"`
+}
+
+func decodeMCPRouteMatches(t *testing.T, resp map[string]any) []mcpRouteMatch {
+	t.Helper()
+	result := resp["result"].(map[string]any)
+	content := result["content"].([]any)
+	text := content[0].(map[string]any)["text"].(string)
+	var route struct {
+		Matches []mcpRouteMatch `json:"matches"`
+	}
+	if err := json.Unmarshal([]byte(text), &route); err != nil {
+		t.Fatalf("route text is not JSON: %v\n%s", err, text)
+	}
+	return route.Matches
+}
+
 func TestMCPUnknownMethodAndTool(t *testing.T) {
 	t.Parallel()
 	methodResp := handleMCPTestLine(t, `{"jsonrpc":"2.0","id":3,"method":"resources/list"}`)
