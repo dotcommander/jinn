@@ -6,10 +6,13 @@ default:
 build:
     go build -ldflags "-X main.version=$(git describe --tags --always --dirty 2>/dev/null || echo dev)" -o jinn ./cmd/jinn/
 
-# Build and symlink into ~/go/bin/jinn
+# Resolve GOBIN, falling back to GOPATH/bin when it is unset.
+gobin := `gobin="$(go env GOBIN)"; [ -n "$gobin" ] && echo "$gobin" || echo "$(go env GOPATH)/bin"`
+
+# Build and symlink into the configured Go bin directory.
 install: build
-    mkdir -p ~/go/bin
-    ln -sf "$(pwd)/jinn" ~/go/bin/jinn
+    mkdir -p "{{gobin}}"
+    ln -sf "$(pwd)/jinn" "{{gobin}}/jinn"
 
 # Run the full test suite with race detector
 test:
