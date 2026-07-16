@@ -4,9 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
 )
@@ -23,11 +21,7 @@ func (e *Engine) goDiagnostics(ctx context.Context, req lspRequest, timeout int)
 	errBuf := &boundedWriter{limit: 1 << 20}
 	c := exec.CommandContext(checkCtx, "gopls", "check", req.absPath) //nolint:gosec // G204: gopls binary is fixed; path was sandbox-checked.
 	c.Dir = e.workDir
-	if cacheDir, cacheErr := goDiagnosticsCacheDir(); cacheErr == nil {
-		c.Env = subprocessEnv(map[string]string{"GOCACHE": cacheDir})
-	} else {
-		c.Env = subprocessEnv(nil)
-	}
+	c.Env = subprocessEnv(nil)
 	c.Stdout = outBuf
 	c.Stderr = errBuf
 	runErr := c.Run()
@@ -80,12 +74,4 @@ func nonEmptyStrings(values ...string) []string {
 		}
 	}
 	return out
-}
-
-func goDiagnosticsCacheDir() (string, error) {
-	dir := filepath.Join(os.TempDir(), "jinn-gocache")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return "", err
-	}
-	return dir, nil
 }
