@@ -7,6 +7,15 @@ and jinn adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.11.4] - 2026-07-16
+
+### Fixed
+
+- `just install` now targets the configured `GOBIN`, falling back to
+  `GOPATH/bin` when `GOBIN` is unset.
+- Go LSP diagnostics now inherit the configured persistent Go build cache
+  instead of creating a temporary cache under `/tmp`.
+
 ## [0.11.3] - 2026-07-14
 
 ### Fixed
@@ -290,7 +299,8 @@ and jinn adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `--schema` flag to emit tool definitions
 - `--version` flag with ldflags and VCS fallback
 
-[Unreleased]: https://github.com/dotcommander/jinn/compare/v0.11.3...HEAD
+[Unreleased]: https://github.com/dotcommander/jinn/compare/v0.11.4...HEAD
+[0.11.4]: https://github.com/dotcommander/jinn/compare/v0.11.3...v0.11.4
 [0.11.3]: https://github.com/dotcommander/jinn/compare/v0.11.2...v0.11.3
 [0.11.2]: https://github.com/dotcommander/jinn/compare/v0.11.1...v0.11.2
 [0.11.1]: https://github.com/dotcommander/jinn/compare/v0.11.0...v0.11.1
