@@ -151,6 +151,9 @@ func (e *Engine) undoRestore(args map[string]interface{}) (string, error) {
 
 	if ent.Created {
 		// File was created by the op — undo means delete it.
+		if checksumErr := verifyUndoChecksum(args, resolved); checksumErr != nil {
+			return "", checksumErr
+		}
 		if rmErr := os.Remove(resolved); rmErr != nil && !os.IsNotExist(rmErr) {
 			return "", fmt.Errorf("restore: remove %s: %w", ent.DisplayPath, rmErr)
 		}
@@ -162,6 +165,9 @@ func (e *Engine) undoRestore(args map[string]interface{}) (string, error) {
 		return "", err
 	}
 
+	if checksumErr := verifyUndoChecksum(args, resolved); checksumErr != nil {
+		return "", checksumErr
+	}
 	// Restore via atomic write (preserves existing permissions, fsyncs).
 	if err := os.MkdirAll(filepath.Dir(resolved), 0o750); err != nil {
 		return "", fmt.Errorf("restore: mkdir: %w", err)
@@ -171,6 +177,17 @@ func (e *Engine) undoRestore(args map[string]interface{}) (string, error) {
 	}
 	return fmt.Sprintf("restored: %s to snapshot from %s (op %q, id=%s)",
 		ent.DisplayPath, ent.Timestamp.Format(time.RFC3339), ent.Op, ent.ID), nil
+}
+
+func verifyUndoChecksum(args map[string]interface{}, path string) error {
+	if strArg(args, "if_checksum") == "" {
+		return nil
+	}
+	current, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("restore: read current target: %w", err)
+	}
+	return verifyIfChecksum(args, path, current, err == nil)
 }
 
 // undoClear deletes all history for this workdir.
@@ -184,7 +201,7 @@ func (e *Engine) undoClear() (string, error) {
 	return "cleared history for this workdir", nil
 }
 
-// findEntry looks up a snapshot entry by ID prefix. Returns ErrWithSuggestion when not found.
+// findEntry looks up a snapshot entry by exact ID or unambiguous ID prefix.
 func (e *Engine) findEntry(id string) (historyEntry, error) {
 	hf, err := e.loadHistoryLocked()
 	if err != nil {
@@ -192,8 +209,27 @@ func (e *Engine) findEntry(id string) (historyEntry, error) {
 	}
 
 	for _, ent := range hf.Entries {
-		if strings.HasPrefix(ent.ID, id) {
+		if ent.ID == id {
 			return ent, nil
+		}
+	}
+
+	var match historyEntry
+	matches := 0
+	for _, ent := range hf.Entries {
+		if strings.HasPrefix(ent.ID, id) {
+			match = ent
+			matches++
+		}
+	}
+	if matches == 1 {
+		return match, nil
+	}
+	if matches > 1 {
+		return historyEntry{}, &ErrWithSuggestion{
+			Err:        fmt.Errorf("snapshot id prefix is ambiguous: %q matches %d entries", id, matches),
+			Suggestion: `use a longer prefix or the full ID from action="list"`,
+			Code:       ErrCodeInvalidArgs,
 		}
 	}
 	return historyEntry{}, &ErrWithSuggestion{

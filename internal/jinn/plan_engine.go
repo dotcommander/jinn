@@ -60,6 +60,13 @@ func validatePlan(plan *PlanTree) error {
 				Code:       ErrCodePlanInvalid,
 			}
 		}
+		if n.Parallel && n.Mutates {
+			return &ErrWithSuggestion{
+				Err:        fmt.Errorf("node %s cannot combine parallel and mutates", n.ID),
+				Suggestion: "split mutating operations into serial nodes and resubmit — validation runs before any node executes",
+				Code:       ErrCodePlanInvalid,
+			}
+		}
 		seen[n.ID] = true
 	}
 

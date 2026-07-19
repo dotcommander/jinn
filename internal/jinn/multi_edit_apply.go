@@ -128,6 +128,9 @@ func (e *Engine) writePendingEdits(edits []pendingEdit) (writeResult, error) {
 	var wr writeResult
 	var applied []appliedRef
 	for _, ed := range edits {
+		if err := verifyPreflightState(ed.resolved, ed.preContent, true); err != nil {
+			return writeResult{}, partialApplyErr("multi_edit", applied, len(edits), fmt.Errorf("%s: %w", ed.path, err))
+		}
 		id, werr := e.snapshotAndWrite(ed.resolved, ed.path, "multi_edit", ed.preContent, ed.updated)
 		if werr != nil {
 			return writeResult{}, partialApplyErr("multi_edit", applied, len(edits), fmt.Errorf("%s: %w", ed.path, werr))

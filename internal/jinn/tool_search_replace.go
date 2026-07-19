@@ -88,7 +88,7 @@ func (e *Engine) searchReplace(ctx context.Context, args map[string]interface{})
 	var fileResults []searchReplaceFileResult
 
 	for _, c := range candidates {
-		p, fr, ok := e.processSRCandidate(c, re, replacement)
+		p, fr, ok := e.processSRCandidate(c, re, replacement, checksumForTarget(args, c.path))
 		switch {
 		case p != nil:
 			pending = append(pending, *p)
@@ -111,4 +111,10 @@ func (e *Engine) searchReplace(ctx context.Context, args map[string]interface{})
 
 	// --- Phase 2: Apply all changes with per-file atomic writes ---
 	return e.srApplyWrites(fileResults, pending)
+}
+
+func checksumForTarget(args map[string]interface{}, path string) string {
+	checksums, _ := args["if_checksums"].(map[string]interface{})
+	want, _ := checksums[path].(string)
+	return want
 }

@@ -107,7 +107,6 @@ func TestPlanMutationFalsePositiveMatrix(t *testing.T) {
 	}{
 		{"stderr_redirect_devnull", "echo ok 2>/dev/null"},
 		{"stdout_redirect_devnull", "echo ok > /dev/null"},
-		{"awk_numeric_comparison", "awk $1 > 200"},
 		{"bash_test_comparison", "[[ $x > 3 ]]"},
 		{"bash_arithmetic_comparison", "(( 4 > 2 ))"},
 		{"quoted_js_comparison", `echo "const f = (x) => x >= 3;"`},

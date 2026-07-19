@@ -113,3 +113,50 @@ func TestWriteFile_IfChecksum_DryRunAlsoRejected(t *testing.T) {
 		t.Fatalf("expected dry_run to honor if_checksum, got: %v", err)
 	}
 }
+
+func TestWriteFile_RejectsExistenceChangeAfterPreflight(t *testing.T) {
+	t.Parallel()
+
+	t.Run("missing target becomes empty file", func(t *testing.T) {
+		t.Parallel()
+		e, dir := testEngine(t)
+		path := filepath.Join(dir, "created-externally.txt")
+
+		_, err := e.writeFileWithPreCommitHook(
+			args("path", "created-externally.txt", "content", "agent content"),
+			func() {
+				if writeErr := os.WriteFile(path, nil, 0o640); writeErr != nil {
+					t.Fatalf("external WriteFile: %v", writeErr)
+				}
+			},
+		)
+		requireStaleFileError(t, err)
+		got, readErr := os.ReadFile(path)
+		if readErr != nil {
+			t.Fatalf("read external file: %v", readErr)
+		}
+		if len(got) != 0 {
+			t.Fatalf("external empty file was overwritten: %q", got)
+		}
+	})
+
+	t.Run("existing target disappears", func(t *testing.T) {
+		t.Parallel()
+		e, dir := testEngine(t)
+		path := filepath.Join(dir, "removed-externally.txt")
+		writeTestFile(t, dir, "removed-externally.txt", "before\n")
+
+		_, err := e.writeFileWithPreCommitHook(
+			args("path", "removed-externally.txt", "content", "agent content"),
+			func() {
+				if removeErr := os.Remove(path); removeErr != nil {
+					t.Fatalf("external Remove: %v", removeErr)
+				}
+			},
+		)
+		requireStaleFileError(t, err)
+		if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+			t.Fatalf("externally removed file was recreated: stat error = %v", statErr)
+		}
+	})
+}

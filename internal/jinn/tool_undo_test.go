@@ -2,6 +2,7 @@ package jinn
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -129,6 +130,36 @@ func TestUndoPreview_NotFound(t *testing.T) {
 	}
 }
 
+func TestFindEntry_AmbiguousPrefixRequiresExactID(t *testing.T) {
+	t.Parallel()
+	e, _ := testEngine(t)
+	t.Cleanup(func() { _ = os.RemoveAll(e.historyDir()) })
+	want := historyEntry{ID: "abc1230000000000", DisplayPath: "first.txt"}
+	hf := historyFile{
+		Version: 1,
+		Entries: []historyEntry{
+			want,
+			{ID: "abc123fffffffff", DisplayPath: "second.txt"},
+		},
+	}
+	if err := e.saveHistory(hf); err != nil {
+		t.Fatalf("saveHistory: %v", err)
+	}
+
+	_, err := e.findEntry("abc123")
+	if err == nil || !strings.Contains(err.Error(), "ambiguous") {
+		t.Fatalf("ambiguous prefix error = %v, want ambiguity error", err)
+	}
+
+	got, err := e.findEntry(want.ID)
+	if err != nil {
+		t.Fatalf("exact ID lookup: %v", err)
+	}
+	if got.ID != want.ID {
+		t.Errorf("exact ID lookup = %q, want %q", got.ID, want.ID)
+	}
+}
+
 func TestUndoPreview_CreatedFile(t *testing.T) {
 	e, workDir := undoEngine(t)
 
@@ -223,6 +254,97 @@ func TestUndoRestore_BlobIntegrityFails(t *testing.T) {
 	_, err := e.undoTool(map[string]interface{}{"action": "restore", "id": id})
 	if err == nil || !strings.Contains(err.Error(), "integrity") {
 		t.Errorf("expected integrity error, got: %v", err)
+	}
+}
+
+func TestUndoRestore_RejectsChecksumMismatch(t *testing.T) {
+	t.Parallel()
+	e, workDir := testEngine(t)
+	t.Cleanup(func() { _ = os.RemoveAll(e.historyDir()) })
+	undoMkFile(t, e, workDir, "checksum.txt", "original\n")
+
+	if _, err := e.writeFile(map[string]interface{}{"path": "checksum.txt", "content": "modified\n"}); err != nil {
+		t.Fatalf("writeFile: %v", err)
+	}
+	id := firstSnapshotID(t, e)
+
+	_, err := e.undoTool(map[string]interface{}{
+		"action":      "restore",
+		"id":          id,
+		"if_checksum": strings.Repeat("0", 64),
+	})
+	if err == nil {
+		t.Fatal("expected checksum mismatch, got nil")
+	}
+	var structured *ErrWithSuggestion
+	if !errors.As(err, &structured) {
+		t.Fatalf("error type = %T, want *ErrWithSuggestion", err)
+	}
+	if structured.Code != ErrCodeStaleFile {
+		t.Errorf("error code = %q, want %q", structured.Code, ErrCodeStaleFile)
+	}
+	got, readErr := os.ReadFile(filepath.Join(workDir, "checksum.txt"))
+	if readErr != nil {
+		t.Fatalf("ReadFile: %v", readErr)
+	}
+	if string(got) != "modified\n" {
+		t.Errorf("content after rejected restore = %q, want %q", got, "modified\n")
+	}
+}
+
+func TestUndoRestore_RejectsMissingTargetBeforeCreatingParent(t *testing.T) {
+	t.Parallel()
+	e, workDir := testEngine(t)
+	t.Cleanup(func() { _ = os.RemoveAll(e.historyDir()) })
+	parent := filepath.Join(workDir, "removed", "nested")
+	target := filepath.Join(parent, "file.txt")
+	if err := os.MkdirAll(parent, 0o750); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(target, []byte("original\n"), 0o640); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	e.recordSnapshot(target, filepath.Join("removed", "nested", "file.txt"), "write_file", []byte("original\n"))
+	id := firstSnapshotID(t, e)
+	if err := os.RemoveAll(filepath.Join(workDir, "removed")); err != nil {
+		t.Fatalf("RemoveAll: %v", err)
+	}
+
+	_, err := e.undoTool(map[string]interface{}{
+		"action":      "restore",
+		"id":          id,
+		"if_checksum": sha256Hex([]byte("modified\n")),
+	})
+	requireStaleFileError(t, err)
+	if _, statErr := os.Stat(parent); !os.IsNotExist(statErr) {
+		t.Fatalf("stale restore created parent directory: stat error = %v", statErr)
+	}
+}
+
+func TestUndoRestore_AcceptsMatchingChecksum(t *testing.T) {
+	t.Parallel()
+	e, workDir := testEngine(t)
+	t.Cleanup(func() { _ = os.RemoveAll(e.historyDir()) })
+	undoMkFile(t, e, workDir, "checksum-match.txt", "original\n")
+
+	if _, err := e.writeFile(map[string]interface{}{"path": "checksum-match.txt", "content": "modified\n"}); err != nil {
+		t.Fatalf("writeFile: %v", err)
+	}
+	id := firstSnapshotID(t, e)
+	_, err := e.undoTool(map[string]interface{}{
+		"action":      "restore",
+		"id":          id,
+		"if_checksum": sha256Hex([]byte("modified\n")),
+	})
+	if err != nil {
+		t.Fatalf("matching checksum restore: %v", err)
+	}
+	got, readErr := os.ReadFile(filepath.Join(workDir, "checksum-match.txt"))
+	if readErr != nil {
+		t.Fatalf("ReadFile: %v", readErr)
+	}
+	if string(got) != "original\n" {
+		t.Errorf("restored content = %q, want original", got)
 	}
 }
 

@@ -193,6 +193,7 @@
                 "path": {"type": "string", "description": "file path to edit"},
                 "old_text": {"type": "string", "description": "exact text to find (must be unique)"},
                 "new_text": {"type": "string", "description": "replacement text"},
+                "if_checksum": {"type": "string", "description": "SHA-256 hex digest from a previous read_file response for this target. Rejects the whole batch with error_code=stale_file when the file changed."},
                 "fuzzy_indent": {"type": "boolean", "description": "Re-indent old_text to match surrounding indentation before matching", "default": false},
                 "show_context": {"type": "integer", "description": "Number of context lines to show around the edit after applying", "default": 0}
               },
@@ -214,6 +215,7 @@
         "type": "object",
         "properties": {
           "patch": {"type": "string", "description": "Codex-style patch payload. Must start with '*** Begin Patch' and end with '*** End Patch'. Supports *** Add File:, *** Delete File:, and *** Update File: operations."},
+          "if_checksums": {"type": "object", "description": "Optional map of patch target path to SHA-256 digest from read_file. Any mismatch rejects the patch before writes.", "additionalProperties": {"type": "string"}},
           "dry_run": {"type": "boolean", "description": "Preview changes without writing (default: false)"}
         },
         "required": ["patch"]
@@ -346,6 +348,7 @@
         "properties": {
           "action": {"type": "string", "enum": ["list", "preview", "restore", "clear"], "description": "Operation: list=show history, preview=diff snapshot vs current, restore=revert file, clear=delete all history for this workdir."},
           "id":     {"type": "string", "description": "Snapshot ID (prefix match). Required for preview and restore."},
+          "if_checksum": {"type": "string", "description": "For restore, optional SHA-256 digest of the target's current bytes from read_file. A mismatch rejects the restore with error_code=stale_file."},
           "limit":  {"type": "integer", "description": "Max entries to return for list (default: 50)."}
         },
         "required": ["action"]
@@ -399,6 +402,7 @@
           "replacement": {"type": "string", "description": "Replacement text. Supports $1, $2, etc. for capture group references. Use empty string for deletion."},
           "files": {"description": "Target files: a single path, glob pattern, or array of paths/globs (max 50 files).", "oneOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}, "maxItems": 50}]},
           "include": {"type": "string", "description": "Optional glob filter applied to resolved file paths (e.g. '*.go'). Only files matching this filter are processed."},
+          "if_checksums": {"type": "object", "description": "Optional map of target path to SHA-256 digest from read_file. Files with mismatched digests are rejected with error_code=stale_file before writes.", "additionalProperties": {"type": "string"}},
           "case_insensitive": {"type": "boolean", "description": "Case-insensitive matching (default: false)", "default": false},
           "multiline": {"type": "boolean", "description": "Multiline mode: ^/$ match line boundaries (default: true)", "default": true},
           "dry_run": {"type": "boolean", "description": "Preview all replacements without writing. Returns diffs and match counts per file (default: false)", "default": false}

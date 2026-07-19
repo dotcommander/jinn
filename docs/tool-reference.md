@@ -225,12 +225,14 @@ Each edit object:
 | `path` | string | Yes | -- | File path relative to working directory |
 | `old_text` | string | Yes | -- | Text to find (must be unique in the file) |
 | `new_text` | string | Yes | -- | Replacement text |
+| `if_checksum` | string | No | -- | SHA-256 for this target from `read_file`; a mismatch rejects the whole batch as stale |
 | `fuzzy_indent` | bool | No | `false` | Detect indentation, re-indent `new_text` |
 | `show_context` | int | No | `0` | Return N surrounding lines with markers |
 
 **Notes:**
 
 - **Validate first.** jinn validates every edit (path security, TOCTOU, match uniqueness) before applying any. If any edit fails validation, zero edits are applied.
+- **Cross-call guard.** Put `if_checksum` on each edit derived from an earlier read. jinn also rechecks preflight bytes immediately before every write.
 - **Per-file atomic writes.** Each changed file is written via temp+rename. If a write fails after validation, earlier successful file writes are not rolled back; the error enumerates them with undo ids (`partial apply — N of M files already written: ... (undo id=...)`) so you can restore or retry the remainder.
 - `old_text` cannot be empty in any edit entry. An empty value returns an error immediately, before any edits are applied.
 - **Overlap detection.** Edits targeting overlapping byte ranges in the same file are rejected in the validation phase. The error names which two edit indices conflict. Split them into separate `multi_edit` calls or combine them into a single edit.
@@ -251,6 +253,7 @@ echo '{"tool":"apply_patch","args":{"patch":"*** Begin Patch\n*** Update File: m
 | Name | Type | Required | Default | Description |
 |------|------|----------|---------|-------------|
 | `patch` | string | Yes | -- | Patch text starting with `*** Begin Patch` and ending with `*** End Patch` |
+| `if_checksums` | object | No | -- | Map of target path to SHA-256 from `read_file`; any mismatch rejects the patch before writes |
 | `dry_run` | bool | No | `false` | Validate and preview changes without writing |
 
 **Supported operations:**
@@ -264,6 +267,7 @@ echo '{"tool":"apply_patch","args":{"patch":"*** Begin Patch\n*** Update File: m
 **Notes:**
 
 - All operations are validated before writing starts.
+- Supply `if_checksums` for update/delete targets derived from earlier reads. jinn also rejects targets whose bytes or existence change between validation and write.
 - Writes are per-file atomic. If a later write fails after validation, earlier successful writes are not rolled back; the error enumerates them with undo ids so you can `undo` each or retry the remainder.
 - Update hunks support progressive fuzzy matching when exact context fails.
 
@@ -281,6 +285,7 @@ echo '{"tool":"undo","args":{"action":"list"}}' | jinn
 |------|------|----------|---------|-------------|
 | `action` | string | Yes | -- | `list`, `preview`, `restore`, or `clear` |
 | `id` | string | For `preview`, `restore` | -- | Snapshot ID. A unique prefix of the ID also works. |
+| `if_checksum` | string | No | -- | For `restore`, SHA-256 of the current target; mismatch rejects the restore as stale |
 | `limit` | int | No | all | Maximum number of snapshots to return for `list` |
 
 **Actions:**
@@ -411,6 +416,7 @@ echo '{"tool":"search_replace","args":{"pattern":"oldName","replacement":"newNam
 | `replacement` | string | Yes | -- | Replacement text. Supports `$1`, `$2`, etc. for capture groups. |
 | `files` | string or array | Yes | -- | Target path, glob pattern, directory, or array of paths/globs. Max 50 resolved files. |
 | `include` | string | No | -- | Optional glob filter applied after target expansion, e.g. `"*.go"` |
+| `if_checksums` | object | No | -- | Map of target path to SHA-256 from `read_file`; mismatched files are rejected as stale |
 | `case_insensitive` | bool | No | `false` | Match case-insensitively |
 | `multiline` | bool | No | `true` | Enable `^`/`$` line-boundary matching |
 | `dry_run` | bool | No | `false` | Preview diffs and match counts without writing |
@@ -418,6 +424,7 @@ echo '{"tool":"search_replace","args":{"pattern":"oldName","replacement":"newNam
 **Notes:**
 
 - Each file is validated before any writes are applied.
+- jinn rechecks every pending file immediately before writing; use `if_checksums` to extend that guard across separate jinn calls.
 - Writes are per-file atomic. If a later write fails after validation, earlier successful writes are not rolled back; the error enumerates them with undo ids.
 - Binary files are skipped with structured per-file errors.
 - Empty `replacement` is valid and deletes the matched text.
@@ -540,6 +547,7 @@ The `plan` object:
 **Notes:**
 
 - Read-only by default: a node without `mutates: true` allows only `safe` shell commands and read-only tools. A `mutates: true` node runs `caution` operations automatically; `dangerous` ones require both `plan.force` and the node's `force`.
+- A node cannot combine `parallel: true` with `mutates: true`; split mutating operations into serial nodes.
 - Edges are evaluated against the last op's result; condition kinds are `exitCode`, `fileExists`, `jsonPath`, `numeric`, `match`, and `always`.
 - The result carries the run in `meta.plan_run` (`transcript`, `path_taken`, `stopped_reason`, and edge counts).
 - Full `PlanNode` / `PlanEdge` / condition reference lives in the `run_plan` section of [AGENTS.md](../AGENTS.md).

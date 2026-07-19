@@ -1,6 +1,7 @@
 package jinn
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -33,6 +34,29 @@ func TestValidatePlan(t *testing.T) {
 		}
 		if !strings.Contains(err.Error(), "duplicate node id:") {
 			t.Errorf("expected 'duplicate node id:', got: %v", err)
+		}
+	})
+
+	t.Run("parallel mutating node", func(t *testing.T) {
+		t.Parallel()
+		err := validatePlan(&PlanTree{
+			Root: "n1",
+			Nodes: []PlanNode{
+				{ID: "n1", Parallel: true, Mutates: true},
+			},
+		})
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		var structured *ErrWithSuggestion
+		if !errors.As(err, &structured) {
+			t.Fatalf("error type = %T, want *ErrWithSuggestion", err)
+		}
+		if structured.Code != ErrCodePlanInvalid {
+			t.Errorf("error code = %q, want %q", structured.Code, ErrCodePlanInvalid)
+		}
+		if !strings.Contains(err.Error(), "cannot combine parallel and mutates") {
+			t.Errorf("expected parallel mutation error, got: %v", err)
 		}
 	})
 

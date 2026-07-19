@@ -102,7 +102,7 @@ func (e *Engine) srReadCandidate(c searchReplaceCandidate) ([]byte, *searchRepla
 //   - (*searchReplacePending, nil, _): a change ready to apply
 //   - (nil, *searchReplaceFileResult, _): a per-file error or no-op to report
 //   - (nil, nil, _): no match in this file — skip silently
-func (e *Engine) processSRCandidate(c searchReplaceCandidate, re *regexp.Regexp, replacement string) (*searchReplacePending, *searchReplaceFileResult, bool) {
+func (e *Engine) processSRCandidate(c searchReplaceCandidate, re *regexp.Regexp, replacement, ifChecksum string) (*searchReplacePending, *searchReplaceFileResult, bool) {
 	// Stale check.
 	if err := e.tracker.checkStale(c.resolved); err != nil {
 		return nil, &searchReplaceFileResult{
@@ -116,6 +116,14 @@ func (e *Engine) processSRCandidate(c searchReplaceCandidate, re *regexp.Regexp,
 	data, skip := e.srReadCandidate(c)
 	if skip != nil {
 		return nil, skip, false
+	}
+	if err := verifyChecksum(ifChecksum, c.path, data, true); err != nil {
+		return nil, &searchReplaceFileResult{
+			Path:       c.path,
+			Error:      err.Error(),
+			ErrorCode:  ErrCodeStaleFile,
+			Suggestion: "re-read the file and retry",
+		}, false
 	}
 
 	res, applyErr := srApplyOne(data, re, replacement)
@@ -161,9 +169,24 @@ func (e *Engine) processSRCandidate(c searchReplaceCandidate, re *regexp.Regexp,
 // Returns (nil, nil) when there is pending work to continue with.
 func srCheckAllFailed(fileResults []searchReplaceFileResult, pending []searchReplacePending) (*ToolResult, error) {
 	var errorFiles []searchReplaceFileResult
+	var staleFiles []searchReplaceFileResult
 	for _, fr := range fileResults {
 		if fr.ErrorCode != "" && fr.ErrorCode != ErrCodeBinaryFile {
 			errorFiles = append(errorFiles, fr)
+		}
+		if fr.ErrorCode == ErrCodeStaleFile {
+			staleFiles = append(staleFiles, fr)
+		}
+	}
+	if len(staleFiles) > 0 {
+		var paths []string
+		for _, sf := range staleFiles {
+			paths = append(paths, sf.Path)
+		}
+		return nil, &ErrWithSuggestion{
+			Err:        fmt.Errorf("search_replace rejected stale target(s): %s", strings.Join(paths, ", ")),
+			Suggestion: "re-read the stale files, reconcile the replacements, and retry with fresh checksums",
+			Code:       ErrCodeStaleFile,
 		}
 	}
 	if len(errorFiles) > 0 && len(pending) == 0 {
@@ -220,6 +243,9 @@ func (e *Engine) srApplyWrites(fileResults []searchReplaceFileResult, pending []
 	var applied []string
 	var appliedRefs []appliedRef
 	for _, p := range pending {
+		if err := verifyPreflightState(p.candidate.resolved, p.preData, true); err != nil {
+			return nil, partialApplyErr("search_replace", appliedRefs, len(pending), fmt.Errorf("%s: %w", p.candidate.path, err))
+		}
 		id, err := e.snapshotAndWrite(p.candidate.resolved, p.candidate.path, "search_replace", p.preData, p.updated)
 		if err != nil {
 			// Write failure — abort remaining, report what was already written.
