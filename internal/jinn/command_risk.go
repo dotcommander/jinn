@@ -320,6 +320,9 @@ func classifySegment(seg string) (RiskLevel, string) {
 	if hasInputRedirection(seg) && isStdinCodeInterpreterInvocation(verb, commandTokens) {
 		return RiskDangerous, "input redirection feeds interpreter stdin — arbitrary code execution"
 	}
+	if reason, dangerous := arbitraryCodeInvocation(verb, commandTokens); dangerous {
+		return RiskDangerous, reason
+	}
 
 	rule, ok := riskTable[verb]
 	if !ok {
@@ -333,6 +336,27 @@ func classifySegment(seg string) (RiskLevel, string) {
 		return RiskCaution, "shell output redirection — writes files"
 	}
 	return level, reason
+}
+
+// arbitraryCodeInvocation identifies command frontends whose ordinary purpose
+// is to evaluate user-controlled programs, task files, or downloaded packages.
+func arbitraryCodeInvocation(verb string, tokens []string) (string, bool) {
+	switch verb {
+	case "awk", "gawk", "make", "npx", "bunx":
+		return verb + " execution — arbitrary code execution", true
+	case "pnpm", "bun":
+		args := packageManagerPayload(tokens)
+		if len(args) == 0 {
+			return "", false
+		}
+		if verb == "pnpm" && (args[0] == "dlx" || args[0] == "exec") {
+			return verb + " " + args[0] + " — arbitrary code execution", true
+		}
+		if verb == "bun" && args[0] == "x" {
+			return "bun x — arbitrary code execution", true
+		}
+	}
+	return "", false
 }
 
 func onlyShellTerminators(tokens []string) bool {
@@ -1223,7 +1247,7 @@ func linuxPackageGlobalFlagConsumesArg(tok string) bool {
 
 func languagePackageGlobalFlagConsumesArg(tok string) bool {
 	switch tok {
-	case "-C", "--cwd", "--prefix", "--project", "--python":
+	case "-C", "--cwd", "--dir", "--prefix", "--project", "--python":
 		return true
 	default:
 		return false

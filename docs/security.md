@@ -82,7 +82,7 @@ Before executing any shell command, `run_shell` classifies it by examining the l
 |-------|----------|---------|
 | `safe` | Executed normally | `ls`, `cat`, `grep`, `find`, `echo` |
 | `caution` | Executed normally; modifies state | `cp`, `mv`, `mkdir`, `sed -i`, `curl`, unknown verbs |
-| `dangerous` | **Blocked** unless `force: true` | `rm`, `dd`, `sudo`, `kill`, `shutdown`, pipe to `sh`/`bash` |
+| `dangerous` | **Blocked** unless `force: true` | `rm`, `dd`, `sudo`, pipe to `sh`/`bash`, inline-code/task/package runners (`awk`, `make`, `npx`, `pnpm dlx`, `bunx`) |
 
 The `risk` field is always present in `run_shell` responses. Dangerous commands return an error with `risk: "dangerous"` and a `suggestion` unless `force: true` is set:
 

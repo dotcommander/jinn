@@ -809,6 +809,21 @@ func TestShellRisk_DangerousCommand_Blocked(t *testing.T) {
 	}
 }
 
+func TestShellRisk_AwkCommand_BlockedWithoutForce(t *testing.T) {
+	t.Parallel()
+	e, _ := testEngine(t)
+	_, meta, err := e.runShell(context.Background(), args("command", "awk 'BEGIN { print 1 }'"))
+	if err == nil {
+		t.Fatal("expected error for arbitrary-code-capable awk command")
+	}
+	if !strings.Contains(err.Error(), "blocked by risk classifier") {
+		t.Errorf("expected blocked message, got: %v", err)
+	}
+	if got := metaString(meta, "risk"); got != RiskDangerous.String() {
+		t.Errorf("risk = %q, want %q", got, RiskDangerous)
+	}
+}
+
 func TestShellRisk_DangerousCommand_Force(t *testing.T) {
 	t.Parallel()
 	e, dir := testEngine(t)
