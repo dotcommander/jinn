@@ -575,14 +575,28 @@ Use `include_schema: true` only when the calling agent needs to discover schemas
 ### MCP `jinn_route`
 
 `jinn --mcp` intentionally exposes only one MCP tool, `jinn_route`, to avoid
-prompt bloat from listing every jinn tool directly. It recommends existing jinn
-tools for a coding-agent task and never executes them.
+prompt bloat from listing every jinn tool directly. It uses the official Go SDK
+for MCP 2026-07-28. Requests are stateless and carry the protocol version and
+client capabilities in `_meta`. `jinn_route` recommends existing jinn tools
+for a coding-agent task and never executes them.
 
-```bash
+```jsonl
+{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}
+{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}},"name":"jinn_route","arguments":{"need":"regex replace across many files","max_tools":2}}}
+```
+
+An MCP client sends those lines over the long-lived `jinn --mcp` stdin pipe and
+reads one response per request. Do not close stdin until the responses arrive.
+
+```text
+<!-- equivalent shell payload, without closing the client pipe -->
 printf '%s\n' \
-  '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"demo","version":"0"}}}' \
-  '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"jinn_route","arguments":{"need":"regex replace across many files","max_tools":2}}}' \
-  | jinn --mcp
+  '{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}' \
+  '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}},"name":"jinn_route","arguments":{"need":"regex replace across many files","max_tools":2}}}'
+
+The shell payload above is illustrative only; piping it directly to `jinn --mcp`
+closes stdin too early for an in-flight response. Use the checked
+long-lived driver in [mcp-smoke-test.md](mcp-smoke-test.md).
 ```
 
 **Parameters:**
@@ -599,7 +613,8 @@ valid invocation of the tool may mutate files or persistent state. Therefore,
 `include_mutating:false` excludes `run_plan` even when the particular plan a
 caller intends to submit would be read-only.
 
-**Returns:** the tool result is one text content block containing route JSON.
+**Returns:** the tool result contains structured `structuredContent` route JSON
+and a mirrored text content block for clients that only consume text.
 The request above returns (second match abbreviated):
 
 ```json

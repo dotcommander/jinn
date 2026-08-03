@@ -86,7 +86,12 @@ Scoping is automatic (nearest `.git` ancestor), so the same commands work in eve
 
 ### MCP discovery broker
 
-If you prefer MCP, `jinn --mcp` costs exactly one tool schema in context. `jinn_route` recommends jinn tools for a stated need — deterministically, with no LLM and no network — and never executes anything itself. Add to `.mcp.json`:
+If you prefer MCP, `jinn --mcp` uses the MCP 2026-07-28 Go SDK and costs
+exactly one tool schema in context. `jinn_route` recommends jinn tools for a
+stated need, deterministically with no LLM or network, and never executes
+anything itself. Current clients send stateless requests with protocol metadata
+under `_meta`; older initialize-based clients are handled by a compatibility
+path. Add to `.mcp.json`:
 
 ```json
 {

@@ -225,17 +225,26 @@ Each line in `requests.jsonl` is a complete JSON request object. jinn processes 
 |------|-------------|
 | `--schema` | Print all tool definitions as JSON and exit |
 | `--inspect [addr]` | Start the local browser inspector UI. Defaults to `127.0.0.1:8787` |
-| `--mcp` | Start stdio MCP discovery broker mode with one recommendation-only tool, `jinn_route` |
+| `--mcp` | Start the MCP 2026-07-28 stdio broker with one recommendation-only tool, `jinn_route` |
 | `--version` | Print the version and exit |
 | `--help`, `-h` | Print usage information and exit |
 
 ## MCP Discovery Broker
 
-`jinn --mcp` uses newline-delimited JSON-RPC over stdin/stdout and exposes one
-MCP tool, `jinn_route`. The MCP tool is recommendation-only: it does not execute
-`read_file`, `run_shell`, or any other jinn tool. It maps a natural-language
-need to the most relevant existing jinn tools, risk/mutation notes, and optional
-lean schemas for only the matched tools.
+`jinn --mcp` uses the official Go MCP SDK and newline-delimited JSON-RPC over
+stdin/stdout. The current protocol is 2026-07-28 and uses stateless requests,
+not an `initialize` handshake. Each request carries the protocol version and
+client capabilities under `_meta`.
+
+The broker exposes one MCP tool, `jinn_route`. The tool is recommendation-only:
+it does not execute `read_file`, `run_shell`, or any other jinn tool. It maps a
+natural-language need to the most relevant existing jinn tools, risk/mutation
+notes, and optional lean schemas for only the matched tools. Keeping one tool in
+the MCP surface avoids prompt bloat from listing all 19 executor schemas.
+
+For migration safety, a first older `initialize` request is detected and served
+by the legacy compatibility path. Current clients should use the 2026-07-28
+request shape shown in [tool-reference.md](tool-reference.md#mcp-jinn_route).
 
 Example client config:
 

@@ -7,6 +7,16 @@ and jinn adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- Upgrade `jinn --mcp` to `github.com/voocel/mcp-sdk-go` and MCP 2026-07-28
+  stateless stdio requests while retaining the single recommendation-only
+  `jinn_route` surface that prevents tool-schema context bloat.
+- Add explicit JSON Schema 2020-12 input/output contracts, including `$defs` and
+  `$ref` output reuse, plus structured tool results.
+- Keep a compatibility path for existing initialize-based MCP clients during
+  migration.
+
 ## [0.11.4] - 2026-07-16
 
 ### Fixed

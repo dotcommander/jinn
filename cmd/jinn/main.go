@@ -23,7 +23,7 @@ Reads a JSON tool request from stdin, writes a JSON response to stdout.
 Flags:
   --schema   Print tool definitions (OpenAI function-calling format)
   --inspect  Start a local browser inspector UI (default: 127.0.0.1:8787)
-  --mcp      Start stdio MCP discovery broker mode
+  --mcp      Start MCP 2026-07-28 stdio broker with one jinn_route tool
   --version  Print version
   --help     Print this help
 

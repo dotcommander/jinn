@@ -107,9 +107,18 @@ Use MCP discovery mode:
 }
 ```
 
-`jinn --mcp` exposes one MCP tool, `jinn_route`. It recommends matching jinn
-tools for a task and can return lean schemas for only those tools. It does not
-execute filesystem or shell operations itself.
+`jinn --mcp` speaks MCP 2026-07-28 through the official Go SDK and exposes one
+MCP tool, `jinn_route`. It recommends matching jinn tools for a task and can
+return lean schemas for only those tools. It does not execute filesystem or
+shell operations itself. The one-tool surface is intentional: it keeps model
+context bounded instead of injecting all 19 executor schemas at once.
+
+Current MCP requests use `server/discover`, `tools/list`, and `tools/call` with
+`_meta.io.modelcontextprotocol/protocolVersion` set to `2026-07-28` plus
+`_meta.io.modelcontextprotocol/clientCapabilities`. Existing clients that send
+the older `initialize` handshake are routed through a compatibility path.
+The deterministic black-box checks are documented in
+[docs/mcp-smoke-test.md](docs/mcp-smoke-test.md).
 
 ## When to use jinn with another harness
 
