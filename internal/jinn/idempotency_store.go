@@ -51,7 +51,7 @@ func runIdempotent(ctx context.Context, db *sql.DB, req idempotentRequest) (any,
 	)
 	if insertErr != nil {
 		_ = tx.Rollback()
-		return replayIdempotent(ctx, db, req.agent, req.requestID, req.command, insertErr)
+		return replayIdempotent(ctx, db, req, insertErr)
 	}
 
 	// Slot claimed — run the work.
@@ -92,7 +92,7 @@ func runPlainTransact(ctx context.Context, db *sql.DB, fn func(tx *sql.Tx) (any,
 // before the cached result is replayed. Reusing an identity for another
 // command is a conflict because replaying the cached result would skip the
 // requested mutation.
-func replayIdempotent(ctx context.Context, db *sql.DB, agent, requestID, command string, insertErr error) (any, error) {
+func replayIdempotent(ctx context.Context, db *sql.DB, req idempotentRequest, insertErr error) (any, error) {
 	if !isUniqueConstraintErr(insertErr) {
 		return nil, fmt.Errorf("insert idempotency row: %w", insertErr)
 	}
@@ -100,13 +100,13 @@ func replayIdempotent(ctx context.Context, db *sql.DB, agent, requestID, command
 	var storedCommand, resultJSON string
 	if selErr := db.QueryRowContext(ctx,
 		`SELECT command, result_json FROM idempotency WHERE agent_name=? AND request_id=?`,
-		agent, requestID,
+		req.agent, req.requestID,
 	).Scan(&storedCommand, &resultJSON); selErr != nil {
 		return nil, fmt.Errorf("load idempotency row: %w", selErr)
 	}
-	if storedCommand != command {
+	if storedCommand != req.command {
 		return nil, &ErrWithSuggestion{
-			Err:        fmt.Errorf("idempotency request %q already belongs to command %q; cannot replay it as %q", requestID, storedCommand, command),
+			Err:        fmt.Errorf("idempotency request %q already belongs to command %q; cannot replay it as %q", req.requestID, storedCommand, req.command),
 			Suggestion: "use a new request_id for a different command",
 			Code:       ErrCodeConflict,
 		}
@@ -119,7 +119,7 @@ func replayIdempotent(ctx context.Context, db *sql.DB, agent, requestID, command
 	if strings.TrimSpace(resultJSON) == "" {
 		// Prior attempt crashed before completing.
 		return nil, &ErrWithSuggestion{
-			Err:        fmt.Errorf("request %q is still in progress or crashed; retry later", requestID),
+			Err:        fmt.Errorf("request %q is still in progress or crashed; retry later", req.requestID),
 			Suggestion: "wait and retry with the same request_id",
 			Code:       ErrCodeConflict,
 		}
