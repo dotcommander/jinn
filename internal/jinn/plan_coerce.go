@@ -2,6 +2,7 @@ package jinn
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -9,7 +10,20 @@ import (
 )
 
 func coercePlan(raw any) (*PlanTree, error) {
-	// Step 1: normalize raw to map[string]any.
+	m, err := normalizePlanInput(raw)
+	if err != nil {
+		return nil, err
+	}
+	if err := decodeEncodedPlanNodes(m); err != nil {
+		return nil, err
+	}
+	if err := coercePlanConditionShorthand(m); err != nil {
+		return nil, err
+	}
+	return decodeCoercedPlan(m)
+}
+
+func normalizePlanInput(raw any) (map[string]any, error) {
 	var m map[string]any
 	switch v := raw.(type) {
 	case map[string]any:
@@ -17,74 +31,78 @@ func coercePlan(raw any) (*PlanTree, error) {
 	case string:
 		if err := json.Unmarshal([]byte(v), &m); err != nil {
 			return nil, &ErrWithSuggestion{
-				Err:        fmt.Errorf("args[\"plan\"] is a JSON-encoded string but does not contain a valid plan object"),
+				Err:        errors.New("args[\"plan\"] is a JSON-encoded string but does not contain a valid plan object"),
 				Suggestion: "ensure plan is a valid JSON object, either as a native object or a JSON-encoded string",
 				Code:       ErrCodePlanCoerceFailed,
 			}
 		}
 	default:
 		return nil, &ErrWithSuggestion{
-			Err:        fmt.Errorf("args[\"plan\"] must be a JSON object"),
+			Err:        errors.New("args[\"plan\"] must be a JSON object"),
 			Suggestion: "ensure plan is a valid JSON object, either as a native object or a JSON-encoded string",
 			Code:       ErrCodePlanCoerceFailed,
 		}
 	}
+	return m, nil
+}
 
-	// Step 2: if nodes is itself a JSON-encoded string, unwrap it.
+func decodeEncodedPlanNodes(m map[string]any) error {
 	if nodesStr, ok := m["nodes"].(string); ok {
 		var nodesSlice []any
 		if err := json.Unmarshal([]byte(nodesStr), &nodesSlice); err != nil {
-			return nil, &ErrWithSuggestion{
-				Err:        fmt.Errorf("plan.nodes is a JSON-encoded string but does not decode to an array"),
+			return &ErrWithSuggestion{
+				Err:        errors.New("plan.nodes is a JSON-encoded string but does not decode to an array"),
 				Suggestion: "ensure plan.nodes is a JSON array, either as a native array or a JSON-encoded string",
 				Code:       ErrCodePlanCoerceFailed,
 			}
 		}
 		m["nodes"] = nodesSlice
 	}
+	return nil
+}
 
-	// Step 3: walk nodes -> edges, coerce string-valued "when" fields.
-	if nodes, ok := m["nodes"].([]any); ok {
-		for _, nodeRaw := range nodes {
-			nodeMap, ok := nodeRaw.(map[string]any)
-			if !ok {
-				continue
-			}
-			edgesRaw, ok := nodeMap["edges"]
-			if !ok {
-				continue
-			}
-			edgesSlice, ok := edgesRaw.([]any)
-			if !ok {
-				continue
-			}
-			for _, edgeRaw := range edgesSlice {
-				edgeMap, ok := edgeRaw.(map[string]any)
-				if !ok {
-					continue
-				}
-				whenVal, ok := edgeMap["when"]
-				if !ok {
-					continue
-				}
-				whenStr, isStr := whenVal.(string)
-				if !isStr {
-					continue
-				}
-				cond, err := coerceCondition(whenStr)
-				if err != nil {
-					return nil, err
-				}
-				// Marshal Condition back to map[string]any and replace.
-				condBytes, _ := json.Marshal(cond)
-				var condMap map[string]any
-				json.Unmarshal(condBytes, &condMap)
-				edgeMap["when"] = condMap
-			}
+func coercePlanConditionShorthand(m map[string]any) error {
+	nodes, _ := m["nodes"].([]any)
+	for _, nodeRaw := range nodes {
+		if err := coercePlanNodeConditions(nodeRaw); err != nil {
+			return err
 		}
 	}
+	return nil
+}
 
-	// Step 4: marshal corrected map and decode into *PlanTree.
+func coercePlanNodeConditions(raw any) error {
+	node, ok := raw.(map[string]any)
+	if !ok {
+		return nil
+	}
+	edges, _ := node["edges"].([]any)
+	for _, edgeRaw := range edges {
+		if err := coercePlanEdgeCondition(edgeRaw); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func coercePlanEdgeCondition(raw any) error {
+	edge, ok := raw.(map[string]any)
+	if !ok {
+		return nil
+	}
+	when, ok := edge["when"].(string)
+	if !ok {
+		return nil
+	}
+	condition, err := coerceCondition(when)
+	if err != nil {
+		return err
+	}
+	edge["when"] = condition
+	return nil
+}
+
+func decodeCoercedPlan(m map[string]any) (*PlanTree, error) {
 	corrected, err := json.Marshal(m)
 	if err != nil {
 		return nil, &ErrWithSuggestion{

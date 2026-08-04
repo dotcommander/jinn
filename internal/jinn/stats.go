@@ -2,6 +2,7 @@ package jinn
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -65,7 +66,12 @@ func recordPlanStats(result *PlanRunResult) {
 	if err != nil {
 		return
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	dir := filepath.Dir(path)
+	if err = os.MkdirAll(dir, 0o700); err != nil {
+		return
+	}
+	// Directories need execute permission for traversal; no group or other access is granted.
+	if err = os.Chmod(dir, 0o700); err != nil { //nolint:gosec
 		return
 	}
 
@@ -91,10 +97,24 @@ func recordPlanStats(result *PlanRunResult) {
 		return
 	}
 
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	_ = appendPlanStats(path, data)
+}
+
+func appendPlanStats(path string, data []byte) (err error) {
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
-		return
+		return fmt.Errorf("stats: open: %w", err)
 	}
-	defer f.Close()
-	f.Write(append(data, '\n'))
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("stats: close: %w", closeErr))
+		}
+	}()
+	if err := f.Chmod(0o600); err != nil {
+		return fmt.Errorf("stats: chmod: %w", err)
+	}
+	if _, err := f.Write(append(data, '\n')); err != nil {
+		return fmt.Errorf("stats: write: %w", err)
+	}
+	return nil
 }

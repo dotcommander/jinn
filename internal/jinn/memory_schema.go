@@ -3,6 +3,7 @@ package jinn
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -69,13 +70,17 @@ func ensureSchema(ctx context.Context, db *sql.DB) error {
 }
 
 // memoryColumnSet returns the set of column names currently on the memory table.
-func memoryColumnSet(ctx context.Context, db *sql.DB) (map[string]bool, error) {
+func memoryColumnSet(ctx context.Context, db *sql.DB) (existing map[string]bool, err error) {
 	rows, err := db.QueryContext(ctx, `PRAGMA table_info(memory)`)
 	if err != nil {
 		return nil, fmt.Errorf("memory: schema: table_info: %w", err)
 	}
-	defer rows.Close()
-	existing := map[string]bool{}
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("memory: schema: table_info close: %w", closeErr))
+		}
+	}()
+	existing = map[string]bool{}
 	for rows.Next() {
 		var (
 			cid     int
@@ -185,7 +190,7 @@ func rebuildMemoryTable(ctx context.Context, db *sql.DB, existing map[string]boo
 	if err != nil {
 		return fmt.Errorf("memory: schema: rebuild: begin: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	for _, s := range stmts {
 		if _, err := tx.ExecContext(ctx, s); err != nil {
 			return fmt.Errorf("memory: schema: rebuild: %w", err)

@@ -2,6 +2,7 @@ package jinn
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -92,6 +93,34 @@ func TestCoercePlan(t *testing.T) {
 		}
 	})
 
+	t.Run("structured and shorthand conditions", func(t *testing.T) {
+		t.Parallel()
+		raw := map[string]any{
+			"root": "n1",
+			"nodes": []any{
+				map[string]any{
+					"id": "n1",
+					"edges": []any{
+						map[string]any{"when": map[string]any{"kind": "fileExists", "path": "marker"}, "to": "n2"},
+						map[string]any{"when": "exit eq 0", "to": "n3"},
+					},
+				},
+				map[string]any{"id": "n2"},
+				map[string]any{"id": "n3"},
+			},
+		}
+		tree, err := coercePlan(raw)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got := tree.Nodes[0].Edges[0].When; got.Kind != "fileExists" || got.Path != "marker" {
+			t.Errorf("structured condition = %+v", got)
+		}
+		if got := tree.Nodes[0].Edges[1].When; got.Kind != "exitCode" || got.Op != "eq" || got.Value != float64(0) {
+			t.Errorf("shorthand condition = %+v", got)
+		}
+	})
+
 	t.Run("edge when unrecognized shorthand", func(t *testing.T) {
 		t.Parallel()
 		raw := map[string]any{
@@ -119,6 +148,39 @@ func TestCoercePlan(t *testing.T) {
 			t.Errorf("expected 'not a recognized condition shorthand', got: %v", err)
 		}
 	})
+}
+
+func TestCoercePlanMalformedNestedShapes(t *testing.T) {
+	t.Parallel()
+	badCondition := map[string]any{"when": []any{"always"}, "to": "n2"}
+	badConditionNode := map[string]any{"id": "n1", "edges": []any{badCondition}}
+	tests := []struct {
+		name string
+		raw  map[string]any
+	}{
+		{name: "node is not an object", raw: map[string]any{"root": "n1", "nodes": []any{"n1"}}},
+		{name: "edges is not an array", raw: map[string]any{"root": "n1", "nodes": []any{map[string]any{"id": "n1", "edges": map[string]any{}}}}},
+		{name: "condition is not an object", raw: map[string]any{"root": "n1", "nodes": []any{badConditionNode}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := coercePlan(tt.raw)
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if !strings.Contains(err.Error(), "failed to decode plan:") {
+				t.Fatalf("error = %v", err)
+			}
+			var suggested *ErrWithSuggestion
+			if !errors.As(err, &suggested) {
+				t.Fatalf("error type = %T", err)
+			}
+			if suggested.Code != ErrCodePlanCoerceFailed || suggested.Suggestion != "ensure plan matches the expected schema" {
+				t.Errorf("error contract = %+v", suggested)
+			}
+		})
+	}
 }
 
 func TestCoerceCondition(t *testing.T) {

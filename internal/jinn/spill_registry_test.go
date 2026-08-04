@@ -20,7 +20,7 @@ func TestRegisterShellSpill_Concurrent(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := f.WriteString(fmt.Sprintf("spill %d", i)); err != nil {
+		if _, err := fmt.Fprintf(f, "spill %d", i); err != nil {
 			t.Fatal(err)
 		}
 		if err := f.Close(); err != nil {

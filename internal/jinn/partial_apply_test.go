@@ -51,13 +51,14 @@ func TestApplyPatch_PartialFailureEnumeratesApplied(t *testing.T) {
 	t.Parallel()
 	e, dir := partialFixture(t)
 
-	patch := "*** Begin Patch\n"
+	var patch strings.Builder
+	patch.WriteString("*** Begin Patch\n")
 	for _, sub := range []string{"a", "b", "c"} {
-		patch += fmt.Sprintf("*** Update File: %s/f.txt\n@@ hello world\n-hello world\n+goodbye world\n", sub)
+		_, _ = fmt.Fprintf(&patch, "*** Update File: %s/f.txt\n@@ hello world\n-hello world\n+goodbye world\n", sub)
 	}
-	patch += "*** End Patch"
+	patch.WriteString("*** End Patch")
 
-	_, err := e.applyPatch(args("patch", patch))
+	_, err := e.applyPatch(args("patch", patch.String()))
 	assertPartialApplyErr(t, err, "a/f.txt")
 
 	got, _ := os.ReadFile(filepath.Join(dir, "c", "f.txt"))

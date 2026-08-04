@@ -81,6 +81,23 @@ func TestEstimateRequestsSaved(t *testing.T) {
 func TestRecordPlanStats(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("JINN_CONFIG_DIR", dir)
+	path, err := statsFilePath()
+	if err != nil {
+		t.Fatalf("statsFilePath() error: %v", err)
+	}
+	statsDir := filepath.Dir(path)
+	if err = os.MkdirAll(statsDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(%q) error: %v", statsDir, err)
+	}
+	if err = os.Chmod(statsDir, 0o755); err != nil {
+		t.Fatalf("Chmod(%q) error: %v", statsDir, err)
+	}
+	if err = os.WriteFile(path, nil, 0o644); err != nil {
+		t.Fatalf("WriteFile(%q) error: %v", path, err)
+	}
+	if err = os.Chmod(path, 0o644); err != nil {
+		t.Fatalf("Chmod(%q) error: %v", path, err)
+	}
 
 	result := &PlanRunResult{
 		Transcript: []PlanNodeResult{
@@ -95,14 +112,23 @@ func TestRecordPlanStats(t *testing.T) {
 	recordPlanStats(result)
 	recordPlanStats(result)
 
-	path, err := statsFilePath()
-	if err != nil {
-		t.Fatalf("statsFilePath() error: %v", err)
-	}
-
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("ReadFile(%q) error: %v", path, err)
+	}
+	dirInfo, err := os.Stat(filepath.Dir(path))
+	if err != nil {
+		t.Fatalf("Stat(%q) error: %v", filepath.Dir(path), err)
+	}
+	if got := dirInfo.Mode().Perm(); got != 0o700 {
+		t.Errorf("stats directory permissions = %o, want 700", got)
+	}
+	fileInfo, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat(%q) error: %v", path, err)
+	}
+	if got := fileInfo.Mode().Perm(); got != 0o600 {
+		t.Errorf("stats file permissions = %o, want 600", got)
 	}
 
 	lines := splitNonEmptyLines(string(data))

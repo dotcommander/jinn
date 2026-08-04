@@ -12,11 +12,17 @@ func splitOnOperators(cmdline string) []string {
 	var segments []string
 	var cur strings.Builder
 	var quote shellQuoteState
+	spans := outputComparisonSkipSpans(cmdline)
+	spanIdx := 0
 
 	runes := []rune(cmdline)
 	for i := 0; i < len(runes); i++ {
 		ch := runes[i]
 		if quote.writeLiteral(ch, &cur) {
+			continue
+		}
+		if runeInOutputSpan(i, spans, &spanIdx) {
+			cur.WriteRune(ch)
 			continue
 		}
 		if i+1 < len(runes) && isShellDoubleOperator(runes[i], runes[i+1]) {
@@ -395,39 +401,29 @@ func multiplexerPayloadIndex(tokens []string) int {
 // including compact forms like "echo x>file", "2>err", and "cat <>file".
 func hasOutputRedirection(seg string) bool {
 	spans := outputComparisonSkipSpans(seg)
-	inSingle := false
-	inDouble := false
-	escaped := false
+	var quote shellQuoteState
 	spanIdx := 0
 
 	runes := []rune(seg)
 	for i, ch := range runes {
-		if escaped {
-			escaped = false
+		if quote.writeLiteral(ch, nil) {
 			continue
 		}
-		if ch == '\\' && !inSingle {
-			escaped = true
+		if runeInOutputSpan(i, spans, &spanIdx) {
 			continue
 		}
-		switch {
-		case ch == '\'' && !inDouble:
-			inSingle = !inSingle
-		case ch == '"' && !inSingle:
-			inDouble = !inDouble
-		}
-		for spanIdx < len(spans) && i >= spans[spanIdx].end {
-			spanIdx++
-		}
-		if spanIdx < len(spans) && i >= spans[spanIdx].start {
-			continue
-		}
-		switch {
-		case !inSingle && !inDouble && isShellWriteRedirection(runes, i):
+		if isShellWriteRedirection(runes, i) {
 			return true
 		}
 	}
 	return false
+}
+
+func runeInOutputSpan(i int, spans []outputSpan, spanIdx *int) bool {
+	for *spanIdx < len(spans) && i >= spans[*spanIdx].end {
+		(*spanIdx)++
+	}
+	return *spanIdx < len(spans) && i >= spans[*spanIdx].start
 }
 
 func outputComparisonSkipSpans(seg string) []outputSpan {
@@ -468,81 +464,88 @@ type outputComparisonToken struct {
 }
 
 func tokenizeOutputComparisonTokens(seg string) []outputComparisonToken {
-	var tokens []outputComparisonToken
-	var cur strings.Builder
-	inSingle := false
-	inDouble := false
-	escaped := false
-	tokenStart := -1
-	tokenQuoted := false
-	tokenEscaped := false
-
 	runes := []rune(seg)
+	scanner := outputComparisonTokenizer{tokenStart: -1}
 	for i, ch := range runes {
-		if escaped {
-			if tokenStart < 0 {
-				tokenStart = i
-			}
-			cur.WriteRune(ch)
-			tokenEscaped = true
-			escaped = false
-			continue
-		}
-		if ch == '\\' && !inSingle {
-			if tokenStart < 0 {
-				tokenStart = i
-			}
-			tokenEscaped = true
-			escaped = true
-			continue
-		}
-		if ch == '\'' && !inDouble {
-			if tokenStart < 0 {
-				tokenStart = i
-			}
-			tokenQuoted = true
-			inSingle = !inSingle
-			continue
-		}
-		if ch == '"' && !inSingle {
-			if tokenStart < 0 {
-				tokenStart = i
-			}
-			tokenQuoted = true
-			inDouble = !inDouble
-			continue
-		}
-		if !inSingle && !inDouble && isShellBlank(ch) {
-			if tokenStart >= 0 {
-				tokens = append(tokens, outputComparisonToken{
-					text:    cur.String(),
-					start:   tokenStart,
-					end:     i,
-					quoted:  tokenQuoted,
-					escaped: tokenEscaped,
-				})
-				cur.Reset()
-				tokenStart = -1
-				tokenQuoted = false
-				tokenEscaped = false
-			}
-			continue
-		}
-		if tokenStart < 0 {
-			tokenStart = i
-		}
-		cur.WriteRune(ch)
+		scanner.consume(i, ch)
 	}
-	if tokenStart >= 0 {
-		tokens = append(tokens, outputComparisonToken{
-			text:    cur.String(),
-			start:   tokenStart,
-			end:     len(runes),
-			quoted:  tokenQuoted,
-			escaped: tokenEscaped,
-		})
+	scanner.flush(len(runes))
+	return scanner.tokens
+}
+
+type outputComparisonTokenizer struct {
+	tokens       []outputComparisonToken
+	cur          strings.Builder
+	quote        shellQuoteState
+	tokenStart   int
+	tokenQuoted  bool
+	tokenEscaped bool
+}
+
+func (s *outputComparisonTokenizer) consume(i int, ch rune) {
+	if s.consumeEscape(i, ch) || s.consumeQuote(i, ch) {
+		return
 	}
-	return tokens
+	if !s.quote.inSingle && !s.quote.inDouble && isShellBlank(ch) {
+		s.flush(i)
+		return
+	}
+	s.start(i)
+	s.cur.WriteRune(ch)
+}
+
+func (s *outputComparisonTokenizer) consumeEscape(i int, ch rune) bool {
+	if s.quote.escaped {
+		s.start(i)
+		s.cur.WriteRune(ch)
+		s.tokenEscaped = true
+		s.quote.escaped = false
+		return true
+	}
+	if ch != '\\' || s.quote.inSingle {
+		return false
+	}
+	s.start(i)
+	s.tokenEscaped = true
+	s.quote.escaped = true
+	return true
+}
+
+func (s *outputComparisonTokenizer) consumeQuote(i int, ch rune) bool {
+	switch {
+	case ch == '\'' && !s.quote.inDouble:
+		s.quote.inSingle = !s.quote.inSingle
+	case ch == '"' && !s.quote.inSingle:
+		s.quote.inDouble = !s.quote.inDouble
+	default:
+		return false
+	}
+	s.start(i)
+	s.tokenQuoted = true
+	return true
+}
+
+func (s *outputComparisonTokenizer) start(i int) {
+	if s.tokenStart < 0 {
+		s.tokenStart = i
+	}
+}
+
+func (s *outputComparisonTokenizer) flush(end int) {
+	if s.tokenStart < 0 {
+		return
+	}
+	s.tokens = append(s.tokens, outputComparisonToken{
+		text:    s.cur.String(),
+		start:   s.tokenStart,
+		end:     end,
+		quoted:  s.tokenQuoted,
+		escaped: s.tokenEscaped,
+	})
+	s.cur.Reset()
+	s.tokenStart = -1
+	s.tokenQuoted = false
+	s.tokenEscaped = false
 }
 
 func isCommandPositionStartToken(tok string) bool {
@@ -578,68 +581,57 @@ func outputSquareComparisonSpans(tokens []outputComparisonToken) []outputSpan {
 }
 
 func outputArithmeticComparisonSpans(runes []rune) []outputSpan {
-	var spans []outputSpan
-	inSingle := false
-	inDouble := false
-	escaped := false
-	openStart := -1
-	parenDepth := 0
-
+	scanner := outputArithmeticScanner{openStart: -1}
 	for i := 0; i < len(runes); i++ {
-		ch := runes[i]
-		if escaped {
-			escaped = false
+		if scanner.quote.writeLiteral(runes[i], nil) {
 			continue
 		}
-		if ch == '\\' && !inSingle {
-			escaped = true
-			continue
-		}
-		if ch == '\'' && !inDouble {
-			inSingle = !inSingle
-			continue
-		}
-		if ch == '"' && !inSingle {
-			inDouble = !inDouble
-			continue
-		}
-		if inSingle || inDouble {
-			continue
-		}
-		if openStart >= 0 {
-			switch ch {
-			case '(':
-				if i+1 < len(runes) && runes[i+1] == '(' {
-					parenDepth++
-					i++
-					continue
-				}
-				parenDepth++
-			case ')':
-				if i+1 < len(runes) && runes[i+1] == ')' {
-					if parenDepth == 0 {
-						spans = append(spans, outputSpan{start: openStart, end: i + 2})
-						openStart = -1
-						i++
-						continue
-					}
-					parenDepth--
-					i++
-					continue
-				}
-				if parenDepth > 0 {
-					parenDepth--
-				}
-			}
-			continue
-		}
-		if ch == '(' && i+1 < len(runes) && runes[i+1] == '(' {
-			openStart = i
-			parenDepth = 0
-			i++
-		}
+		i += scanner.consume(runes, i)
 	}
-	return spans
+	return scanner.spans
+}
+
+type outputArithmeticScanner struct {
+	spans      []outputSpan
+	quote      shellQuoteState
+	openStart  int
+	parenDepth int
+}
+
+func (s *outputArithmeticScanner) consume(runes []rune, i int) int {
+	ch := runes[i]
+	doubleParen := i+1 < len(runes) && runes[i+1] == ch
+	if s.openStart < 0 {
+		if ch == '(' && doubleParen {
+			s.openStart = i
+			s.parenDepth = 0
+			return 1
+		}
+		return 0
+	}
+	if ch == '(' {
+		s.parenDepth++
+		if doubleParen {
+			return 1
+		}
+		return 0
+	}
+	if ch != ')' {
+		return 0
+	}
+	if doubleParen {
+		if s.parenDepth == 0 {
+			s.spans = append(s.spans, outputSpan{start: s.openStart, end: i + 2})
+			s.openStart = -1
+		} else {
+			s.parenDepth--
+		}
+		return 1
+	}
+	if s.parenDepth > 0 {
+		s.parenDepth--
+	}
+	return 0
 }
 
 func tokenInOutputSpan(start, end int, spans []outputSpan) bool {
