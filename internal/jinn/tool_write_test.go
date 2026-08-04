@@ -1,6 +1,8 @@
 package jinn
 
 import (
+	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,6 +22,42 @@ func TestWriteFile_Basic(t *testing.T) {
 	data, _ := os.ReadFile(filepath.Join(dir, "out.txt"))
 	if string(data) != "hello world" {
 		t.Errorf("content = %q, want %q", data, "hello world")
+	}
+}
+
+func TestWriteFile_OversizeExistingFileRejected(t *testing.T) {
+	e, dir := historyEngine(t)
+	path := filepath.Join(dir, "large.txt")
+	original := bytes.Repeat([]byte("x"), historyMaxBlobBytes+1)
+	if err := os.WriteFile(path, original, 0o600); err != nil {
+		t.Fatalf("write original: %v", err)
+	}
+
+	_, err := e.writeFile(args("path", "large.txt", "content", "replacement"))
+	if err == nil {
+		t.Fatal("oversized existing-file mutation should be rejected")
+	}
+	var suggestion *ErrWithSuggestion
+	if !errors.As(err, &suggestion) {
+		t.Fatalf("expected ErrWithSuggestion, got %T: %v", err, err)
+	}
+	if suggestion.Code != ErrCodeFileTooLarge {
+		t.Fatalf("error code: got %q, want %q", suggestion.Code, ErrCodeFileTooLarge)
+	}
+
+	got, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatalf("read original after rejected write: %v", readErr)
+	}
+	if !bytes.Equal(got, original) {
+		t.Fatal("oversized rejected write changed the file")
+	}
+	hf, loadErr := e.loadHistoryLocked()
+	if loadErr != nil {
+		t.Fatalf("load history: %v", loadErr)
+	}
+	if len(hf.Entries) != 0 {
+		t.Fatalf("rejected write should not create history, got %d entries", len(hf.Entries))
 	}
 }
 

@@ -273,7 +273,7 @@ echo '{"tool":"apply_patch","args":{"patch":"*** Begin Patch\n*** Update File: m
 
 ### undo
 
-Browse and restore file snapshots. jinn captures a snapshot automatically before every `write_file`, `edit_file`, `multi_edit`, and `apply_patch` mutation.
+Browse and restore file snapshots. jinn captures a snapshot automatically before every `write_file`, `edit_file`, `multi_edit`, and `apply_patch` mutation. Mutations of existing files whose pre-mutation content exceeds 5 MiB are rejected before writing so no successful mutation silently lacks an undo snapshot.
 
 ```bash
 echo '{"tool":"undo","args":{"action":"list"}}' | jinn
@@ -301,6 +301,7 @@ echo '{"tool":"undo","args":{"action":"list"}}' | jinn
 
 - Snapshots are recorded automatically -- there is no "save snapshot" action.
 - History is bounded; the oldest snapshots are evicted once the limit is reached.
+- Existing files larger than 5 MiB are rejected for mutating operations with `file_too_large`; the original file remains unchanged.
 - `preview` and `restore` accept any unique prefix of a snapshot ID, so the short form shown by `list` works directly.
 
 List snapshots, then restore one:

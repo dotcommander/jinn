@@ -12,12 +12,14 @@ import (
 	"sync/atomic"
 )
 
-// lspProc is the result of launching an LSP server: the pipes to drive it and
-// a kill func to terminate the process. Returned by lspLauncher.
+// lspProc is the result of launching an LSP server: the pipes to drive it, a
+// kill func to terminate the process, and a wait func to reap it. Returned by
+// lspLauncher.
 type lspProc struct {
 	stdin  io.WriteCloser
 	stdout io.ReadCloser
 	kill   func() error
+	wait   func() error
 }
 
 // lspLauncher launches an LSP server and returns its stdin write end, stdout
@@ -39,7 +41,12 @@ func realLauncher(ctx context.Context, argv []string) (lspProc, error) {
 	if err := cmd.Start(); err != nil {
 		return lspProc{}, fmt.Errorf("lsp start: %w", err)
 	}
-	return lspProc{stdin: stdin, stdout: stdout, kill: func() error { return cmd.Process.Kill() }}, nil
+	return lspProc{
+		stdin:  stdin,
+		stdout: stdout,
+		kill:   func() error { return cmd.Process.Kill() },
+		wait:   cmd.Wait,
+	}, nil
 }
 
 // lspClient drives one LSP session. All calls are synchronous and single-threaded;
@@ -49,6 +56,7 @@ type lspClient struct {
 	stdoutRaw io.ReadCloser // underlying stdout closer; closed in stop() to unblock a blocked read
 	stdout    *bufio.Reader
 	kill      func() error
+	wait      func() error
 	nextID    atomic.Int64
 	launcher  lspLauncher // nil → use realLauncher
 	stopOnce  sync.Once
@@ -71,6 +79,7 @@ func (c *lspClient) start(ctx context.Context, argv []string) error {
 	c.stdoutRaw = proc.stdout
 	c.stdout = bufio.NewReader(proc.stdout)
 	c.kill = proc.kill
+	c.wait = proc.wait
 	return nil
 }
 
@@ -83,7 +92,10 @@ func (c *lspClient) stop() {
 			_ = c.stdoutRaw.Close()
 		}
 		if c.kill != nil {
-			c.kill() //nolint:errcheck
+			_ = c.kill()
+		}
+		if c.wait != nil {
+			_ = c.wait()
 		}
 	})
 }

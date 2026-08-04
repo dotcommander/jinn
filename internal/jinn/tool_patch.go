@@ -249,7 +249,10 @@ func (e *Engine) applyDelete(r resolvedOp, pre preflightResult) (applyOpResult, 
 		return applyOpResult{}, fmt.Errorf("delete %s: %w", r.op.path, err)
 	}
 	preContent, _ := os.ReadFile(r.resolved)
-	id := e.recordSnapshot(r.resolved, r.op.path, "apply_patch", preContent)
+	id, err := e.recordSnapshotForMutation(r.resolved, r.op.path, "apply_patch", preContent)
+	if err != nil {
+		return applyOpResult{}, fmt.Errorf("delete %s: %w", r.op.path, err)
+	}
 	if err := os.Remove(r.resolved); err != nil {
 		return applyOpResult{}, fmt.Errorf("delete %s: %w", r.op.path, err)
 	}

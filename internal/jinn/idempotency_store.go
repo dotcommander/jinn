@@ -15,9 +15,11 @@ import (
 //
 // requestID == "" → plain transact; no idempotency row written.
 // requestID != "" → one transaction: INSERT idempotency row, run fn, UPDATE
-// result_json, commit. A duplicate (agent, requestID) replays the cached
-// result without re-running fn. A row with empty result_json (crash mid-flight)
-// returns ErrCodeConflict so the caller can retry later.
+// result_json, commit. A duplicate (agent, requestID) for the same command
+// replays the cached result without re-running fn. Reusing the identity for a
+// different command returns ErrCodeConflict instead of replaying the wrong
+// mutation. A row with empty result_json (crash mid-flight) returns
+// ErrCodeConflict so the caller can retry later.
 //
 // Replay returns the exact JSON string from the first call, byte-identical.
 //
@@ -49,7 +51,7 @@ func runIdempotent(ctx context.Context, db *sql.DB, req idempotentRequest) (any,
 	)
 	if insertErr != nil {
 		_ = tx.Rollback()
-		return replayIdempotent(ctx, db, req.agent, req.requestID, insertErr)
+		return replayIdempotent(ctx, db, req.agent, req.requestID, req.command, insertErr)
 	}
 
 	// Slot claimed — run the work.
@@ -86,19 +88,28 @@ func runPlainTransact(ctx context.Context, db *sql.DB, fn func(tx *sql.Tx) (any,
 }
 
 // replayIdempotent handles a failed slot-claim INSERT. A non-unique error is
-// surfaced; a unique violation means the row exists, so the cached result is
-// loaded and replayed (or ErrCodeConflict if a prior attempt crashed mid-flight).
-func replayIdempotent(ctx context.Context, db *sql.DB, agent, requestID string, insertErr error) (any, error) {
+// surfaced; a unique violation means the row exists, so its command is checked
+// before the cached result is replayed. Reusing an identity for another
+// command is a conflict because replaying the cached result would skip the
+// requested mutation.
+func replayIdempotent(ctx context.Context, db *sql.DB, agent, requestID, command string, insertErr error) (any, error) {
 	if !isUniqueConstraintErr(insertErr) {
 		return nil, fmt.Errorf("insert idempotency row: %w", insertErr)
 	}
-	// Row exists — load cached result.
-	var resultJSON string
+	// Row exists — verify the command before loading the cached result.
+	var storedCommand, resultJSON string
 	if selErr := db.QueryRowContext(ctx,
-		`SELECT result_json FROM idempotency WHERE agent_name=? AND request_id=?`,
+		`SELECT command, result_json FROM idempotency WHERE agent_name=? AND request_id=?`,
 		agent, requestID,
-	).Scan(&resultJSON); selErr != nil {
+	).Scan(&storedCommand, &resultJSON); selErr != nil {
 		return nil, fmt.Errorf("load idempotency row: %w", selErr)
+	}
+	if storedCommand != command {
+		return nil, &ErrWithSuggestion{
+			Err:        fmt.Errorf("idempotency request %q already belongs to command %q; cannot replay it as %q", requestID, storedCommand, command),
+			Suggestion: "use a new request_id for a different command",
+			Code:       ErrCodeConflict,
+		}
 	}
 	// Defensive only: INSERT+fn+UPDATE+COMMIT run in ONE transaction, so a
 	// crash rolls the claim row back and a committed empty result_json cannot

@@ -163,7 +163,7 @@ Recipes for Claude Code, Codex CLI, pi, and custom loops:
 | `detect_project` | Auto-detect language, frameworks, and build/test/lint commands. |
 | `list_tools` | Programmatic tool capability metadata; can include the compact schema on request. |
 | `memory` | Persistent, project-scoped key/value store across sessions. Actions: `save`, `recall`, `list`, `forget`. |
-| `undo` | Browse, preview, and restore file snapshots captured automatically before every mutation. |
+| `undo` | Browse, preview, and restore file snapshots captured automatically before every mutation. Existing files over 5 MiB are rejected before mutation so the undo guarantee is preserved. |
 | `lsp_query` | Query a language server for `definition`, `references`, `hover`, `symbols`, `diagnostics`, or `rename`. |
 
 ---

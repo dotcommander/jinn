@@ -52,7 +52,10 @@ func (e *Engine) atomicWriteFile(resolved, content string) error {
 // Combining them keeps the invariant structural: no mutating write skips
 // history. Returns the undo id ("" when the snapshot was skipped).
 func (e *Engine) snapshotAndWrite(resolved, displayPath, op string, preContent []byte, content string) (string, error) {
-	id := e.recordSnapshot(resolved, displayPath, op, preContent)
+	id, err := e.recordSnapshotForMutation(resolved, displayPath, op, preContent)
+	if err != nil {
+		return "", err
+	}
 	return id, e.atomicWriteFile(resolved, content)
 }
 
@@ -166,7 +169,9 @@ func (e *Engine) writeFileWithPreCommitHook(args map[string]interface{}, beforeC
 	if err := verifyPreflightState(resolved, preContent, exists); err != nil {
 		return "", err
 	}
-	e.recordSnapshot(resolved, path, "write_file", preContent)
+	if _, snapshotErr := e.recordSnapshotForMutation(resolved, path, "write_file", preContent); snapshotErr != nil {
+		return "", snapshotErr
+	}
 
 	if err := os.MkdirAll(filepath.Dir(resolved), 0o750); err != nil {
 		return "", fmt.Errorf("mkdir: %w", err)

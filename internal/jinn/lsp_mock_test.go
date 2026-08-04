@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"strings"
+	"testing"
 )
 
 // mockConfig controls the behavior of runMockServer for variant tests.
@@ -273,6 +275,36 @@ func writeMockFrame(w io.Writer, msg lspRPCMsg) {
 func fakeLauncherError(err error) lspLauncher {
 	return func(_ context.Context, _ []string) (lspProc, error) {
 		return lspProc{}, err
+	}
+}
+
+func TestLSPClientStopWaitsForProcess(t *testing.T) {
+	t.Parallel()
+	var killed, waited bool
+	client := newLSPClient(func(context.Context, []string) (lspProc, error) {
+		return lspProc{
+			stdin:  nopWriteCloser{io.Discard},
+			stdout: io.NopCloser(strings.NewReader("")),
+			kill: func() error {
+				killed = true
+				return nil
+			},
+			wait: func() error {
+				waited = true
+				return nil
+			},
+		}, nil
+	})
+	if err := client.start(context.Background(), []string{"fake-lsp"}); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+
+	client.stop()
+	if !killed {
+		t.Error("stop did not terminate the process")
+	}
+	if !waited {
+		t.Error("stop did not wait for the process to be reaped")
 	}
 }
 

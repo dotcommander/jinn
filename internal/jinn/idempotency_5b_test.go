@@ -3,6 +3,8 @@ package jinn
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"strings"
 	"testing"
 )
 
@@ -59,6 +61,46 @@ func TestIdempotency5b_MemorySaveReplayOnce(t *testing.T) {
 	}
 	if n := dbCount(t, e, ctx, `SELECT COUNT(*) FROM memory WHERE key='replay-key'`); n != 1 {
 		t.Errorf("want 1 memory row after different request_id, got %d", n)
+	}
+}
+
+// TestIdempotency5b_CrossCommandRequestIDRejected verifies that an identity
+// used for one mutation cannot silently replay its result for another command.
+func TestIdempotency5b_CrossCommandRequestIDRejected(t *testing.T) {
+	e, ctx := newIdempotencyEngine(t)
+
+	const requestID = "cross-command-5b-001"
+	if _, err := e.memoryTool(ctx, args(
+		"action", "save", "key", "cross-command-key", "value", "v1",
+		"scope", "global", "agent", "agent", "request_id", requestID,
+	)); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	_, err := e.memoryTool(ctx, args(
+		"action", "forget", "key", "cross-command-key",
+		"scope", "global", "agent", "agent", "request_id", requestID,
+	))
+	if err == nil {
+		t.Fatal("cross-command request reuse should return a conflict")
+	}
+	var suggestion *ErrWithSuggestion
+	if !errors.As(err, &suggestion) {
+		t.Fatalf("expected ErrWithSuggestion, got %T: %v", err, err)
+	}
+	if suggestion.Code != ErrCodeConflict {
+		t.Fatalf("error code: got %q, want %q", suggestion.Code, ErrCodeConflict)
+	}
+	if !strings.Contains(err.Error(), "already belongs to command") {
+		t.Fatalf("error should identify command mismatch, got %q", err)
+	}
+
+	value, err := e.memoryRecall(ctx, args("scope", "global", "key", "cross-command-key"))
+	if err != nil {
+		t.Fatalf("recall after rejected forget: %v", err)
+	}
+	if value != "v1" {
+		t.Fatalf("value after rejected forget: got %q, want %q", value, "v1")
 	}
 }
 

@@ -115,6 +115,29 @@ func (e *Engine) saveHistory(hf historyFile) error {
 	return nil
 }
 
+func validateSnapshotSize(displayPath string, preContent []byte) error {
+	if len(preContent) <= historyMaxBlobBytes {
+		return nil
+	}
+	return &ErrWithSuggestion{
+		Err: fmt.Errorf(
+			"cannot mutate %s: undo snapshot limit is %d bytes (pre-content is %d bytes)",
+			displayPath, historyMaxBlobBytes, len(preContent),
+		),
+		Suggestion: fmt.Sprintf("reduce the existing file below %d bytes before mutating it", historyMaxBlobBytes),
+		Code:       ErrCodeFileTooLarge,
+	}
+}
+
+// recordSnapshotForMutation enforces the undo contract at mutation boundaries
+// while preserving recordSnapshot's best-effort behavior for internal callers.
+func (e *Engine) recordSnapshotForMutation(absPath, displayPath, op string, preContent []byte) (string, error) {
+	if err := validateSnapshotSize(displayPath, preContent); err != nil {
+		return "", err
+	}
+	return e.recordSnapshot(absPath, displayPath, op, preContent), nil
+}
+
 // recordSnapshot saves a pre-mutation snapshot of absPath and returns the
 // new entry's undo id ("" when the snapshot was skipped).
 // Never blocks a mutation — all recoverable failures are swallowed (best-effort).
