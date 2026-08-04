@@ -539,16 +539,19 @@ The `plan` object:
 | Name | Type | Required | Default | Description |
 |------|------|----------|---------|-------------|
 | `root` | string | Yes | -- | ID of the starting node |
-| `nodes` | array | Yes | -- | Plan nodes, each with `commands` and optional `edges` |
-| `cwd` | string | No | working dir | Working directory for command execution |
-| `max_depth` | int | No | `8` | Maximum node depth before the walk stops |
+| `nodes` | array | Yes | -- | Non-empty plan nodes, each with non-empty `commands` and optional `edges` |
+| `cwd` | string | No | working dir | Existing directory inside the engine workdir; all shell, tool, and cwd-relative condition paths use it |
+| `max_depth` | int | No | `8` | Maximum execution depth before the walk stops, including nested `run_plan` calls |
 | `force` | bool | No | `false` | Plan-level gate; with a node's own `force`, permits `dangerous` mutations |
 
 **Notes:**
 
-- Read-only by default: a node without `mutates: true` allows only `safe` shell commands and read-only tools. A `mutates: true` node runs `caution` operations automatically; `dangerous` ones require both `plan.force` and the node's `force`.
+- Each command sets exactly one of a non-empty `shell` or a known `tool`. Unknown tools, empty nodes, and malformed conditions are rejected before the walk starts.
+- Read-only by default: a node without `mutates: true` allows only `safe` shell commands and read-only tools. This includes `memory` actions `recall`/`list` and `undo` actions `list`/`preview`; their mutating actions remain blocked. A `mutates: true` node runs `caution` operations automatically; `dangerous` ones require both `plan.force` and the node's `force`, including nested `tool: "run_shell"` and `tool: "run_plan"` commands. Nested plans inherit the parent's remaining depth and dangerous-mutation authority. A nested `force` argument cannot bypass those gates.
 - A node cannot combine `parallel: true` with `mutates: true`; split mutating operations into serial nodes.
-- Edges are evaluated against the last op's result; condition kinds are `exitCode`, `fileExists`, `jsonPath`, `numeric`, `match`, and `always`.
+- Edges are evaluated against the last op's result; a failed or blocked tool reports a nonzero `exit_code`. Condition kinds are `exitCode`, `fileExists`, `jsonPath`, `numeric`, `match`, and `always`; `negate` applies uniformly, and JSON equality preserves value types.
+- A `numeric.extract` regex must contain a capture group for the numeric value. An empty `match.regex` is valid and matches every result.
+- A condition-evaluation error (for example, a path outside the plan sandbox) stops the walk with `stopped_reason: "error"`; it never falls through to a later edge.
 - The result carries the run in `meta.plan_run` (`transcript`, `path_taken`, `stopped_reason`, and edge counts).
 - Full `PlanNode` / `PlanEdge` / condition reference lives in the `run_plan` section of [AGENTS.md](../AGENTS.md).
 

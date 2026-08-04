@@ -96,6 +96,71 @@ func TestPlanMutation(t *testing.T) {
 			t.Errorf("expected victim file to be deleted, but it still exists: %v", statErr)
 		}
 	})
+
+	t.Run("nested_run_shell_force_cannot_bypass_plan_gate", func(t *testing.T) {
+		t.Parallel()
+		e, dir := testEngine(t)
+		victimPath := filepath.Join(dir, "nested-victim.txt")
+		if err := os.WriteFile(victimPath, []byte("precious data"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		plan := &PlanTree{
+			Root: "n1",
+			Nodes: []PlanNode{{
+				ID:      "n1",
+				Mutates: true,
+				Commands: []PlanOp{{Tool: "run_shell", Args: map[string]any{
+					"command": "rm " + shellQuote(victimPath),
+					"force":   true,
+				}}},
+			}},
+		}
+		result, err := e.runPlanTree(context.Background(), plan)
+		if err != nil {
+			t.Fatalf("runPlanTree(): %v", err)
+		}
+		if result.StoppedReason != StopMutationBlocked {
+			t.Fatalf("StoppedReason = %q, want %q", result.StoppedReason, StopMutationBlocked)
+		}
+		if _, err := os.Stat(victimPath); err != nil {
+			t.Fatalf("nested force bypass deleted victim: %v", err)
+		}
+	})
+
+	t.Run("nested_run_shell_executes_with_double_force", func(t *testing.T) {
+		t.Parallel()
+		e, dir := testEngine(t)
+		victimPath := filepath.Join(dir, "nested-double-force-victim.txt")
+		if err := os.WriteFile(victimPath, []byte("disposable"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		plan := &PlanTree{
+			Force: true,
+			Root:  "n1",
+			Nodes: []PlanNode{{
+				ID:      "n1",
+				Mutates: true,
+				Force:   true,
+				Commands: []PlanOp{{Tool: "run_shell", Args: map[string]any{
+					"command": "rm " + shellQuote(victimPath),
+					"force":   false,
+				}}},
+			}},
+		}
+		result, err := e.runPlanTree(context.Background(), plan)
+		if err != nil {
+			t.Fatalf("runPlanTree(): %v", err)
+		}
+		if result.StoppedReason != StopLeaf || !result.Transcript[0].Ops[0].OK {
+			t.Fatalf("nested dangerous run = %+v, want successful leaf", result)
+		}
+		if got := result.Transcript[0].Ops[0].Risk; got != RiskDangerous.String() {
+			t.Fatalf("nested dangerous risk = %q, want %q", got, RiskDangerous.String())
+		}
+		if _, err := os.Stat(victimPath); !os.IsNotExist(err) {
+			t.Fatalf("nested double force did not delete victim: %v", err)
+		}
+	})
 }
 
 func TestPlanMutationFalsePositiveMatrix(t *testing.T) {

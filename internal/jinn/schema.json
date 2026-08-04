@@ -13,19 +13,25 @@
               "root": {"type": "string"},
               "nodes": {
                 "type": "array",
+                "minItems": 1,
                 "items": {
                   "type": "object",
                   "properties": {
                     "id": {"type": "string"},
                     "commands": {
                       "type": "array",
+                      "minItems": 1,
                       "items": {
                         "type": "object",
                         "properties": {
-                          "shell": {"type": "string"},
-                          "tool": {"type": "string"},
+                          "shell": {"type": "string", "minLength": 1},
+                          "tool": {"type": "string", "enum": ["run_plan", "run_shell", "read_file", "multi_read", "write_file", "edit_file", "multi_edit", "apply_patch", "search_files", "stat_file", "list_dir", "find_files", "list_tools", "detect_project", "memory", "undo", "lsp_query", "diff_files", "search_replace"]},
                           "args": {"type": "object"}
-                        }
+                        },
+                        "oneOf": [
+                          {"required": ["shell"], "not": {"required": ["tool"]}},
+                          {"required": ["tool"], "not": {"required": ["shell"]}}
+                        ]
                       }
                     },
                     "parallel": {"type": "boolean"},
@@ -48,7 +54,39 @@
                               "stream": {"type": "string", "enum": ["stdout", "stderr"]},
                               "negate": {"type": "boolean"}
                             },
-                            "required": ["kind"]
+                            "required": ["kind"],
+                            "oneOf": [
+                              {
+                                "properties": {"kind": {"enum": ["always"]}, "negate": {"type": "boolean"}},
+                                "required": ["kind"],
+                                "additionalProperties": false
+                              },
+                              {
+                                "properties": {"kind": {"enum": ["exitCode"]}, "op": {"enum": ["eq", "ne", "lt", "lte", "gt", "gte"]}, "value": {"type": "integer"}, "negate": {"type": "boolean"}},
+                                "required": ["kind", "op", "value"],
+                                "additionalProperties": false
+                              },
+                              {
+                                "properties": {"kind": {"enum": ["fileExists"]}, "path": {"type": "string", "minLength": 1}, "negate": {"type": "boolean"}},
+                                "required": ["kind", "path"],
+                                "additionalProperties": false
+                              },
+                              {
+                                "properties": {"kind": {"enum": ["jsonPath"]}, "path": {"type": "string", "minLength": 1}, "op": {"enum": ["eq", "ne", "lt", "lte", "gt", "gte"]}, "value": {"not": {"type": "null"}}, "negate": {"type": "boolean"}},
+                                "required": ["kind", "path", "op", "value"],
+                                "additionalProperties": false
+                              },
+                              {
+                                "properties": {"kind": {"enum": ["numeric"]}, "op": {"enum": ["eq", "ne", "lt", "lte", "gt", "gte"]}, "value": {"type": "number"}, "extract": {"type": "string"}, "negate": {"type": "boolean"}},
+                                "required": ["kind", "op", "value"],
+                                "additionalProperties": false
+                              },
+                              {
+                                "properties": {"kind": {"enum": ["match"]}, "regex": {"type": "string"}, "stream": {"enum": ["stdout", "stderr"]}, "negate": {"type": "boolean"}},
+                                "required": ["kind", "regex", "stream"],
+                                "additionalProperties": false
+                              }
+                            ]
                           },
                           "to": {"type": "string"}
                         },

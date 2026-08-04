@@ -25,8 +25,8 @@ func TestValidatePlan(t *testing.T) {
 		err := validatePlan(&PlanTree{
 			Root: "n1",
 			Nodes: []PlanNode{
-				{ID: "n1"},
-				{ID: "n1"},
+				{ID: "n1", Commands: []PlanOp{{Tool: "list_dir"}}},
+				{ID: "n1", Commands: []PlanOp{{Tool: "list_dir"}}},
 			},
 		})
 		if err == nil {
@@ -80,7 +80,7 @@ func TestValidatePlan(t *testing.T) {
 		err := validatePlan(&PlanTree{
 			Root: "n99",
 			Nodes: []PlanNode{
-				{ID: "n1"},
+				{ID: "n1", Commands: []PlanOp{{Tool: "list_dir"}}},
 			},
 		})
 		if err == nil {
@@ -98,7 +98,8 @@ func TestValidatePlan(t *testing.T) {
 			Root: "n1",
 			Nodes: []PlanNode{
 				{
-					ID: "n1",
+					ID:       "n1",
+					Commands: []PlanOp{{Tool: "list_dir"}},
 					Edges: []PlanEdge{
 						{When: Condition{Kind: "always"}, To: "n99"},
 					},
@@ -119,12 +120,13 @@ func TestValidatePlan(t *testing.T) {
 			Root: "n1",
 			Nodes: []PlanNode{
 				{
-					ID: "n1",
+					ID:       "n1",
+					Commands: []PlanOp{{Tool: "list_dir"}},
 					Edges: []PlanEdge{
-						{When: Condition{Kind: "match"}, To: "n2"},
+						{When: Condition{Kind: "match", Stream: "stdout", Regex: "ok"}, To: "n2"},
 					},
 				},
-				{ID: "n2", Mutates: true},
+				{ID: "n2", Mutates: true, Commands: []PlanOp{{Tool: "write_file"}}},
 			},
 		})
 		if err == nil {
@@ -142,12 +144,13 @@ func TestValidatePlan(t *testing.T) {
 			Root: "n1",
 			Nodes: []PlanNode{
 				{
-					ID: "n1",
+					ID:       "n1",
+					Commands: []PlanOp{{Tool: "list_dir"}},
 					Edges: []PlanEdge{
-						{When: Condition{Kind: "exitCode"}, To: "n2"},
+						{When: Condition{Kind: "exitCode", Op: "eq", Value: 0}, To: "n2"},
 					},
 				},
-				{ID: "n2", Mutates: true},
+				{ID: "n2", Mutates: true, Commands: []PlanOp{{Tool: "write_file"}}},
 			},
 		})
 		if err != nil {
@@ -160,11 +163,103 @@ func TestValidatePlan(t *testing.T) {
 		err := validatePlan(&PlanTree{
 			Root: "n1",
 			Nodes: []PlanNode{
-				{ID: "n1"},
+				{ID: "n1", Commands: []PlanOp{{Tool: "list_dir"}}},
 			},
 		})
 		if err != nil {
 			t.Errorf("expected nil, got: %v", err)
 		}
 	})
+}
+
+func TestValidatePlanRejectsUnsafeShapes(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		plan *PlanTree
+		want string
+	}{
+		{
+			name: "empty node",
+			plan: &PlanTree{Root: "n1", Nodes: []PlanNode{{ID: "n1"}}},
+			want: "has no commands",
+		},
+		{
+			name: "dual operation",
+			plan: &PlanTree{Root: "n1", Nodes: []PlanNode{{ID: "n1", Commands: []PlanOp{{Shell: "pwd", Tool: "list_dir"}}}}},
+			want: "exactly one",
+		},
+		{
+			name: "unknown tool",
+			plan: &PlanTree{Root: "n1", Nodes: []PlanNode{{ID: "n1", Commands: []PlanOp{{Tool: "not_a_tool"}}}}},
+			want: "unknown tool",
+		},
+		{
+			name: "malformed condition",
+			plan: &PlanTree{Root: "n1", Nodes: []PlanNode{{
+				ID:       "n1",
+				Commands: []PlanOp{{Tool: "list_dir"}},
+				Edges:    []PlanEdge{{When: Condition{Kind: "exitCode", Op: "wat", Value: 0}, To: "n1"}},
+			}}},
+			want: "invalid condition",
+		},
+		{
+			name: "always with comparison fields",
+			plan: &PlanTree{Root: "n1", Nodes: []PlanNode{{
+				ID:       "n1",
+				Commands: []PlanOp{{Tool: "list_dir"}},
+				Edges:    []PlanEdge{{When: Condition{Kind: "always", Op: "eq"}, To: "n1"}},
+			}}},
+			want: "invalid condition",
+		},
+		{
+			name: "numeric extract without capture group",
+			plan: &PlanTree{Root: "n1", Nodes: []PlanNode{{
+				ID:       "n1",
+				Commands: []PlanOp{{Tool: "list_dir"}},
+				Edges:    []PlanEdge{{When: Condition{Kind: "numeric", Op: "eq", Value: 1, Extract: `[0-9]+`}, To: "n1"}},
+			}}},
+			want: "invalid condition",
+		},
+		{
+			name: "json path null value",
+			plan: &PlanTree{Root: "n1", Nodes: []PlanNode{{
+				ID:       "n1",
+				Commands: []PlanOp{{Tool: "list_dir"}},
+				Edges:    []PlanEdge{{When: Condition{Kind: "jsonPath", Path: "count", Op: "eq", Value: nil}, To: "n1"}},
+			}}},
+			want: "invalid condition",
+		},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := validatePlan(tt.plan)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("validatePlan() error = %v, want containing %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestPlanShellCommandPreservesDangerousClassification(t *testing.T) {
+	t.Parallel()
+	risk, _ := ClassifyCommand(planShellCommand(t.TempDir(), "rm disposable.txt"))
+	if risk != RiskDangerous {
+		t.Fatalf("cwd-wrapped rm risk = %s, want dangerous", risk)
+	}
+}
+
+func TestRewritePlanShellClassificationPreservesHint(t *testing.T) {
+	t.Parallel()
+	input := "[exit: 1]\n[classification: error — old]\n[hint: keep this]"
+	got := rewritePlanShellClassification(input, "expected_nonzero", "no matches")
+	if !strings.Contains(got, "[classification: expected_nonzero — no matches]") {
+		t.Errorf("rewritten classification missing: %q", got)
+	}
+	if !strings.Contains(got, "[hint: keep this]") {
+		t.Errorf("hint was dropped: %q", got)
+	}
 }

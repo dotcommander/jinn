@@ -389,7 +389,7 @@ The same partial-apply error shape applies to `multi_edit` and `search_replace`.
 | `root` | **yes** | — | ID of the starting node |
 | `nodes` | **yes** | — | Array of `PlanNode` objects |
 | `cwd` | no | working dir | Working directory for command execution |
-| `max_depth` | no | 8 | Maximum node depth before the run stops with `stopped_reason: "max_depth"` |
+| `max_depth` | no | 8 | Maximum execution depth before the run stops with `stopped_reason: "max_depth"`, including nested `run_plan` calls |
 | `force` | no | `false` | Plan-level gate: required (with node-level `force`) for dangerous mutations to execute |
 
 Each `PlanNode` has:
@@ -407,11 +407,11 @@ Each `PlanOp` sets exactly one of `shell` (a shell command string) or `tool` + `
 
 ### Mutation gating
 
-Nodes without `mutates: true` (Phase 1) are read-only: only `safe`-risk shell commands and a fixed allowlist of tools (`read_file`, `multi_read`, `list_dir`, `search_files`, `find_files`, `stat_file`, `lsp_query`) are permitted. Any non-safe shell or non-allowlist tool is blocked.
+Nodes without `mutates: true` (Phase 1) are read-only: only `safe`-risk shell commands and read-only tools are permitted. The fixed file/search allowlist is (`read_file`, `multi_read`, `list_dir`, `search_files`, `find_files`, `stat_file`, `lsp_query`), with `memory` actions `recall`/`list` and `undo` actions `list`/`preview` also allowed. Any non-safe shell or mutating action is blocked.
 
 Nodes with `mutates: true` (Phase 2) allow mutations under a risk gate:
 - `caution`-risk operations execute normally.
-- `dangerous`-risk operations require **both** `plan.force: true` **and** `node.force: true`. If either is missing, the op is blocked and the run stops with `stopped_reason: "mutation_blocked"`.
+- `dangerous`-risk operations require **both** `plan.force: true` **and** `node.force: true`. If either is missing, the op is blocked and the run stops with `stopped_reason: "mutation_blocked"`. Nested plans inherit the parent's remaining depth and dangerous-mutation authority, so a child `force` field cannot elevate an unforced parent.
 
 ### Edges and conditions
 

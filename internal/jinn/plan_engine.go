@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -22,23 +23,92 @@ var planPhase1ToolAllowlist = map[string]bool{
 	"lsp_query":    true,
 }
 
-// planToolRisk classifies a mutating-node tool op for the Phase 2 risk gate.
-// Unlike mutatingActions (mutating_registry.go), this covers file-mutating
-// tools (write_file/edit_file/multi_edit/apply_patch/search_replace) in
-// addition to memory actions — mutatingActions intentionally excludes them.
-func planToolRisk(tool, action string) RiskLevel {
-	switch tool {
-	case "write_file", "edit_file", "multi_edit", "apply_patch", "search_replace":
-		return RiskCaution
-	case "memory":
-		if action == "gc" {
-			return RiskDangerous
-		}
-		if action == "save" || action == "forget" {
-			return RiskCaution
+type planExecutionContextKey struct{}
+type planNestedAuthorizationKey struct{}
+
+// planExecutionContext is carried through nested run_plan dispatches. The
+// outermost plan establishes the depth budget and dangerous-mutation
+// authority. Nested plans may consume that budget and authority, but cannot
+// reset or elevate either one.
+type planExecutionContext struct {
+	depth               int
+	maxDepth            int
+	dangerousAuthorized bool
+}
+
+func planExecutionContextFor(ctx context.Context, plan *PlanTree) *planExecutionContext {
+	if parent, ok := ctx.Value(planExecutionContextKey{}).(*planExecutionContext); ok {
+		authorized, _ := ctx.Value(planNestedAuthorizationKey{}).(bool)
+		return &planExecutionContext{
+			depth:               parent.depth + 1,
+			maxDepth:            parent.maxDepth,
+			dangerousAuthorized: authorized,
 		}
 	}
-	return RiskSafe
+
+	maxDepth := plan.MaxDepth
+	if maxDepth == 0 {
+		maxDepth = DefaultMaxDepth
+	}
+	return &planExecutionContext{
+		maxDepth:            maxDepth,
+		dangerousAuthorized: true,
+	}
+}
+
+func planPhase1ToolAllowed(op PlanOp) bool {
+	if planPhase1ToolAllowlist[op.Tool] {
+		return true
+	}
+	action, _ := op.Args["action"].(string)
+	switch op.Tool {
+	case "memory":
+		return action == "recall" || action == "list"
+	case "undo":
+		return action == "list" || action == "preview"
+	default:
+		return false
+	}
+}
+
+// planToolRisk classifies a known mutating-node tool op for the Phase 2 risk
+// gate. Nested run_shell commands use the same classifier as direct shell ops;
+// callers cannot supply their own force authority.
+func planToolRisk(tool string, args map[string]any) (RiskLevel, error) {
+	descriptor, ok := lookupToolDescriptor(tool)
+	if !ok {
+		return RiskSafe, fmt.Errorf("unknown tool: %s", tool)
+	}
+	if tool == "run_shell" {
+		command, _ := args["command"].(string)
+		if strings.TrimSpace(command) == "" {
+			return RiskSafe, fmt.Errorf("run_shell command is required")
+		}
+		risk, _ := ClassifyCommand(command)
+		return risk, nil
+	}
+
+	switch tool {
+	case "write_file", "edit_file", "multi_edit", "apply_patch", "search_replace":
+		return RiskCaution, nil
+	case "memory":
+		action, _ := args["action"].(string)
+		if action == "gc" {
+			return RiskDangerous, nil
+		}
+		if action == "save" || action == "forget" {
+			return RiskCaution, nil
+		}
+	case "undo":
+		action, _ := args["action"].(string)
+		if action == "clear" {
+			return RiskDangerous, nil
+		}
+	}
+	if descriptor.routeRisk == toolRouteRiskMutating {
+		return RiskCaution, nil
+	}
+	return RiskSafe, nil
 }
 
 func validatePlan(plan *PlanTree) error {
@@ -50,15 +120,18 @@ func validatePlan(plan *PlanTree) error {
 		}
 	}
 
-	// Check for duplicate node IDs.
+	if plan.Root == "" {
+		return planInvalid("plan has no root node")
+	}
+
+	// Check for duplicate node IDs and structurally valid operations.
 	seen := make(map[string]bool, len(plan.Nodes))
 	for _, n := range plan.Nodes {
+		if n.ID == "" {
+			return planInvalid("node id is required")
+		}
 		if seen[n.ID] {
-			return &ErrWithSuggestion{
-				Err:        fmt.Errorf("duplicate node id: %s", n.ID),
-				Suggestion: "fix the plan structure and resubmit — validation runs before any node executes",
-				Code:       ErrCodePlanInvalid,
-			}
+			return planInvalid("duplicate node id: %s", n.ID)
 		}
 		if n.Parallel && n.Mutates {
 			return &ErrWithSuggestion{
@@ -67,34 +140,29 @@ func validatePlan(plan *PlanTree) error {
 				Code:       ErrCodePlanInvalid,
 			}
 		}
+		if len(n.Commands) == 0 {
+			return planInvalid("node %s has no commands", n.ID)
+		}
+		for i, op := range n.Commands {
+			if err := validatePlanOp(op); err != nil {
+				return planInvalid("node %s command %d: %v", n.ID, i, err)
+			}
+		}
 		seen[n.ID] = true
 	}
 
-	if plan.Root == "" {
-		return &ErrWithSuggestion{
-			Err:        fmt.Errorf("plan has no root node"),
-			Suggestion: "fix the plan structure and resubmit — validation runs before any node executes",
-			Code:       ErrCodePlanInvalid,
-		}
-	}
-
 	if !seen[plan.Root] {
-		return &ErrWithSuggestion{
-			Err:        fmt.Errorf("root node %s not found", plan.Root),
-			Suggestion: "fix the plan structure and resubmit — validation runs before any node executes",
-			Code:       ErrCodePlanInvalid,
-		}
+		return planInvalid("root node %s not found", plan.Root)
 	}
 
 	// Check edges target known nodes and tier rules.
 	for _, n := range plan.Nodes {
 		for _, e := range n.Edges {
+			if err := validateCondition(e.When); err != nil {
+				return planInvalid("edge from %s has invalid condition: %v", n.ID, err)
+			}
 			if !seen[e.To] {
-				return &ErrWithSuggestion{
-					Err:        fmt.Errorf("edge from %s targets unknown node %s", n.ID, e.To),
-					Suggestion: "fix the plan structure and resubmit — validation runs before any node executes",
-					Code:       ErrCodePlanInvalid,
-				}
+				return planInvalid("edge from %s targets unknown node %s", n.ID, e.To)
 			}
 			// Tier rule: low-confidence conditions cannot gate mutating nodes.
 			if !HighConfidenceKinds[e.When.Kind] {
@@ -114,42 +182,264 @@ func validatePlan(plan *PlanTree) error {
 	return nil
 }
 
-func (e *Engine) runPlanOp(ctx context.Context, op PlanOp) (PlanOpResult, bool) {
+func planInvalid(format string, args ...any) error {
+	return &ErrWithSuggestion{
+		Err:        fmt.Errorf(format, args...),
+		Suggestion: "fix the plan structure and resubmit — validation runs before any node executes",
+		Code:       ErrCodePlanInvalid,
+	}
+}
+
+func validatePlanOp(op PlanOp) error {
+	hasShell := strings.TrimSpace(op.Shell) != ""
+	hasTool := op.Tool != ""
+	if hasShell == hasTool {
+		return fmt.Errorf("plan op must set exactly one non-empty shell or tool")
+	}
+	if hasTool {
+		if _, ok := lookupToolDescriptor(op.Tool); !ok {
+			return fmt.Errorf("unknown tool: %s", op.Tool)
+		}
+	}
+	return nil
+}
+
+func validPlanOperator(op string) bool {
+	switch op {
+	case "eq", "ne", "lt", "lte", "gt", "gte":
+		return true
+	default:
+		return false
+	}
+}
+
+func numericPlanValue(value any, integer bool) (float64, bool) {
+	var number float64
+	switch v := value.(type) {
+	case int:
+		number = float64(v)
+	case float64:
+		number = v
+	default:
+		return 0, false
+	}
+	if math.IsNaN(number) || math.IsInf(number, 0) || (integer && math.Trunc(number) != number) {
+		return 0, false
+	}
+	return number, true
+}
+
+func validateCondition(cond Condition) error {
+	switch cond.Kind {
+	case "always":
+		if cond.Op != "" || cond.Value != nil || cond.Path != "" || cond.Extract != "" || cond.Regex != "" || cond.Stream != "" {
+			return fmt.Errorf("always does not accept comparison fields")
+		}
+		return nil
+	case "exitCode":
+		if !validPlanOperator(cond.Op) {
+			return fmt.Errorf("exitCode requires a supported operator")
+		}
+		if _, ok := numericPlanValue(cond.Value, true); !ok {
+			return fmt.Errorf("exitCode requires an integer value")
+		}
+		if cond.Path != "" || cond.Extract != "" || cond.Regex != "" || cond.Stream != "" {
+			return fmt.Errorf("exitCode does not accept path, extract, regex, or stream")
+		}
+	case "fileExists":
+		if strings.TrimSpace(cond.Path) == "" {
+			return fmt.Errorf("fileExists requires a path")
+		}
+		if cond.Op != "" || cond.Value != nil || cond.Extract != "" || cond.Regex != "" || cond.Stream != "" {
+			return fmt.Errorf("fileExists does not accept comparison fields")
+		}
+	case "numeric":
+		if !validPlanOperator(cond.Op) {
+			return fmt.Errorf("numeric requires a supported operator")
+		}
+		if _, ok := numericPlanValue(cond.Value, false); !ok {
+			return fmt.Errorf("numeric requires a numeric value")
+		}
+		if cond.Extract != "" {
+			re, err := regexp.Compile(cond.Extract)
+			if err != nil {
+				return fmt.Errorf("numeric extract regex: %w", err)
+			}
+			if re.NumSubexp() == 0 {
+				return fmt.Errorf("numeric extract regex requires a capture group")
+			}
+		}
+		if cond.Path != "" || cond.Regex != "" || cond.Stream != "" {
+			return fmt.Errorf("numeric does not accept path, regex, or stream")
+		}
+	case "jsonPath":
+		if strings.TrimSpace(cond.Path) == "" {
+			return fmt.Errorf("jsonPath requires a path")
+		}
+		if !validPlanOperator(cond.Op) {
+			return fmt.Errorf("jsonPath requires a supported operator")
+		}
+		if cond.Value == nil {
+			return fmt.Errorf("jsonPath requires a value")
+		}
+		if cond.Op != "eq" && cond.Op != "ne" {
+			if _, ok := numericPlanValue(cond.Value, false); !ok {
+				return fmt.Errorf("jsonPath %s requires a numeric value", cond.Op)
+			}
+		}
+		if cond.Extract != "" || cond.Regex != "" || cond.Stream != "" {
+			return fmt.Errorf("jsonPath does not accept extract, regex, or stream")
+		}
+	case "match":
+		if cond.Stream != "stdout" && cond.Stream != "stderr" {
+			return fmt.Errorf("match requires stream stdout or stderr")
+		}
+		if _, err := regexp.Compile(cond.Regex); err != nil {
+			return fmt.Errorf("match regex: %w", err)
+		}
+		if cond.Op != "" || cond.Value != nil || cond.Path != "" || cond.Extract != "" {
+			return fmt.Errorf("match does not accept comparison fields")
+		}
+	default:
+		return fmt.Errorf("unknown condition kind: %s", cond.Kind)
+	}
+	return nil
+}
+
+func planToolResult(tr *ToolResult, err error) PlanOpResult {
+	res := PlanOpResult{OK: err == nil}
+	if err != nil {
+		res.Error = err.Error()
+		res.ExitCode = 1
+		return res
+	}
+	if tr != nil {
+		res.Result = tr.Text
+		if nested, ok := nestedPlanResult(tr); ok {
+			if encoded, marshalErr := json.Marshal(nested); marshalErr == nil {
+				res.Result = string(encoded)
+			}
+			if !planRunSucceeded(nested) {
+				res.OK = false
+				res.ExitCode = 1
+				res.Error = fmt.Sprintf("nested run_plan stopped: %s", nested.StoppedReason)
+			}
+		}
+	}
+	return res
+}
+
+func nestedPlanResult(tr *ToolResult) (*PlanRunResult, bool) {
+	if tr == nil || tr.Meta == nil {
+		return nil, false
+	}
+	switch value := tr.Meta["plan_run"].(type) {
+	case *PlanRunResult:
+		return value, value != nil
+	case PlanRunResult:
+		return &value, true
+	default:
+		return nil, false
+	}
+}
+
+func planRunSucceeded(result *PlanRunResult) bool {
+	if result == nil || result.StoppedReason != StopLeaf {
+		return false
+	}
+	for _, node := range result.Transcript {
+		for _, op := range node.Ops {
+			if !op.OK {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func planShellResult(text string, meta map[string]any, err error, command string) PlanOpResult {
+	res := PlanOpResult{OK: err == nil, Result: text}
+	if err != nil {
+		res.Error = err.Error()
+		res.ExitCode = 1
+	}
+	if v, ok := meta["exit_code"].(int); ok {
+		res.ExitCode = v
+		class, reason := classifyExitCode(extractArgv0(command), v)
+		res.Classification = string(class)
+		res.Result = rewritePlanShellClassification(res.Result, res.Classification, reason)
+	}
+	if strings.TrimSpace(command) != "" {
+		risk, _ := ClassifyCommand(command)
+		res.Risk = risk.String()
+	} else if v, ok := meta["risk"].(string); ok {
+		res.Risk = v
+	}
+	return res
+}
+
+func rewritePlanShellClassification(result, classification, reason string) string {
+	const marker = "\n[classification:"
+	idx := strings.LastIndex(result, marker)
+	if idx < 0 {
+		return result
+	}
+	end := strings.Index(result[idx:], "]")
+	if end < 0 {
+		return result
+	}
+	end += idx + 1
+	return result[:idx] + fmt.Sprintf("\n[classification: %s — %s]", classification, reason) + result[end:]
+}
+
+func blockedPlanOp(message string) (PlanOpResult, bool) {
+	return PlanOpResult{OK: false, Error: message, ExitCode: 1}, true
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+}
+
+func planShellCommand(cwd, command string) string {
+	return "cd -- " + shellQuote(cwd) + " && " + command
+}
+
+func clonePlanArgs(args map[string]any) map[string]any {
+	cloned := make(map[string]any, len(args)+1)
+	for key, value := range args {
+		cloned[key] = value
+	}
+	return cloned
+}
+
+// runPlanShell fixes the shell's cwd without changing the shared Engine. The
+// cwd is already resolved and sandbox-validated by scopedPlanEngine.
+func (e *Engine) runPlanShell(ctx context.Context, cwd, command string, args map[string]any, force bool) (string, map[string]any, error) {
+	shellArgs := clonePlanArgs(args)
+	shellArgs["command"] = planShellCommand(cwd, command)
+	// Only the plan's outer double-force decision can authorize danger. A
+	// caller-supplied nested force must never bypass that authority boundary.
+	shellArgs["force"] = force
+	return e.runShell(ctx, shellArgs)
+}
+
+func (e *Engine) runPlanOp(ctx context.Context, cwd string, op PlanOp) (PlanOpResult, bool) {
 	if op.Shell != "" {
 		risk, _ := ClassifyCommand(op.Shell)
 		if risk != RiskSafe {
-			return PlanOpResult{OK: false, Error: "blocked: shell op risk exceeds Phase 1 read-only allowance"}, true
+			return blockedPlanOp("blocked: shell op risk exceeds Phase 1 read-only allowance")
 		}
-		text, meta, err := e.runShell(ctx, map[string]interface{}{"command": op.Shell})
-		res := PlanOpResult{OK: err == nil, Result: text}
-		if err != nil {
-			res.Error = err.Error()
-		}
-		if v, ok := meta["classification"].(string); ok {
-			res.Classification = v
-		}
-		if v, ok := meta["risk"].(string); ok {
-			res.Risk = v
-		}
-		if v, ok := meta["exit_code"].(int); ok {
-			res.ExitCode = v
-		}
-		return res, false
+		text, meta, err := e.runPlanShell(ctx, cwd, op.Shell, nil, false)
+		return planShellResult(text, meta, err, op.Shell), false
 	}
 	if op.Tool != "" {
-		if !planPhase1ToolAllowlist[op.Tool] {
-			return PlanOpResult{OK: false, Error: "blocked: tool op outside Phase 1 read-only allowlist"}, true
+		if !planPhase1ToolAllowed(op) {
+			return blockedPlanOp("blocked: tool op outside Phase 1 read-only allowlist")
 		}
 		tr, _, err := e.Dispatch(ctx, op.Tool, op.Args)
-		res := PlanOpResult{OK: err == nil}
-		if err != nil {
-			res.Error = err.Error()
-		} else if tr != nil {
-			res.Result = tr.Text
-		}
-		return res, false
+		return planToolResult(tr, err), false
 	}
-	return PlanOpResult{OK: false, Error: "plan op must set exactly one of shell or tool"}, true
+	return blockedPlanOp("plan op must set exactly one of shell or tool")
 }
 
 // runMutatingOp executes op on a node with Mutates:true, under the Phase 2
@@ -160,48 +450,47 @@ func (e *Engine) runPlanOp(ctx context.Context, op PlanOp) (PlanOpResult, bool) 
 // destructive-command scanner — command_risk.go's tokenizer already covers
 // the false-positive matrix (e.g. redirects to /dev/null) more precisely
 // than a regex scan would.
-func (e *Engine) runMutatingOp(ctx context.Context, node *PlanNode, planForce bool, op PlanOp) (PlanOpResult, bool) {
+func (e *Engine) runMutatingOp(ctx context.Context, cwd string, node *PlanNode, planForce bool, opCtx *planExecutionContext, op PlanOp) (PlanOpResult, bool) {
 	var risk RiskLevel
 	switch {
 	case op.Shell != "":
 		risk, _ = ClassifyCommand(op.Shell)
 	case op.Tool != "":
-		action, _ := op.Args["action"].(string)
-		risk = planToolRisk(op.Tool, action)
+		var err error
+		risk, err = planToolRisk(op.Tool, op.Args)
+		if err != nil {
+			return blockedPlanOp(err.Error())
+		}
 	default:
-		return PlanOpResult{OK: false, Error: "plan op must set exactly one of shell or tool"}, true
+		return blockedPlanOp("plan op must set exactly one of shell or tool")
 	}
 
 	if risk == RiskDangerous && !(planForce && node.Force) {
-		return PlanOpResult{OK: false, Error: "blocked: dangerous mutation requires plan.force and node.force"}, true
+		return blockedPlanOp("blocked: dangerous mutation requires plan.force and node.force")
 	}
 
 	if op.Shell != "" {
-		text, meta, err := e.runShell(ctx, map[string]interface{}{"command": op.Shell, "force": risk == RiskDangerous})
-		res := PlanOpResult{OK: err == nil, Result: text}
-		if err != nil {
-			res.Error = err.Error()
-		}
-		if v, ok := meta["classification"].(string); ok {
-			res.Classification = v
-		}
-		if v, ok := meta["risk"].(string); ok {
-			res.Risk = v
-		}
-		if v, ok := meta["exit_code"].(int); ok {
-			res.ExitCode = v
-		}
-		return res, false
+		text, meta, err := e.runPlanShell(ctx, cwd, op.Shell, nil, risk == RiskDangerous && planForce && node.Force)
+		return planShellResult(text, meta, err, op.Shell), false
+	}
+
+	if op.Tool == "run_shell" {
+		command, _ := op.Args["command"].(string)
+		text, meta, err := e.runPlanShell(ctx, cwd, command, op.Args, risk == RiskDangerous && planForce && node.Force)
+		return planShellResult(text, meta, err, command), false
+	}
+
+	if op.Tool == "run_plan" {
+		// A nested plan inherits only the current node's already-authorized
+		// dangerous capability. Its own force fields can further restrict that
+		// capability, but cannot create it.
+		nestedCtx := context.WithValue(ctx, planNestedAuthorizationKey{}, planForce && node.Force)
+		tr, _, err := e.Dispatch(nestedCtx, op.Tool, op.Args)
+		return planToolResult(tr, err), false
 	}
 
 	tr, _, err := e.Dispatch(ctx, op.Tool, op.Args)
-	res := PlanOpResult{OK: err == nil}
-	if err != nil {
-		res.Error = err.Error()
-	} else if tr != nil {
-		res.Result = tr.Text
-	}
-	return res, false
+	return planToolResult(tr, err), false
 }
 
 func compareNumeric(a, b float64, op string) bool {
@@ -223,51 +512,51 @@ func compareNumeric(a, b float64, op string) bool {
 	}
 }
 
-func (e *Engine) evaluateCondition(last PlanOpResult, cond Condition, cwd string) (bool, error) {
+func negateCondition(matched, negate bool) bool {
+	if negate {
+		return !matched
+	}
+	return matched
+}
+
+func (e *Engine) evaluateCondition(last PlanOpResult, cond Condition) (bool, error) {
+	var matched bool
 	switch cond.Kind {
 	case "always":
-		return true, nil
+		matched = true
 	case "exitCode":
-		var expected int
-		switch v := cond.Value.(type) {
-		case float64:
-			expected = int(v)
-		case int:
-			expected = v
-		default:
-			return false, nil
+		expected, ok := numericPlanValue(cond.Value, true)
+		if !ok {
+			return false, fmt.Errorf("invalid exitCode value")
 		}
-		return compareNumeric(float64(last.ExitCode), float64(expected), cond.Op), nil
+		matched = compareNumeric(float64(last.ExitCode), expected, cond.Op)
 	case "fileExists":
-		p := cond.Path
-		if cwd != "" && !filepath.IsAbs(p) {
-			p = filepath.Join(cwd, p)
+		path, err := e.checkPath(cond.Path)
+		if err != nil {
+			return false, err
 		}
-		_, err := os.Stat(p)
+		_, err = os.Stat(path)
 		if err == nil {
-			return !cond.Negate, nil
+			matched = true
+		} else if os.IsNotExist(err) {
+			matched = false
+		} else {
+			return false, err
 		}
-		if os.IsNotExist(err) {
-			return cond.Negate, nil
-		}
-		return false, nil
 	case "match":
 		re, err := regexp.Compile(cond.Regex)
 		if err != nil {
-			return false, nil
+			return false, err
 		}
 		// jinn uses a single combined Result string (not separate stdout/stderr streams),
 		// so both "stdout" and "stderr" test against last.Result — a deliberate simplification.
-		if re.MatchString(last.Result) {
-			return !cond.Negate, nil
-		}
-		return cond.Negate, nil
+		matched = re.MatchString(last.Result)
 	case "numeric":
 		var s string
 		if cond.Extract != "" {
 			re, err := regexp.Compile(cond.Extract)
 			if err != nil {
-				return false, nil
+				return false, err
 			}
 			m := re.FindStringSubmatch(last.Result)
 			if len(m) < 2 {
@@ -281,16 +570,11 @@ func (e *Engine) evaluateCondition(last PlanOpResult, cond Condition, cwd string
 		if err != nil {
 			return false, nil
 		}
-		var expected float64
-		switch v := cond.Value.(type) {
-		case float64:
-			expected = v
-		case int:
-			expected = float64(v)
-		default:
-			return false, nil
+		expected, ok := numericPlanValue(cond.Value, false)
+		if !ok {
+			return false, fmt.Errorf("invalid numeric value")
 		}
-		return compareNumeric(val, expected, cond.Op), nil
+		matched = compareNumeric(val, expected, cond.Op)
 	case "jsonPath":
 		var v any
 		if err := json.Unmarshal([]byte(last.Result), &v); err != nil {
@@ -336,22 +620,87 @@ func (e *Engine) evaluateCondition(last PlanOpResult, cond Condition, cwd string
 			condIsNum = true
 		}
 		if leafIsNum && condIsNum {
-			return compareNumeric(leafFloat, condFloat, cond.Op), nil
-		}
-		switch cond.Op {
-		case "eq":
-			return fmt.Sprintf("%v", leaf) == fmt.Sprintf("%v", cond.Value), nil
-		case "ne":
-			return fmt.Sprintf("%v", leaf) != fmt.Sprintf("%v", cond.Value), nil
-		default:
-			return false, nil
+			matched = compareNumeric(leafFloat, condFloat, cond.Op)
+		} else {
+			switch cond.Op {
+			case "eq":
+				matched = jsonValueEqual(leaf, cond.Value)
+			case "ne":
+				matched = !jsonValueEqual(leaf, cond.Value)
+			default:
+				return false, nil
+			}
 		}
 	default:
-		return false, nil
+		return false, fmt.Errorf("unknown condition kind: %s", cond.Kind)
 	}
+	return negateCondition(matched, cond.Negate), nil
+}
+
+func jsonValueEqual(left, right any) bool {
+	leftNumber, leftIsNumber := numericPlanValue(left, false)
+	rightNumber, rightIsNumber := numericPlanValue(right, false)
+	if leftIsNumber || rightIsNumber {
+		return leftIsNumber && rightIsNumber && leftNumber == rightNumber
+	}
+	leftJSON, leftErr := json.Marshal(left)
+	rightJSON, rightErr := json.Marshal(right)
+	return leftErr == nil && rightErr == nil && string(leftJSON) == string(rightJSON)
+}
+
+// scopedPlanEngine resolves plan.cwd within the original Engine sandbox. A
+// fresh lightweight Engine keeps cwd-sensitive tool behavior local to this
+// plan while retaining the shared tracker used for stale-write detection.
+func (e *Engine) scopedPlanEngine(cwd string) (*Engine, error) {
+	if cwd == "" {
+		return e, nil
+	}
+	resolved := cwd
+	if !filepath.IsAbs(resolved) {
+		resolved = filepath.Join(e.workDir, resolved)
+	}
+	resolved, err := filepath.EvalSymlinks(resolved)
+	if err != nil {
+		return nil, fmt.Errorf("resolve plan cwd: %w", err)
+	}
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return nil, fmt.Errorf("stat plan cwd: %w", err)
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("plan cwd is not a directory: %s", cwd)
+	}
+	rel, err := filepath.Rel(e.workDir, resolved)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return nil, fmt.Errorf("plan cwd is outside working directory: %s", cwd)
+	}
+	return &Engine{
+		workDir:       resolved,
+		version:       e.version,
+		tracker:       e.tracker,
+		rgPath:        e.rgPath,
+		fdPath:        e.fdPath,
+		LSPTimeoutSec: e.LSPTimeoutSec,
+	}, nil
 }
 
 func (e *Engine) runPlanTree(ctx context.Context, plan *PlanTree) (*PlanRunResult, error) {
+	opCtx := planExecutionContextFor(ctx, plan)
+	if opCtx.depth > opCtx.maxDepth {
+		return &PlanRunResult{
+			DepthReached:  opCtx.depth,
+			StoppedReason: StopMaxDepth,
+		}, nil
+	}
+	ctx = context.WithValue(ctx, planExecutionContextKey{}, opCtx)
+
+	planEngine, err := e.scopedPlanEngine(plan.Cwd)
+	if err != nil {
+		return nil, err
+	}
+	if planEngine != e {
+		defer planEngine.Close()
+	}
 	maxDepth := plan.MaxDepth
 	if maxDepth == 0 {
 		maxDepth = DefaultMaxDepth
@@ -380,9 +729,11 @@ func (e *Engine) runPlanTree(ctx context.Context, plan *PlanTree) (*PlanRunResul
 		var lastOpResult PlanOpResult
 		blocked := false
 
-		runOp := func(op PlanOp) (PlanOpResult, bool) { return e.runPlanOp(ctx, op) }
+		runOp := func(op PlanOp) (PlanOpResult, bool) { return planEngine.runPlanOp(ctx, planEngine.workDir, op) }
 		if node.Mutates {
-			runOp = func(op PlanOp) (PlanOpResult, bool) { return e.runMutatingOp(ctx, node, plan.Force, op) }
+			runOp = func(op PlanOp) (PlanOpResult, bool) {
+				return planEngine.runMutatingOp(ctx, planEngine.workDir, node, plan.Force && opCtx.dangerousAuthorized, opCtx, op)
+			}
 		}
 
 		if node.Parallel && len(node.Commands) > 1 {
@@ -425,7 +776,10 @@ func (e *Engine) runPlanTree(ctx context.Context, plan *PlanTree) (*PlanRunResul
 		matched := false
 		for _, edge := range node.Edges {
 			edgesEvaluated++
-			ok, _ := e.evaluateCondition(lastOpResult, edge.When, plan.Cwd)
+			ok, err := planEngine.evaluateCondition(lastOpResult, edge.When)
+			if err != nil {
+				return &PlanRunResult{Transcript: transcript, PathTaken: pathTaken, DepthReached: depth, StoppedReason: StopError, EdgesEvaluated: edgesEvaluated, EdgesMatched: edgesMatched}, nil
+			}
 			if ok {
 				edgesMatched++
 				matched = true

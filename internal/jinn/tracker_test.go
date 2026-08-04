@@ -3,6 +3,7 @@ package jinn
 import (
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 )
@@ -70,4 +71,23 @@ func TestCheckStale_SameMtimeDifferentSize(t *testing.T) {
 	if err := ft.checkStale(p); err == nil {
 		t.Error("expected stale error for same-mtime different-size rewrite")
 	}
+}
+
+func TestFileTrackerConcurrentAccess(t *testing.T) {
+	t.Parallel()
+	ft := newFileTracker()
+	const workers = 32
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			path := filepath.Join(t.TempDir(), "tracked.txt")
+			ft.record(path, time.Now(), int64(i))
+			if err := ft.checkStale(path); err != nil {
+				t.Errorf("checkStale(%q): %v", path, err)
+			}
+		}(i)
+	}
+	wg.Wait()
 }

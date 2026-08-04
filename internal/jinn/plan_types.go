@@ -6,8 +6,8 @@ const DefaultMaxDepth = 8
 type PlanTree struct {
 	Root     string     `json:"root"`
 	Nodes    []PlanNode `json:"nodes"`
-	Cwd      string     `json:"cwd,omitempty"`
-	MaxDepth int        `json:"max_depth,omitempty"` // 0 => DefaultMaxDepth
+	Cwd      string     `json:"cwd,omitempty"`       // existing directory within the Engine sandbox; empty keeps Engine workDir
+	MaxDepth int        `json:"max_depth,omitempty"` // 0 => DefaultMaxDepth; also bounds nested run_plan depth
 	Force    bool       `json:"force,omitempty"`     // plan-level dangerous-mutation gate, Phase 2 only
 }
 
@@ -33,8 +33,8 @@ type PlanEdge struct {
 	To   string    `json:"to"`
 }
 
-// Condition: flattened union on Kind (not oneOf/const-union — avoids
-// JSON-schema provider-compat issues when embedded in schema.json).
+// Condition is a flattened Kind union in Go. The wire schema validates its
+// six forms with oneOf while this type stays straightforward to coerce.
 type Condition struct {
 	Kind    string `json:"kind"` // exitCode|fileExists|jsonPath|numeric|match|always
 	Op      string `json:"op,omitempty"`
@@ -70,7 +70,7 @@ type PlanOpResult struct {
 	Error          string `json:"error,omitempty"`
 	Classification string `json:"classification,omitempty"`
 	Risk           string `json:"risk,omitempty"`
-	ExitCode       int    `json:"exit_code,omitempty"` // process exit code for Shell ops
+	ExitCode       int    `json:"exit_code,omitempty"` // shell exit code, or nonzero for failed/blocked tool ops
 }
 
 type PlanNodeResult struct {

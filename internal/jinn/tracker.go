@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 )
 
@@ -17,6 +18,7 @@ type fileStamp struct {
 }
 
 type fileTracker struct {
+	mu     sync.RWMutex
 	stamps map[string]fileStamp
 }
 
@@ -25,11 +27,15 @@ func newFileTracker() *fileTracker {
 }
 
 func (ft *fileTracker) record(path string, mtime time.Time, size int64) {
+	ft.mu.Lock()
+	defer ft.mu.Unlock()
 	ft.stamps[path] = fileStamp{mtime: mtime, size: size}
 }
 
 func (ft *fileTracker) checkStale(resolved string) error {
+	ft.mu.RLock()
 	rec, tracked := ft.stamps[resolved]
+	ft.mu.RUnlock()
 	if !tracked {
 		return nil // new file or never read — allow
 	}
