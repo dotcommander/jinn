@@ -19,9 +19,12 @@ func (e *Engine) goDiagnostics(ctx context.Context, req lspRequest, timeout int)
 
 	outBuf := &boundedWriter{limit: 1 << 20}
 	errBuf := &boundedWriter{limit: 1 << 20}
-	c := exec.CommandContext(checkCtx, "gopls", "check", req.absPath) //nolint:gosec // G204: gopls binary is fixed; path was sandbox-checked.
+	if len(req.argv) == 0 || req.argv[0] == "" {
+		return "", errors.New("gopls check: resolved gopls executable is unavailable")
+	}
+	c := exec.CommandContext(checkCtx, req.argv[0], "check", req.absPath) //nolint:gosec // G204: binary was resolved at engine launch; target path was sandbox-checked.
 	c.Dir = e.workDir
-	c.Env = subprocessEnv(nil)
+	c.Env = e.subprocessEnv()
 	c.Stdout = outBuf
 	c.Stderr = errBuf
 	runErr := c.Run()

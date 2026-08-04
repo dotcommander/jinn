@@ -26,8 +26,13 @@ func TestRecordSnapshot_ConcurrentEngines(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			e := New(workDir, "dev")
-			_, err := e.writeFile(args("path", fmt.Sprintf("f%d.txt", i), "content", "after"))
+			e, err := NewWithConfig(workDir, EngineConfig{Version: "dev", ShellMode: ShellModeUnsafe, UnsafeAllowMutationWithoutPreconditions: true})
+			if err != nil {
+				errs <- err
+				return
+			}
+			defer func() { _ = e.Close() }()
+			_, err = e.writeFile(args("path", fmt.Sprintf("f%d.txt", i), "content", "after"))
 			errs <- err
 		}(i)
 	}
@@ -39,7 +44,11 @@ func TestRecordSnapshot_ConcurrentEngines(t *testing.T) {
 		}
 	}
 
-	e := New(workDir, "dev")
+	e, err := NewWithConfig(workDir, EngineConfig{Version: "dev", ShellMode: ShellModeUnsafe, UnsafeAllowMutationWithoutPreconditions: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = e.Close() }()
 	hf, err := e.loadHistoryLocked()
 	if err != nil {
 		t.Fatal(err)

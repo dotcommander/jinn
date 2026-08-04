@@ -3,7 +3,6 @@ package jinn
 import (
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 )
 
@@ -45,7 +44,7 @@ type pendingEdit struct {
 // (empty old_text guard, path security checks, stale check), reads each
 // file's on-disk bytes once, and returns the resolved entries along with
 // the normalized original content map used for overlap detection.
-func (e *Engine) parseAndResolveEdits(editsRaw []interface{}) (
+func (e *Engine) parseAndResolveEdits(editsRaw []interface{}, requireChecksums bool) (
 	entries []rawEntry,
 	originalContent map[string]string,
 	err error,
@@ -72,7 +71,7 @@ func (e *Engine) parseAndResolveEdits(editsRaw []interface{}) (
 			}
 		}
 
-		resolved, err := e.checkPath(path)
+		resolved, err := e.checkPathForMutation(path)
 		if err != nil {
 			return nil, nil, fmt.Errorf("edit[%d] %s: %w", i, path, err)
 		}
@@ -81,7 +80,7 @@ func (e *Engine) parseAndResolveEdits(editsRaw []interface{}) (
 		}
 
 		if _, seen := origDataCache[resolved]; !seen {
-			data, err := os.ReadFile(resolved)
+			data, _, err := e.readRegularFile(resolved, maxFileSize)
 			if err != nil {
 				return nil, nil, fmt.Errorf("edit[%d] %s: %w", i, path, err)
 			}
@@ -91,6 +90,9 @@ func (e *Engine) parseAndResolveEdits(editsRaw []interface{}) (
 		}
 		if err := verifyChecksum(strArg(entry, "if_checksum"), path, origDataCache[resolved], true); err != nil {
 			return nil, nil, fmt.Errorf("edit[%d] %s: %w", i, path, err)
+		}
+		if requireChecksums && strArg(entry, "if_checksum") == "" {
+			return nil, nil, &ErrWithSuggestion{Err: fmt.Errorf("edits[%d]: if_checksum is required for %s", i, path), Suggestion: "read each file with include_checksum=true and include its digest in every edit entry", Code: ErrCodeInvalidArgs}
 		}
 
 		entries = append(entries, rawEntry{
@@ -116,9 +118,31 @@ func (e *Engine) multiEdit(args map[string]interface{}) (*ToolResult, error) {
 			Code:       ErrCodeInvalidArgs,
 		}
 	}
+	var targets []string
+	for i, raw := range editsRaw {
+		entry, ok := raw.(map[string]interface{})
+		if !ok {
+			return nil, fmt.Errorf("edit[%d]: invalid format", i)
+		}
+		resolved, err := e.checkPathForMutation(strArg(entry, "path"))
+		if err != nil {
+			return nil, fmt.Errorf("edit[%d]: %w", i, err)
+		}
+		targets = append(targets, resolved)
+	}
+	var result *ToolResult
+	err := e.withTargetLocks(targets, func() error {
+		var innerErr error
+		result, innerErr = e.multiEditLocked(args, editsRaw)
+		return innerErr
+	})
+	return result, err
+}
+
+func (e *Engine) multiEditLocked(args map[string]interface{}, editsRaw []interface{}) (*ToolResult, error) {
 
 	// Phase 1a: parse inputs, check paths, read originals.
-	rawEntries, originalContent, err := e.parseAndResolveEdits(editsRaw)
+	rawEntries, originalContent, err := e.parseAndResolveEdits(editsRaw, e.requireMutationPreconditions && !boolArg(args, "dry_run"))
 	if err != nil {
 		return nil, err
 	}

@@ -22,7 +22,7 @@ func TestSchema_Valid(t *testing.T) {
 	if err := json.Unmarshal([]byte(Schema), &tools); err != nil {
 		t.Fatalf("Schema is not valid JSON: %v", err)
 	}
-	if got := schemaToolNames(tools); !reflect.DeepEqual(got, expectedSchemaToolNames) {
+	if got := testSchemaToolNames(tools); !reflect.DeepEqual(got, expectedSchemaToolNames) {
 		t.Fatalf("schema tools = %v, want %v", got, expectedSchemaToolNames)
 	}
 }
@@ -40,7 +40,7 @@ func TestCompactSchema_Valid(t *testing.T) {
 	if err := json.Unmarshal([]byte(schema), &tools); err != nil {
 		t.Fatalf("compact schema is not valid JSON: %v", err)
 	}
-	if got := schemaToolNames(tools); !reflect.DeepEqual(got, expectedSchemaToolNames) {
+	if got := testSchemaToolNames(tools); !reflect.DeepEqual(got, expectedSchemaToolNames) {
 		t.Fatalf("compact schema tools = %v, want %v", got, expectedSchemaToolNames)
 	}
 }
@@ -61,12 +61,12 @@ func TestLeanSchema_Valid(t *testing.T) {
 	if err := json.Unmarshal([]byte(schema), &tools); err != nil {
 		t.Fatalf("lean schema is not valid JSON: %v", err)
 	}
-	if got := schemaToolNames(tools); !reflect.DeepEqual(got, expectedSchemaToolNames) {
+	if got := testSchemaToolNames(tools); !reflect.DeepEqual(got, expectedSchemaToolNames) {
 		t.Fatalf("lean schema tools = %v, want %v", got, expectedSchemaToolNames)
 	}
 }
 
-func schemaToolNames(tools []schemaTool) []string {
+func testSchemaToolNames(tools []schemaTool) []string {
 	names := make([]string, 0, len(tools))
 	for _, tool := range tools {
 		names = append(names, tool.Function.Name)
@@ -80,6 +80,56 @@ func TestDispatch_UnknownTool(t *testing.T) {
 	_, _, err := e.Dispatch(context.Background(), "nonexistent", args())
 	if err == nil {
 		t.Error("expected error for unknown tool")
+	}
+}
+
+func TestNewSecureDefaultsAndExplicitUnsafeOptOut(t *testing.T) {
+	dir := t.TempDir()
+	secure := New(dir, "test")
+	t.Cleanup(func() { _ = secure.Close() })
+	if secure.ShellMode() != ShellModeDisabled || !secure.requireMutationPreconditions {
+		t.Fatalf("New security defaults: mode=%q preconditions=%v", secure.ShellMode(), secure.requireMutationPreconditions)
+	}
+	unsafe, err := NewWithConfig(t.TempDir(), EngineConfig{
+		Version: "test", ShellMode: ShellModeUnsafe,
+		UnsafeAllowMutationWithoutPreconditions: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = unsafe.Close() })
+	if unsafe.requireMutationPreconditions {
+		t.Fatal("explicit unsafe opt-out did not disable mutation preconditions")
+	}
+}
+
+func TestModeSpecificDiscoveryExcludesNestedShellOperations(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		mode ShellMode
+		want int
+	}{{ShellModeDisabled, 18}, {ShellModeUnsafe, 19}} {
+		raw, err := LeanSchemaForMode(tc.mode)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var schema []any
+		if err := json.Unmarshal([]byte(raw), &schema); err != nil {
+			t.Fatal(err)
+		}
+		if len(schema) != tc.want {
+			t.Errorf("mode %s schema count = %d, want %d", tc.mode, len(schema), tc.want)
+		}
+		if tc.mode == ShellModeDisabled && strings.Contains(raw, `"shell":{"type"`) {
+			t.Fatal("disabled schema retains nested shell operation property")
+		}
+	}
+	resp, err := RouteTools(RouteRequest{Need: "run a shell command", MaxTools: RouteMaxTools})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := routeMatchNamed(resp.Matches, "run_shell"); ok {
+		t.Fatal("secure RouteTools recommended run_shell")
 	}
 }
 

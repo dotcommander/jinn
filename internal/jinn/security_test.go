@@ -20,6 +20,35 @@ func TestResolvePath_Relative(t *testing.T) {
 	}
 }
 
+func TestMutationRejectsInRootSymlinkAliases(t *testing.T) {
+	e, dir := testEngine(t)
+	target := filepath.Join(dir, "target")
+	if err := os.Mkdir(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, target, "file.txt", "old\n")
+	if err := os.Symlink(target, filepath.Join(dir, "alias")); err != nil {
+		t.Fatal(err)
+	}
+	for name, call := range map[string]func() error{
+		"write": func() error { _, err := e.writeFile(args("path", "alias/new.txt", "content", "x")); return err },
+		"edit": func() error {
+			_, err := e.editFile(args("path", "alias/file.txt", "old_text", "old", "new_text", "new"))
+			return err
+		},
+		"patch": func() error {
+			_, err := e.applyPatch(args("patch", "*** Begin Patch\n*** Add File: alias/new.txt\n+x\n*** End Patch"))
+			return err
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := call(); err == nil || !strings.Contains(err.Error(), "symlink") {
+				t.Fatalf("alias mutation error = %v", err)
+			}
+		})
+	}
+}
+
 func TestResolvePath_Absolute(t *testing.T) {
 	t.Parallel()
 	e, _ := testEngine(t)
@@ -227,5 +256,29 @@ func TestResolvePath_ExpandsTilde(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "outside working directory") {
 		t.Errorf("expected 'outside working directory', got: %v", err)
+	}
+}
+
+func TestMutationRejectsLexicalAbsoluteOutsideAlias(t *testing.T) {
+	e, dir := testEngine(t)
+	outside := t.TempDir()
+	if err := os.Symlink(dir, filepath.Join(outside, "into-workspace")); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(outside, "into-workspace", "new.txt")
+	if _, err := e.writeFile(args("path", path, "content", "x")); err == nil || !strings.Contains(err.Error(), "outside") {
+		t.Fatalf("outside lexical alias write = %v", err)
+	}
+}
+
+func TestMutationRejectsTildeOutsideAliasBeforeResolution(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	e, dir := testEngine(t)
+	if err := os.Symlink(dir, filepath.Join(home, "into-workspace")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.writeFile(args("path", "~/into-workspace/new.txt", "content", "x")); err == nil || !strings.Contains(err.Error(), "outside") {
+		t.Fatalf("tilde outside alias write = %v", err)
 	}
 }

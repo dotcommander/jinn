@@ -24,8 +24,17 @@ func (e *Engine) dispatchPlanOps(ctx context.Context, args map[string]interface{
 		return nil, true, err
 	}
 
-	if err := validatePlan(plan); err != nil {
-		return nil, true, err
+	if validationErr := validatePlan(plan); validationErr != nil {
+		return nil, true, validationErr
+	}
+	if e.shellMode == ShellModeDisabled {
+		for _, node := range plan.Nodes {
+			for _, op := range node.Commands {
+				if op.Shell != "" || op.Tool == "run_shell" {
+					return nil, true, &ErrWithSuggestion{Err: errors.New("run_plan shell operations are disabled"), Suggestion: "restart jinn with --shell-mode=sandboxed or remove shell operations", Code: ErrCodePlanInvalid}
+				}
+			}
+		}
 	}
 
 	result, err := e.runPlanTree(ctx, plan)

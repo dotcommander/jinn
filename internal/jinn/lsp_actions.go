@@ -20,7 +20,7 @@ func (c *lspClient) lspSendCheck(method string, params any) (raw json.RawMessage
 	return raw, string(raw) == "null" || len(raw) == 0, nil
 }
 
-func (c *lspClient) definition(absPath string, line, char int, workDir string, pathOK func(string) (string, error)) (string, error) {
+func (c *lspClient) definition(absPath string, line, char int, engine *Engine) (string, error) {
 	raw, empty, err := c.lspSendCheck("textDocument/definition", tdPos(absPath, line, char))
 	if err != nil {
 		return "", err
@@ -35,10 +35,10 @@ func (c *lspClient) definition(absPath string, line, char int, workDir string, p
 		return "no definition found", nil
 	}
 
-	return renderLocations(locs, workDir, pathOK, 2), nil
+	return renderLocationsRooted(locs, engine, 2)
 }
 
-func (c *lspClient) references(absPath string, line, char int, workDir string, pathOK func(string) (string, error)) (string, error) {
+func (c *lspClient) references(absPath string, line, char int, engine *Engine) (string, error) {
 	type refParams struct {
 		TextDocument map[string]string `json:"textDocument"`
 		Position     map[string]any    `json:"position"`
@@ -56,7 +56,7 @@ func (c *lspClient) references(absPath string, line, char int, workDir string, p
 		return "no references found", nil
 	}
 	var locs []lspLocation
-	if err := json.Unmarshal(raw, &locs); err != nil || len(locs) == 0 {
+	if unmarshalErr := json.Unmarshal(raw, &locs); unmarshalErr != nil || len(locs) == 0 {
 		return "no references found", nil //nolint:nilerr // malformed (non-null) reply or empty array means no references, not a tool error
 	}
 	const refCap = 100
@@ -66,7 +66,10 @@ func (c *lspClient) references(absPath string, line, char int, workDir string, p
 		locs = locs[:refCap]
 	}
 
-	result := renderLocations(locs, workDir, pathOK, 1)
+	result, err := renderLocationsRooted(locs, engine, 1)
+	if err != nil {
+		return "", err
+	}
 	if truncated {
 		result += fmt.Sprintf("\n[truncated: showing %d of %d]", refCap, total)
 	}
@@ -247,6 +250,9 @@ func (c *lspClient) diagnostics(absPath string) (string, error) {
 		"previousResultId": nil,
 	})
 	if err != nil {
+		if pushed := c.pushDiagnostics[pathToURI(absPath)]; len(pushed) > 0 {
+			return formatDiagnostics(absPath, pushed), nil
+		}
 		return "", err
 	}
 	if empty {
@@ -255,9 +261,16 @@ func (c *lspClient) diagnostics(absPath string) (string, error) {
 
 	diagnostics := unmarshalDiagnostics(raw)
 	if len(diagnostics) == 0 {
+		diagnostics = c.pushDiagnostics[pathToURI(absPath)]
+	}
+	if len(diagnostics) == 0 {
 		return "no diagnostics found", nil
 	}
 
+	return formatDiagnostics(absPath, diagnostics), nil
+}
+
+func formatDiagnostics(absPath string, diagnostics []lspDiagnostic) string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "%d diagnostic(s) found:\n\n", len(diagnostics))
 	for _, diagnostic := range diagnostics {
@@ -274,7 +287,7 @@ func (c *lspClient) diagnostics(absPath string) (string, error) {
 		}
 		fmt.Fprintf(&sb, "%s:%d:%d: %s %s%s: %s\n", absPath, line, character, severity, source, code, diagnostic.Message)
 	}
-	return strings.TrimRight(sb.String(), "\n"), nil
+	return strings.TrimRight(sb.String(), "\n")
 }
 
 func unmarshalDiagnostics(raw json.RawMessage) []lspDiagnostic {
@@ -323,7 +336,8 @@ func diagnosticCodeString(code any) string {
 	}
 }
 
-func (c *lspClient) rename(absPath string, line, char int, newName, workDir string) (string, error) {
+//nolint:revive // LSP rename request fields and caller-provided root validation form a stable protocol seam.
+func (c *lspClient) rename(absPath string, line, char int, newName, workDir string, pathOK func(string) (string, error)) (string, error) {
 	type renameParams struct {
 		TextDocument map[string]string `json:"textDocument"`
 		Position     map[string]any    `json:"position"`
@@ -343,6 +357,15 @@ func (c *lspClient) rename(absPath string, line, char int, newName, workDir stri
 	var edit lspWorkspaceEdit
 	if err := json.Unmarshal(raw, &edit); err != nil {
 		return "", fmt.Errorf("lsp rename parse: %w", err)
+	}
+	for uri := range collectWorkspaceEditFileEdits(&edit) {
+		path, uriErr := fileURIPath(uri)
+		if uriErr != nil {
+			return "", fmt.Errorf("lsp rename returned unsupported URI: %w", uriErr)
+		}
+		if _, err := pathOK(path); err != nil {
+			return "", fmt.Errorf("lsp rename returned path outside workspace: %w", err)
+		}
 	}
 	return formatWorkspaceEdit(&edit, workDir), nil
 }

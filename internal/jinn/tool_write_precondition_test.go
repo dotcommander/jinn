@@ -1,13 +1,62 @@
 package jinn
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 )
+
+func TestConcurrentSecureWritersSerializeAndLeaveStaleBytesUnchanged(t *testing.T) {
+	t.Setenv("JINN_CONFIG_DIR", t.TempDir())
+	dir := t.TempDir()
+	path := filepath.Join(dir, "shared.txt")
+	if err := os.WriteFile(path, []byte("base"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e1, err := NewWithConfig(dir, EngineConfig{ShellMode: ShellModeDisabled})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = e1.Close() })
+	e2, err := NewWithConfig(dir, EngineConfig{ShellMode: ShellModeDisabled})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = e2.Close() })
+	checksum := sha256Hex([]byte("base"))
+	errs := make(chan error, 2)
+	var wg sync.WaitGroup
+	for engine, content := range map[*Engine]string{e1: "first", e2: "second"} {
+		wg.Add(1)
+		go func(e *Engine, content string) {
+			defer wg.Done()
+			_, _, err := e.Dispatch(context.Background(), "write_file", args("path", "shared.txt", "content", content, "if_checksum", checksum))
+			errs <- err
+		}(engine, content)
+	}
+	wg.Wait()
+	close(errs)
+	successes, stale := 0, 0
+	for err := range errs {
+		switch {
+		case err == nil:
+			successes++
+		case errors.Is(err, &ErrWithSuggestion{Code: ErrCodeStaleFile}) || strings.Contains(err.Error(), "stale write rejected"):
+			stale++
+		default:
+			t.Fatal(err)
+		}
+	}
+	if successes != 1 || stale != 1 {
+		t.Fatalf("successes=%d stale=%d, want 1/1", successes, stale)
+	}
+}
 
 func sha256Hex(b []byte) string {
 	h := sha256.Sum256(b)

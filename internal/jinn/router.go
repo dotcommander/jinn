@@ -1,6 +1,7 @@
 package jinn
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"regexp"
@@ -9,10 +10,13 @@ import (
 )
 
 const (
+	// RouteDefaultMaxTools is used when a route request omits its result limit.
 	RouteDefaultMaxTools = 5
-	RouteMaxTools        = 8
+	// RouteMaxTools bounds the number of recommendations returned by a route request.
+	RouteMaxTools = 8
 )
 
+// RouteRequest describes the desired routing result.
 type RouteRequest struct {
 	Need            string `json:"need"`
 	MaxTools        int    `json:"max_tools,omitempty"`
@@ -20,12 +24,14 @@ type RouteRequest struct {
 	IncludeMutating *bool  `json:"include_mutating,omitempty"`
 }
 
+// RouteResponse contains the deterministic recommendations for a route request.
 type RouteResponse struct {
 	Query   string       `json:"query"`
 	Matches []RouteMatch `json:"matches"`
 	Notes   []string     `json:"notes"`
 }
 
+// RouteMatch describes one recommended tool.
 type RouteMatch struct {
 	Name        string   `json:"name"`
 	Description string   `json:"description"`
@@ -57,6 +63,14 @@ type routeCandidate struct {
 // RouteTools recommends existing jinn tools for a natural-language need. It
 // never dispatches or executes a tool.
 func RouteTools(req RouteRequest) (RouteResponse, error) {
+	return RouteToolsForMode(req, ShellModeDisabled)
+}
+
+// RouteToolsForMode applies the engine shell policy to recommendations and
+// embedded schemas using an explicit execution mode.
+//
+//nolint:gocognit,gocyclo,revive // ranking filters are intentionally linear and ordered to keep routing deterministic.
+func RouteToolsForMode(req RouteRequest, mode ShellMode) (RouteResponse, error) {
 	need := strings.TrimSpace(req.Need)
 	resp := RouteResponse{Query: req.Need, Matches: []RouteMatch{}}
 	if need == "" {
@@ -89,6 +103,9 @@ func RouteTools(req RouteRequest) (RouteResponse, error) {
 			return resp, fmt.Errorf("tool metadata missing for %q", name)
 		}
 		if descriptor.mayMutate() && !req.allowMutating() {
+			continue
+		}
+		if descriptor.routeRisk == toolRouteRiskShell && mode == ShellModeDisabled {
 			continue
 		}
 		c := scoreRouteCandidate(tool, descriptor, queryTokens, strings.ToLower(need))
@@ -130,14 +147,20 @@ func (r RouteRequest) allowMutating() bool {
 	return r.IncludeMutating == nil || *r.IncludeMutating
 }
 
+// DecodeRouteRequest decodes one JSON route request with its default policy.
 func DecodeRouteRequest(data []byte) (RouteRequest, error) {
+	if err := rejectDuplicateKeys(data); err != nil {
+		return RouteRequest{}, err
+	}
 	var raw struct {
 		Need            string `json:"need"`
 		MaxTools        int    `json:"max_tools"`
 		IncludeSchema   bool   `json:"include_schema"`
 		IncludeMutating *bool  `json:"include_mutating"`
 	}
-	if err := json.Unmarshal(data, &raw); err != nil {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&raw); err != nil {
 		return RouteRequest{}, err
 	}
 	req := RouteRequest{
@@ -249,7 +272,7 @@ func weightedOverlap(query, target map[string]bool, weight int, reasons *[]strin
 	return score
 }
 
-func parameterTokens(params map[string]any) (map[string]bool, map[string]bool) {
+func parameterTokens(params map[string]any) (names map[string]bool, enums map[string]bool) {
 	param := map[string]bool{}
 	enum := map[string]bool{}
 	var walk func(any, bool)

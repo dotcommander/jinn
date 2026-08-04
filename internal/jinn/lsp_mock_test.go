@@ -80,6 +80,7 @@ func runMockServer(r io.Reader, w io.WriteCloser, cfg mockConfig) {
 
 	// Borrow lspClient.readFrame by constructing a minimal client pointed at r.
 	reader := &lspClient{stdout: bufio.NewReader(r), stdin: nopWriteCloser{w}}
+	rootURI := "file:///"
 
 	for {
 		frame, err := reader.readFrame()
@@ -93,10 +94,15 @@ func runMockServer(r io.Reader, w io.WriteCloser, cfg mockConfig) {
 
 		switch msg.Method {
 		case "initialize":
+			var params map[string]any
+			if data, marshalErr := json.Marshal(msg.Params); marshalErr == nil {
+				_ = json.Unmarshal(data, &params)
+				if value, ok := params["rootUri"].(string); ok {
+					rootURI = strings.TrimRight(value, "/")
+				}
+			}
 			if cfg.initializeParams != nil {
-				var params map[string]any
-				data, err := json.Marshal(msg.Params)
-				if err == nil && json.Unmarshal(data, &params) == nil {
+				if params != nil {
 					cfg.initializeParams <- params
 				}
 			}
@@ -111,7 +117,7 @@ func runMockServer(r io.Reader, w io.WriteCloser, cfg mockConfig) {
 				continue
 			}
 			loc := map[string]any{
-				"uri": "file:///fake/src.go",
+				"uri": rootURI + "/src.go",
 				"range": map[string]any{
 					"start": map[string]any{"line": 9, "character": 0},
 					"end":   map[string]any{"line": 9, "character": 5},
@@ -131,7 +137,7 @@ func runMockServer(r io.Reader, w io.WriteCloser, cfg mockConfig) {
 			locs := make([]any, count)
 			for i := range locs {
 				locs[i] = map[string]any{
-					"uri": fmt.Sprintf("file:///fake/ref%d.go", i),
+					"uri": fmt.Sprintf("%s/ref%d.go", rootURI, i),
 					"range": map[string]any{
 						"start": map[string]any{"line": i * 10, "character": i},
 						"end":   map[string]any{"line": i * 10, "character": i + 3},
@@ -241,7 +247,7 @@ func runMockServer(r io.Reader, w io.WriteCloser, cfg mockConfig) {
 			// Return a workspace edit renaming the symbol in one file.
 			edit := map[string]any{
 				"changes": map[string]any{
-					"file:///fake/src.go": []any{
+					rootURI + "/src.go": []any{
 						map[string]any{
 							"range": map[string]any{
 								"start": map[string]any{"line": 3, "character": 5},

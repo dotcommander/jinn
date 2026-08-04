@@ -2,7 +2,6 @@ package jinn
 
 import (
 	"fmt"
-	"os"
 	"strings"
 )
 
@@ -124,11 +123,33 @@ func dryRunResult(edits []pendingEdit) *ToolResult {
 
 // writePendingEdits records snapshots and atomically writes each edit in order,
 // returning per-edit result lines, the first changed line, and collected diffs.
+//
+//nolint:gocognit,revive // preflight, snapshot, and partial-apply recovery must remain ordered together.
 func (e *Engine) writePendingEdits(edits []pendingEdit) (writeResult, error) {
 	var wr writeResult
 	var applied []appliedRef
 	for _, ed := range edits {
-		if err := verifyPreflightState(ed.resolved, ed.preContent, true); err != nil {
+		dr := generateEditDiff(string(ed.preContent), ed.updated, ed.path, ed.matchInfo, ed.oldText, ed.newText, 3)
+		if dr.Diff != "" {
+			wr.allDiffs = append(wr.allDiffs, dr.Diff)
+		}
+		if wr.firstLine == 0 || ed.matchInfo.startLine < wr.firstLine {
+			wr.firstLine = ed.matchInfo.startLine
+		}
+	}
+	order := make([]string, 0, len(edits))
+	grouped := make(map[string]pendingEdit)
+	for _, ed := range edits {
+		if previous, ok := grouped[ed.resolved]; ok {
+			ed.preContent = previous.preContent
+		} else {
+			order = append(order, ed.resolved)
+		}
+		grouped[ed.resolved] = ed
+	}
+	for _, resolved := range order {
+		ed := grouped[resolved]
+		if err := e.verifyPreflightState(ed.resolved, ed.preContent, true); err != nil {
 			return writeResult{}, partialApplyErr("multi_edit", applied, len(edits), fmt.Errorf("%s: %w", ed.path, err))
 		}
 		id, werr := e.snapshotAndWrite(ed.resolved, ed.path, "multi_edit", ed.preContent, ed.updated)
@@ -141,22 +162,13 @@ func (e *Engine) writePendingEdits(edits []pendingEdit) (writeResult, error) {
 			line += " (fuzzy match)"
 		}
 		if ed.showContext > 0 {
-			if data, rerr := os.ReadFile(ed.resolved); rerr == nil {
+			if data, _, rerr := e.readRegularFile(ed.resolved, maxFileSize); rerr == nil {
 				newLineCount := strings.Count(ed.newText, "\n") + 1
 				line += fmt.Sprintf("\n--- context ---\n%s", formatEditContext(data, ed.matchInfo, newLineCount, ed.showContext))
 			}
 		}
 		wr.results = append(wr.results, line)
 
-		// Compute diff via fast-path using known matchInfo (avoids O(m×n) LCS
-		// over the full file, which freezes on large files).
-		dr := generateEditDiff(string(ed.preContent), ed.updated, ed.path, ed.matchInfo, ed.oldText, ed.newText, 3)
-		if dr.Diff != "" {
-			wr.allDiffs = append(wr.allDiffs, dr.Diff)
-		}
-		if wr.firstLine == 0 && ed.matchInfo.startLine > 0 {
-			wr.firstLine = ed.matchInfo.startLine
-		}
 	}
 	return wr, nil
 }

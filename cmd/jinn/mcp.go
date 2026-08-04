@@ -23,7 +23,7 @@ const mcpProbeMaxLineBytes = 16 << 20
 // runMCP serves the current MCP 2026-07-28 protocol through the official SDK.
 // A first initialize-style request is routed to the legacy compatibility
 // handler so existing jinn MCP clients can migrate without a flag change.
-func runMCP(ctx context.Context, in io.Reader, out io.Writer, ldVersion string) error {
+func runMCP(ctx context.Context, in io.Reader, out io.Writer, ldVersion string, mode jinn.ShellMode) error {
 	reader := bufio.NewReader(in)
 	prefix, legacy, err := readMCPPrefix(reader)
 	if err != nil {
@@ -31,10 +31,10 @@ func runMCP(ctx context.Context, in io.Reader, out io.Writer, ldVersion string) 
 	}
 	input := io.MultiReader(bytes.NewReader(prefix), reader)
 	if legacy {
-		return runLegacyMCP(ctx, input, out, ldVersion)
+		return runLegacyMCP(ctx, input, out, ldVersion, mode)
 	}
 
-	srv := newMCPServer(ldVersion)
+	srv := newMCPServer(ldVersion, mode)
 	if err := stdio.Serve(ctx, srv, &stdio.Options{Reader: input, Writer: out}); err != nil {
 		return fmt.Errorf("serve MCP: %w", err)
 	}
@@ -105,7 +105,8 @@ func isLegacyMCPLine(line []byte) bool {
 	}
 }
 
-func newMCPServer(ldVersion string) *server.Server {
+//nolint:goconst // protocol metadata uses canonical JSON-RPC and JSON Schema wire literals.
+func newMCPServer(ldVersion string, mode jinn.ShellMode) *server.Server {
 	if ldVersion == "" {
 		ldVersion = "dev"
 	}
@@ -129,7 +130,7 @@ func newMCPServer(ldVersion string) *server.Server {
 			ReadOnlyHint:    &readOnly,
 			DestructiveHint: &destructive,
 		},
-	}, mcpRouteHandler)
+	}, mcpRouteHandlerForMode(mode))
 	return srv
 }
 
@@ -140,33 +141,36 @@ type mcpRouteArguments struct {
 	IncludeMutating *bool  `json:"include_mutating,omitempty"`
 }
 
-func mcpRouteHandler(_ context.Context, req *server.CallRequest) (protocol.ToolResponse, error) {
-	if req == nil || req.Params == nil {
-		return protocol.NewToolResultError("jinn_route arguments are required"), nil
+func mcpRouteHandlerForMode(mode jinn.ShellMode) func(context.Context, *server.CallRequest) (protocol.ToolResponse, error) {
+	return func(_ context.Context, req *server.CallRequest) (protocol.ToolResponse, error) {
+		if req == nil || req.Params == nil {
+			return protocol.NewToolResultError("jinn_route arguments are required"), nil
+		}
+		var args mcpRouteArguments
+		raw, err := json.Marshal(req.Params.Arguments)
+		if err != nil {
+			return protocol.NewToolResultError(fmt.Sprintf("jinn_route arguments must be a JSON object: %v", err)), nil
+		}
+		if unmarshalErr := json.Unmarshal(raw, &args); unmarshalErr != nil {
+			return protocol.NewToolResultError(fmt.Sprintf("jinn_route arguments must be an object: %v", unmarshalErr)), nil
+		}
+		if strings.TrimSpace(args.Need) == "" {
+			return protocol.NewToolResultError("jinn_route: 'need' is required"), nil
+		}
+		route, err := jinn.RouteToolsForMode(jinn.RouteRequest{
+			Need:            args.Need,
+			MaxTools:        args.MaxTools,
+			IncludeSchema:   args.IncludeSchema,
+			IncludeMutating: args.IncludeMutating,
+		}, mode)
+		if err != nil {
+			return protocol.NewToolResultError(err.Error()), nil
+		}
+		return protocol.NewToolResultStructured(route)
 	}
-	var args mcpRouteArguments
-	raw, err := json.Marshal(req.Params.Arguments)
-	if err != nil {
-		return protocol.NewToolResultError(fmt.Sprintf("jinn_route arguments must be a JSON object: %v", err)), nil
-	}
-	if err := json.Unmarshal(raw, &args); err != nil {
-		return protocol.NewToolResultError(fmt.Sprintf("jinn_route arguments must be an object: %v", err)), nil
-	}
-	if strings.TrimSpace(args.Need) == "" {
-		return protocol.NewToolResultError("jinn_route: 'need' is required"), nil
-	}
-	route, err := jinn.RouteTools(jinn.RouteRequest{
-		Need:            args.Need,
-		MaxTools:        args.MaxTools,
-		IncludeSchema:   args.IncludeSchema,
-		IncludeMutating: args.IncludeMutating,
-	})
-	if err != nil {
-		return protocol.NewToolResultError(err.Error()), nil
-	}
-	return protocol.NewToolResultStructured(route)
 }
 
+//nolint:goconst // JSON Schema maps retain canonical wire keys beside their constraints.
 var mcpRouteInputSchema = map[string]any{
 	"$schema": "https://json-schema.org/draft/2020-12/schema",
 	"title":   "jinn_route input",
@@ -198,6 +202,7 @@ var mcpRouteInputSchema = map[string]any{
 	"additionalProperties": false,
 }
 
+//nolint:goconst // JSON Schema maps retain canonical wire keys beside their constraints.
 var mcpRouteOutputSchema = map[string]any{
 	"$schema": "https://json-schema.org/draft/2020-12/schema",
 	"title":   "jinn_route output",

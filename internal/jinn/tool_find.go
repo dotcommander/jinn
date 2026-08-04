@@ -5,218 +5,187 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os/exec"
+	"io/fs"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 )
 
-const findDefaultLimit = 1000
+const (
+	findDefaultLimit = 1000
+	findVisitLimit   = 100000
+)
 
-// findTimeout caps each fd/find invocation so a slow filesystem walk cannot
-// hang an agent tool call indefinitely. Declared as var so tests may shorten
-// it; not part of the public API.
 var findTimeout = 60 * time.Second
 
-// Directories excluded from both fd and find backends.
-var findExcludeDirs = []string{".git", "node_modules", "vendor", "__pycache__", ".cache", "dist", "build"}
+var findExcludeDirs = []string{".git", ".ssh", ".aws", ".gnupg", "node_modules", "vendor", "__pycache__", ".cache", "dist", "build"}
 
-// findFilesResult is the structured response for find_files.
 type findFilesResult struct {
-	Files      []string `json:"files"`
-	Truncated  bool     `json:"truncated"`
-	TotalCount int      `json:"total_count"`
-	LimitUsed  int      `json:"limit_used"`
-	Backend    string   `json:"backend"` // "fd" or "find"
+	Files           []string `json:"files"`
+	Truncated       bool     `json:"truncated"`
+	TotalCount      int      `json:"total_count"`
+	TotalCountExact bool     `json:"total_count_exact"`
+	LimitUsed       int      `json:"limit_used"`
+	Backend         string   `json:"backend"`
+	Hint            string   `json:"hint,omitempty"`
 }
 
 func (e *Engine) findFiles(ctx context.Context, args map[string]interface{}) (string, error) {
 	pattern, _ := args["pattern"].(string)
 	if pattern == "" {
-		return "", &ErrWithSuggestion{
-			Err:        errors.New("pattern is required"),
-			Suggestion: "provide a glob pattern like '*.go' or '**/*.test.ts'",
-		}
+		return "", &ErrWithSuggestion{Err: errors.New("pattern is required"), Suggestion: "provide a glob pattern like '*.go' or '**/*.test.ts'", Code: ErrCodeInvalidArgs}
 	}
-
-	searchPath := "."
-	if p, ok := args["path"].(string); ok && p != "" {
-		searchPath = p
+	searchPath := strArg(args, "path")
+	if searchPath == "" {
+		searchPath = "."
 	}
-
-	if _, err := e.checkPath(searchPath); err != nil {
-		return "", err
-	}
-
 	limit := intArg(args, "limit", findDefaultLimit)
-	if limit < 1 {
-		limit = findDefaultLimit
+	ctx, cancel := context.WithTimeout(ctx, findTimeout)
+	defer cancel()
+	files, total, exact, err := e.walkNativeFiles(ctx, pattern, searchPath, limit)
+	if err != nil {
+		return "", classifyNativeFindErr(err)
 	}
-
-	var raw string
-	var backend string
-	var runErr error
-
-	if e.fdPath != "" {
-		raw, backend, runErr = e.findViaFd(ctx, pattern, searchPath)
-	} else {
-		raw, backend, runErr = e.findViaFind(ctx, pattern, searchPath)
+	result := findFilesResult{
+		Files: files, Truncated: !exact || total > limit, TotalCount: total,
+		TotalCountExact: exact, LimitUsed: limit, Backend: "native",
 	}
-
-	if classified := classifyFindRunErr(runErr, backend); classified != nil {
-		return "", classified
+	if result.Truncated {
+		result.Hint = "TRUNCATED: use a more specific pattern or increase limit"
 	}
-
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		res := findFilesResult{Files: []string{}, Truncated: false, TotalCount: 0, LimitUsed: limit, Backend: backend}
-		b, _ := json.Marshal(res)
-		return string(b), nil
-	}
-
-	relativized := e.relativizeFindOutput(raw)
-
-	total := len(relativized)
-	truncated := total > limit
-	shown := relativized
-	if truncated {
-		shown = relativized[:limit]
-	}
-
-	res := findFilesResult{
-		Files:      shown,
-		Truncated:  truncated,
-		TotalCount: total,
-		LimitUsed:  limit,
-		Backend:    backend,
-	}
-	b, err := json.Marshal(res)
+	data, err := json.Marshal(result)
 	if err != nil {
 		return "", fmt.Errorf("find_files: marshal: %w", err)
 	}
-	result := string(b)
-	if truncated {
-		result += "\n" + fmt.Sprintf(
-			"[TRUNCATED: %d of %d files. Use a more specific pattern or increase limit.]",
-			len(shown), total,
-		)
-	}
-	return result, nil
+	return string(data), nil
 }
 
-// classifyFindRunErr maps a backend run error to a caller-facing error.
-// Distinguishes timeout/cancellation from no-match: a stalled walk must not
-// look like an empty result set. Returns nil when there is nothing to report.
-func classifyFindRunErr(runErr error, backend string) error {
-	switch {
-	case errors.Is(runErr, context.DeadlineExceeded):
-		return &ErrWithSuggestion{
-			Err:        fmt.Errorf("find_files timed out after %s (backend=%s)", findTimeout, backend),
-			Suggestion: "narrow 'path' or use a more specific glob to reduce walk scope",
-			Code:       ErrCodeTimeout,
-		}
-	case errors.Is(runErr, context.Canceled):
-		return &ErrWithSuggestion{
-			Err:        fmt.Errorf("find_files canceled (backend=%s)", backend),
-			Suggestion: "retry the file search if cancellation was unintended",
-			Code:       ErrCodeCanceled,
-		}
-	default:
-		return nil
+//nolint:funlen,gocognit,gocyclo,revive // traversal policy checks are deliberately co-located with WalkDir control flow and result shape.
+func (e *Engine) walkNativeFiles(ctx context.Context, pattern, searchPath string, limit int) ([]string, int, bool, error) {
+	resolved, err := e.checkPath(searchPath)
+	if err != nil {
+		return nil, 0, false, err
 	}
-}
-
-// relativizeFindOutput normalizes raw backend output into clean relative paths
-// from workDir. fd outputs paths relative to searchPath; find outputs paths
-// starting with searchPath.
-func (e *Engine) relativizeFindOutput(raw string) []string {
-	lines := strings.Split(raw, "\n")
-	relativized := make([]string, 0, len(lines))
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
+	info, err := e.rootedStat(resolved)
+	if err != nil {
+		return nil, 0, false, err
+	}
+	if !info.IsDir() {
+		return nil, 0, false, &ErrWithSuggestion{Err: fmt.Errorf("not a directory: %s", searchPath), Suggestion: "choose a directory for path", Code: ErrCodeInvalidArgs}
+	}
+	stopAfter := limit + 1
+	if stopAfter > findVisitLimit {
+		stopAfter = findVisitLimit
+	}
+	visited := 0
+	total := 0
+	exact := true
+	files := make([]string, 0, min(limit, 128))
+	rootPath, err := e.rootRelative(resolved)
+	if err != nil {
+		return nil, 0, false, err
+	}
+	err = fs.WalkDir(e.root.FS(), rootPath, func(path string, entry fs.DirEntry, walkErr error) error {
+		if ctx.Err() != nil {
+			return ctx.Err()
 		}
-		// Handle paths like "./foo.go" — strip leading "./"
-		for strings.HasPrefix(line, "./") {
-			line = line[2:]
+		if walkErr != nil {
+			return walkErr
 		}
-		// If path is absolute or relative to cwd, make relative to workDir.
-		if filepath.IsAbs(line) {
-			if rel, err := filepath.Rel(e.workDir, line); err == nil {
-				line = rel
+		relBase, relErr := filepath.Rel(rootPath, path)
+		if relErr != nil {
+			return relErr
+		}
+		if relBase == "." {
+			return nil
+		}
+		if shouldPruneTraversal(relBase, entry.IsDir()) {
+			if entry.IsDir() {
+				return filepath.SkipDir
 			}
+			return nil
 		}
-		line = filepath.ToSlash(line)
-		if line == "" {
-			continue
+		visited++
+		if visited > findVisitLimit {
+			exact = false
+			return fs.SkipAll
 		}
-		relativized = append(relativized, line)
+		if entry.IsDir() || entry.Type()&fs.ModeSymlink != 0 {
+			return nil
+		}
+		info, infoErr := entry.Info()
+		if infoErr != nil {
+			return infoErr
+		}
+		if !info.Mode().IsRegular() {
+			return nil
+		}
+		relWork := filepath.ToSlash(path)
+		candidate := filepath.ToSlash(relBase)
+		if !strings.Contains(pattern, "/") {
+			candidate = filepath.Base(candidate)
+		}
+		if !globMatch(pattern, candidate) {
+			return nil
+		}
+		total++
+		if len(files) < limit {
+			files = append(files, relWork)
+		}
+		if total >= stopAfter {
+			exact = false
+			return fs.SkipAll
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, total, exact, err
 	}
-	return relativized
+	slices.Sort(files)
+	return files, total, exact, nil
 }
 
-// findViaFd uses fd (fast, respects .gitignore) to find files.
-// Does not use --max-results so we can count the true total for truncation.
-// Returns (output, "fd", err). err is context.DeadlineExceeded on timeout.
-func (e *Engine) findViaFd(ctx context.Context, pattern, searchPath string) (output string, tool string, err error) {
-	// fd --glob matches basenames by default.
-	// If pattern contains /, switch to --full-path and prepend **/ for intuitive matching.
-	args := []string{
-		"--glob",
-		"--color=never",
-		"--type", "f",
-	}
-
-	// Exclude common junk directories (fd also respects .gitignore by default).
-	for _, dir := range findExcludeDirs {
-		args = append(args, "--exclude", dir)
-	}
-
-	effectivePattern := pattern
-	if strings.Contains(pattern, "/") {
-		args = append(args, "--full-path")
-		if !strings.HasPrefix(pattern, "/") && !strings.HasPrefix(pattern, "**/") && pattern != "**" {
-			effectivePattern = "**/" + pattern
+func shouldPruneTraversal(rel string, isDir bool) bool {
+	segments := strings.Split(filepath.ToSlash(rel), "/")
+	for _, segment := range segments {
+		if strings.HasPrefix(segment, ".") {
+			return true
+		}
+		if isDir && slices.Contains(findExcludeDirs, segment) {
+			return true
 		}
 	}
-	args = append(args, effectivePattern, searchPath)
-
-	out := &boundedWriter{limit: 1 << 20}
-	ctx, cancel := context.WithTimeout(ctx, findTimeout)
-	defer cancel()
-	c := exec.CommandContext(ctx, e.fdPath, args...) //nolint:gosec // G204: fd path is resolved internally; args are built from validated find params, not raw user input
-	c.Dir = e.workDir
-	c.Stdout = out
-	c.Stderr = out
-	c.WaitDelay = 2 * time.Second
-	_ = c.Run()
-	return out.String(), "fd", ctx.Err()
+	return false
 }
 
-// findViaFind uses POSIX find as a fallback when fd is unavailable.
-// Returns (output, "find", err). err is context.DeadlineExceeded on timeout.
-func (e *Engine) findViaFind(ctx context.Context, pattern, searchPath string) (output string, tool string, err error) {
-	var findArgs []string
-
-	if strings.Contains(pattern, "/") {
-		findArgs = []string{searchPath, "-type", "f", "-path", pattern}
-	} else {
-		findArgs = []string{searchPath, "-type", "f", "-name", pattern}
+func globMatch(pattern, candidate string) bool {
+	patternParts := strings.Split(filepath.ToSlash(pattern), "/")
+	candidateParts := strings.Split(filepath.ToSlash(candidate), "/")
+	var match func(int, int) bool
+	match = func(pi, ci int) bool {
+		if pi == len(patternParts) {
+			return ci == len(candidateParts)
+		}
+		if patternParts[pi] == "**" {
+			return match(pi+1, ci) || (ci < len(candidateParts) && match(pi, ci+1))
+		}
+		if ci >= len(candidateParts) {
+			return false
+		}
+		ok, err := filepath.Match(patternParts[pi], candidateParts[ci])
+		return err == nil && ok && match(pi+1, ci+1)
 	}
+	return match(0, 0)
+}
 
-	for _, dir := range findExcludeDirs {
-		findArgs = append(findArgs, "-not", "-path", "*/"+dir+"/*")
+func classifyNativeFindErr(err error) error {
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return &ErrWithSuggestion{Err: fmt.Errorf("find_files timed out after %s (backend=native)", findTimeout), Suggestion: "narrow path or use a more specific glob", Code: ErrCodeTimeout}
+	case errors.Is(err, context.Canceled):
+		return &ErrWithSuggestion{Err: errors.New("find_files canceled (backend=native)"), Suggestion: "retry the file search if cancellation was unintended", Code: ErrCodeCanceled}
+	default:
+		return err
 	}
-
-	out := &boundedWriter{limit: 1 << 20}
-	ctx, cancel := context.WithTimeout(ctx, findTimeout)
-	defer cancel()
-	c := exec.CommandContext(ctx, "find", findArgs...) //nolint:gosec // G204: fixed "find" binary; findArgs built internally from validated params
-	c.Dir = e.workDir
-	c.Stdout = out
-	c.Stderr = out
-	c.WaitDelay = 2 * time.Second
-	_ = c.Run()
-	return out.String(), "find", ctx.Err()
 }

@@ -3,6 +3,8 @@ package jinn
 import (
 	"context"
 	"errors"
+	"fmt"
+	"regexp"
 )
 
 const (
@@ -45,6 +47,16 @@ type searchReplacePending struct {
 
 // searchReplace is the tool handler for search_replace.
 func (e *Engine) searchReplace(ctx context.Context, args map[string]interface{}) (*ToolResult, error) {
+	var result *ToolResult
+	err := withFileLock(e.mutationLockPath(), func() error {
+		var innerErr error
+		result, innerErr = e.searchReplaceDiscovered(ctx, args)
+		return innerErr
+	})
+	return result, err
+}
+
+func (e *Engine) searchReplaceDiscovered(ctx context.Context, args map[string]interface{}) (*ToolResult, error) {
 	// --- Required arguments ---
 	pattern, _ := args["pattern"].(string)
 	if pattern == "" {
@@ -81,6 +93,20 @@ func (e *Engine) searchReplace(ctx context.Context, args map[string]interface{})
 	}
 
 	dryRun := boolArg(args, "dry_run")
+	targets := make([]string, len(candidates))
+	for i := range candidates {
+		targets[i] = candidates[i].resolved
+	}
+	var result *ToolResult
+	err = e.withTargetLocksOnly(targets, func() error {
+		var innerErr error
+		result, innerErr = e.searchReplaceLocked(args, candidates, re, replacement, dryRun)
+		return innerErr
+	})
+	return result, err
+}
+
+func (e *Engine) searchReplaceLocked(args map[string]interface{}, candidates []searchReplaceCandidate, re *regexp.Regexp, replacement string, dryRun bool) (*ToolResult, error) {
 
 	// --- Phase 1: Validate all files (collect-then-report) ---
 
@@ -88,7 +114,8 @@ func (e *Engine) searchReplace(ctx context.Context, args map[string]interface{})
 	var fileResults []searchReplaceFileResult
 
 	for _, c := range candidates {
-		p, fr, ok := e.processSRCandidate(c, re, replacement, checksumForTarget(args, c.path))
+		checksum := checksumForTarget(args, c.path)
+		p, fr, ok := e.processSRCandidate(c, re, replacement, checksum)
 		switch {
 		case p != nil:
 			pending = append(pending, *p)
@@ -96,6 +123,13 @@ func (e *Engine) searchReplace(ctx context.Context, args map[string]interface{})
 			fileResults = append(fileResults, *fr)
 		default:
 			_ = ok // no match: skip silently (not an error)
+		}
+	}
+	if e.requireMutationPreconditions && !dryRun {
+		for _, p := range pending {
+			if checksumForTarget(args, p.candidate.path) == "" {
+				return nil, &ErrWithSuggestion{Err: fmt.Errorf("if_checksums[%q] is required", p.candidate.path), Suggestion: "read every changed file with include_checksum=true and supply its digest", Code: ErrCodeInvalidArgs}
+			}
 		}
 	}
 

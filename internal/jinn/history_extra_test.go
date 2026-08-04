@@ -60,7 +60,7 @@ func TestAtomicWriteBytes_RoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "blob.bin")
 	data := []byte("binary content")
-	if err := atomicWriteBytes(path, data, 0o600); err != nil {
+	if err := atomicWriteBytes(path, data); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	got, err := os.ReadFile(path)
@@ -82,7 +82,7 @@ func TestAtomicWriteBytes_UnwritableDir(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
 
-	err := atomicWriteBytes(filepath.Join(dir, "data.bin"), []byte("data"), 0o600)
+	err := atomicWriteBytes(filepath.Join(dir, "data.bin"), []byte("data"))
 	if err == nil {
 		t.Skip("read-only dir not enforced (possibly running as root)")
 	}

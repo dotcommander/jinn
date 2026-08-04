@@ -21,6 +21,8 @@ type searchFilesResult struct {
 	Results         []searchResult `json:"results"`
 	Truncated       bool           `json:"truncated"`
 	TotalCount      int            `json:"total_count"`
+	TotalCountExact bool           `json:"total_count_exact"`
+	Hint            string         `json:"hint,omitempty"`
 	ZeroMatchReason string         `json:"zero_match_reason,omitempty"`
 }
 

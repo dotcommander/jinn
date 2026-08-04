@@ -17,7 +17,20 @@ func testEngine(t *testing.T) (*Engine, string) {
 	if real, err := filepath.EvalSymlinks(dir); err == nil {
 		dir = real
 	}
-	return New(dir, "dev"), dir
+	e := testUnsafeEngineAt(t, dir)
+	return e, dir
+}
+
+// testUnsafeEngineAt is only for tests that exercise legacy mutation or shell
+// semantics. Secure-constructor tests must call New or NewWithConfig directly.
+func testUnsafeEngineAt(t *testing.T, dir string) *Engine {
+	t.Helper()
+	e, err := NewWithConfig(dir, EngineConfig{Version: "dev", ShellMode: ShellModeUnsafe, UnsafeAllowMutationWithoutPreconditions: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = e.Close() })
+	return e
 }
 
 func args(kv ...any) map[string]interface{} {

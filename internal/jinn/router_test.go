@@ -1,6 +1,9 @@
 package jinn
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestRouteToolsCoreCases(t *testing.T) {
 	t.Parallel()
@@ -9,17 +12,18 @@ func TestRouteToolsCoreCases(t *testing.T) {
 		need string
 		want string
 		risk string
+		mode ShellMode
 	}{
-		{"read file", "read a file", "read_file", "read_only"},
-		{"search text", "search text in repo", "search_files", "read_only"},
-		{"apply patch", "apply patch", "apply_patch", "mutating"},
-		{"run tests", "run tests", "run_shell", "shell"},
-		{"rename symbol", "rename symbol", "lsp_query", "read_only"},
+		{"read file", "read a file", "read_file", "read_only", ShellModeDisabled},
+		{"search text", "search text in repo", "search_files", "read_only", ShellModeDisabled},
+		{"apply patch", "apply patch", "apply_patch", "mutating", ShellModeDisabled},
+		{"run tests", "run tests", "run_shell", "shell", ShellModeUnsafe},
+		{"rename symbol", "rename symbol", "lsp_query", "read_only", ShellModeDisabled},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			resp, err := RouteTools(RouteRequest{Need: tt.need, MaxTools: 3, IncludeMutating: boolPtr(true)})
+			resp, err := RouteToolsForMode(RouteRequest{Need: tt.need, MaxTools: 3, IncludeMutating: boolPtr(true)}, tt.mode)
 			if err != nil {
 				t.Fatalf("RouteTools: %v", err)
 			}
@@ -190,7 +194,11 @@ func TestRouteToolsCorpus(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			resp, err := RouteTools(RouteRequest{Need: tt.need, MaxTools: 3, IncludeMutating: boolPtr(!tt.noMutating)})
+			mode := ShellModeDisabled
+			if strings.Contains(tt.name, "run_shell") {
+				mode = ShellModeUnsafe
+			}
+			resp, err := RouteToolsForMode(RouteRequest{Need: tt.need, MaxTools: 3, IncludeMutating: boolPtr(!tt.noMutating)}, mode)
 			if err != nil {
 				t.Fatalf("RouteTools(%q): %v", tt.need, err)
 			}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"regexp"
@@ -83,6 +84,9 @@ func (e *Engine) memorySave(ctx context.Context, args map[string]interface{}) (s
 	expiresAt, err := parseExpiresIn(strArg(args, "expires_in"))
 	if err != nil {
 		return "", err
+	}
+	if boolArg(args, "pin") && expiresAt != nil {
+		return "", &ErrWithSuggestion{Err: errors.New("pin:true cannot be combined with expires_in"), Suggestion: "omit expires_in for a pinned entry, or save it unpinned", Code: ErrCodeInvalidArgs}
 	}
 
 	rs, err := e.resolveMemoryScope(strArg(args, "scope"), strArg(args, "scope_id"))
@@ -218,12 +222,14 @@ func (e *Engine) memoryGCAction(ctx context.Context, args map[string]interface{}
 	// scope arg is optional: when supplied, restrict gc to that scope.
 	// We only pass the scope string (not scope_id) — gc sweeps the whole scope bucket.
 	gcScope := ""
+	gcScopeID := ""
 	if s := strArg(args, "scope"); s != "" {
 		rs, err := e.resolveMemoryScope(s, strArg(args, "scope_id"))
 		if err != nil {
 			return "", err
 		}
 		gcScope = rs.scope
+		gcScopeID = rs.scopeID
 	}
 
 	// idempotency_retention is optional; when absent fall back to the named
@@ -250,7 +256,7 @@ func (e *Engine) memoryGCAction(ctx context.Context, args map[string]interface{}
 	}
 
 	out, err := runIdempotent(ctx, db, idempotentRequest{agent: agent, requestID: requestID, command: "memory.gc", fn: func(tx *sql.Tx) (any, error) {
-		n, gcErr := e.memoryGCTx(ctx, tx, gcScope)
+		n, gcErr := e.memoryGCTx(ctx, tx, gcScope, gcScopeID)
 		if gcErr != nil {
 			return nil, gcErr
 		}

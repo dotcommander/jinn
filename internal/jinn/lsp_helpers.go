@@ -107,6 +107,22 @@ func findSymbolColumn(absPath string, line int, symbol string) (int, error) {
 	return utf16CodeUnitLen(before), nil
 }
 
+func (e *Engine) findSymbolColumn(absPath string, line int, symbol string) (int, error) {
+	data, _, err := e.readRegularFile(absPath, maxLSPFileSize)
+	if err != nil {
+		return 0, fmt.Errorf("find symbol column: %w", err)
+	}
+	lines := splitLSPLines(string(data))
+	if line < 0 || line >= len(lines) {
+		return 0, fmt.Errorf("line %d out of range (file has %d lines)", line+1, len(lines))
+	}
+	before, _, ok := strings.Cut(lines[line], symbol)
+	if !ok {
+		return 0, fmt.Errorf("symbol %q not found on line %d", symbol, line+1)
+	}
+	return utf16CodeUnitLen(before), nil
+}
+
 func splitLSPLines(source string) []string {
 	return strings.Split(strings.ReplaceAll(source, "\r\n", "\n"), "\n")
 }
@@ -166,7 +182,10 @@ func formatWorkspaceEdit(edit *lspWorkspaceEdit, workDir string) string {
 	var sb strings.Builder
 	totalEdits := 0
 	for uri, edits := range fileEdits {
-		path := strings.TrimPrefix(uri, "file://")
+		path, err := fileURIPath(uri)
+		if err != nil {
+			path = uri
+		}
 		rel := path
 		if workDir != "" {
 			if r, err := filepath.Rel(workDir, path); err == nil {

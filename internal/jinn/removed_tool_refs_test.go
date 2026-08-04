@@ -12,6 +12,7 @@ func TestRemovedToolReferencesStayHistorical(t *testing.T) {
 
 	repoRoot := filepath.Clean(filepath.Join("..", ".."))
 	removedRefs := []string{
+		"2025" + "-03-26",
 		"checksum" + "_tree",
 		"related" + "_context",
 		"tool_" + "checksum.go",

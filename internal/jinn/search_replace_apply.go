@@ -2,7 +2,6 @@ package jinn
 
 import (
 	"fmt"
-	"os"
 	"regexp"
 	"strings"
 )
@@ -21,18 +20,29 @@ type searchReplaceApplyResult struct {
 // Returns the result content (if changed), match count, replace count, and any error.
 func srApplyOne(content []byte, re *regexp.Regexp, replacement string) (searchReplaceApplyResult, error) { //nolint:unparam // error return reserved: caller handles per-file failures uniformly via applyErr branch
 	raw, bom := stripBom(string(content))
-	ending := detectLineEnding(raw)
-	raw = normalizeToLF(raw)
+	mapped := mapNormalizedText(raw, false)
+	normalized := mapped.text
 
 	// Count matches before replacing.
-	locs := re.FindAllStringIndex(raw, -1)
+	locs := re.FindAllStringSubmatchIndex(normalized, -1)
 	matches := len(locs)
 	if matches == 0 {
 		return searchReplaceApplyResult{}, nil
 	}
 
 	// Apply replacement.
-	result := re.ReplaceAllString(raw, replacement)
+	result := raw
+	for i := len(locs) - 1; i >= 0; i-- {
+		loc := locs[i]
+		start, end := mapped.boundaries[loc[0]], mapped.boundaries[loc[1]]
+		expanded := re.ExpandString(nil, replacement, normalized, loc)
+		ending := detectLineEnding(raw[start:end])
+		if !strings.ContainsAny(raw[start:end], "\r\n") {
+			ending = detectLineEnding(raw)
+		}
+		replacementText := restoreLineEndings(normalizeToLF(string(expanded)), ending)
+		result = result[:start] + replacementText + result[end:]
+	}
 	replaced := matches // ReplaceAll replaces every match
 
 	if result == raw {
@@ -42,17 +52,17 @@ func srApplyOne(content []byte, re *regexp.Regexp, replacement string) (searchRe
 	// Find first and last changed lines.
 	firstMatch := locs[0]
 	lastMatch := locs[len(locs)-1]
-	firstLine := strings.Count(raw[:firstMatch[0]], "\n") + 1
-	lastLine := strings.Count(raw[:lastMatch[1]], "\n") + 1
+	firstLine := strings.Count(normalized[:firstMatch[0]], "\n") + 1
+	lastLine := strings.Count(normalized[:lastMatch[1]], "\n") + 1
 
-	return searchReplaceApplyResult{updated: bom + restoreLineEndings(result, ending), matches: matches, replaced: replaced, firstLine: firstLine, lastLine: lastLine}, nil
+	return searchReplaceApplyResult{updated: bom + result, matches: matches, replaced: replaced, firstLine: firstLine, lastLine: lastLine}, nil
 }
 
 // srReadCandidate stats and reads a candidate file, returning its content. If the
 // file cannot be read or should be skipped (missing, too large, binary), it returns
 // nil content and a populated searchReplaceFileResult describing the skip reason.
 func (e *Engine) srReadCandidate(c searchReplaceCandidate) ([]byte, *searchReplaceFileResult) {
-	info, statErr := os.Stat(c.resolved)
+	info, statErr := e.rootedStat(c.resolved)
 	if statErr != nil {
 		return nil, &searchReplaceFileResult{
 			Path:      c.path,
@@ -71,7 +81,7 @@ func (e *Engine) srReadCandidate(c searchReplaceCandidate) ([]byte, *searchRepla
 		}
 	}
 
-	data, readErr := os.ReadFile(c.resolved)
+	data, _, readErr := e.rootedReadFile(c.resolved, srMaxFileSize)
 	if readErr != nil {
 		return nil, &searchReplaceFileResult{
 			Path:      c.path,
@@ -243,7 +253,7 @@ func (e *Engine) srApplyWrites(fileResults []searchReplaceFileResult, pending []
 	var applied []string
 	var appliedRefs []appliedRef
 	for _, p := range pending {
-		if err := verifyPreflightState(p.candidate.resolved, p.preData, true); err != nil {
+		if err := e.verifyPreflightState(p.candidate.resolved, p.preData, true); err != nil {
 			return nil, partialApplyErr("search_replace", appliedRefs, len(pending), fmt.Errorf("%s: %w", p.candidate.path, err))
 		}
 		id, err := e.snapshotAndWrite(p.candidate.resolved, p.candidate.path, "search_replace", p.preData, p.updated)

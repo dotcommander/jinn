@@ -1,8 +1,11 @@
 package jinn
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
+	"slices"
 	"syscall"
 )
 
@@ -29,4 +32,41 @@ func withFileLock(lockPath string, fn func() error) error {
 	}
 	defer func() { _ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN) }()
 	return fn()
+}
+
+func (e *Engine) targetLockPath(resolved string) string {
+	digest := sha256.Sum256([]byte(e.workDir + "\x00" + resolved))
+	base := os.Getenv("JINN_CONFIG_DIR")
+	if base == "" {
+		if configDir, err := os.UserConfigDir(); err == nil {
+			base = configDir
+		} else {
+			base = os.TempDir()
+		}
+	}
+	return filepath.Join(base, "jinn", "locks", hex.EncodeToString(digest[:])+".lock")
+}
+
+func (e *Engine) mutationLockPath() string {
+	return e.targetLockPath("<workspace-mutations>")
+}
+
+func (e *Engine) withTargetLocks(resolved []string, fn func() error) error {
+	return withFileLock(e.mutationLockPath(), func() error {
+		return e.withTargetLocksOnly(resolved, fn)
+	})
+}
+
+func (e *Engine) withTargetLocksOnly(resolved []string, fn func() error) error {
+	paths := append([]string(nil), resolved...)
+	slices.Sort(paths)
+	paths = slices.Compact(paths)
+	var lock func(int) error
+	lock = func(index int) error {
+		if index == len(paths) {
+			return fn()
+		}
+		return withFileLock(e.targetLockPath(paths[index]), func() error { return lock(index + 1) })
+	}
+	return lock(0)
 }

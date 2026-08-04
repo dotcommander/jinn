@@ -3,8 +3,8 @@ package jinn
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 )
@@ -50,7 +50,7 @@ func (e *Engine) detectProject(args map[string]interface{}) (string, error) {
 		return "", err
 	}
 
-	info, err := os.Stat(resolved)
+	info, err := e.rootedStat(resolved)
 	if err != nil {
 		return "", fmt.Errorf("path not found: %s", detectPath)
 	}
@@ -60,13 +60,13 @@ func (e *Engine) detectProject(args map[string]interface{}) (string, error) {
 
 	result := projectInfo{}
 	for _, p := range probes {
-		probeMarker(resolved, p, &result)
+		e.probeMarker(resolved, p, &result)
 	}
 
-	applyTypeScriptSignal(resolved, &result)
-	applyPackageScripts(resolved, &result)
-	applyJustfile(resolved, &result)
-	applyFrameworks(resolved, &result)
+	e.applyTypeScriptSignal(resolved, &result)
+	e.applyPackageScripts(resolved, &result)
+	e.applyJustfile(resolved, &result)
+	e.applyFrameworks(resolved, &result)
 
 	out, err := json.Marshal(result)
 	if err != nil {
@@ -76,8 +76,9 @@ func (e *Engine) detectProject(args map[string]interface{}) (string, error) {
 }
 
 // probeMarker records a marker file's signals when it exists in dir.
-func probeMarker(dir string, p probe, result *projectInfo) {
-	if _, statErr := os.Stat(filepath.Join(dir, p.configFile)); statErr != nil {
+func (e *Engine) probeMarker(dir string, p probe, result *projectInfo) {
+	data, ok := e.readProjectMarker(dir, p.configFile)
+	if !ok || !validProjectMarker(p.configFile, data) {
 		return
 	}
 	result.ConfigFiles = append(result.ConfigFiles, p.configFile)
@@ -92,8 +93,8 @@ func probeMarker(dir string, p probe, result *projectInfo) {
 }
 
 // applyTypeScriptSignal upgrades JavaScript to TypeScript when tsconfig.json exists.
-func applyTypeScriptSignal(dir string, result *projectInfo) {
-	if _, statErr := os.Stat(filepath.Join(dir, "tsconfig.json")); statErr != nil {
+func (e *Engine) applyTypeScriptSignal(dir string, result *projectInfo) {
+	if data, ok := e.readProjectMarker(dir, "tsconfig.json"); !ok || !validProjectMarker("tsconfig.json", data) {
 		return
 	}
 	for i, lang := range result.Languages {
@@ -104,9 +105,9 @@ func applyTypeScriptSignal(dir string, result *projectInfo) {
 }
 
 // applyPackageScripts reads package.json scripts and overrides build/test/lint.
-func applyPackageScripts(dir string, result *projectInfo) {
-	data, rErr := os.ReadFile(filepath.Join(dir, "package.json"))
-	if rErr != nil {
+func (e *Engine) applyPackageScripts(dir string, result *projectInfo) {
+	data, ok := e.readProjectMarker(dir, "package.json")
+	if !ok {
 		return
 	}
 	var pkg struct {
@@ -128,8 +129,8 @@ func applyPackageScripts(dir string, result *projectInfo) {
 
 // applyJustfile prefers committed just recipes as the repo's source of truth
 // for build/test commands.
-func applyJustfile(dir string, result *projectInfo) {
-	name, data, ok := readJustfile(dir)
+func (e *Engine) applyJustfile(dir string, result *projectInfo) {
+	name, data, ok := e.readJustfile(dir)
 	if !ok {
 		return
 	}
@@ -149,23 +150,52 @@ func applyJustfile(dir string, result *projectInfo) {
 }
 
 // applyFrameworks detects frameworks by config files; accepts either extension, adds once.
-func applyFrameworks(dir string, result *projectInfo) {
+func (e *Engine) applyFrameworks(dir string, result *projectInfo) {
 	for _, cfg := range []string{"next.config.js", "next.config.mjs"} {
-		if _, statErr := os.Stat(filepath.Join(dir, cfg)); statErr == nil {
+		if _, ok := e.readProjectMarker(dir, cfg); ok {
 			result.Frameworks = append(result.Frameworks, "Next.js")
 			break
 		}
 	}
 }
 
-func readJustfile(dir string) (string, []byte, bool) {
+func (e *Engine) readJustfile(dir string) (string, []byte, bool) {
 	for _, name := range []string{"justfile", "Justfile"} {
-		data, err := os.ReadFile(filepath.Join(dir, name))
-		if err == nil {
+		data, ok := e.readProjectMarker(dir, name)
+		if ok {
 			return name, data, true
 		}
 	}
 	return "", nil, false
+}
+
+const projectMarkerMaxBytes = 1 << 20
+
+func (e *Engine) readProjectMarker(dir, name string) ([]byte, bool) {
+	resolved := filepath.Join(dir, name)
+	data, info, err := e.rootedReadFile(resolved, projectMarkerMaxBytes)
+	return data, err == nil && info.Mode().IsRegular()
+}
+
+var goModuleLine = regexp.MustCompile(`(?m)^module[ \t]+[^ \t\r\n]+[ \t]*$`)
+
+func validProjectMarker(name string, data []byte) bool {
+	trimmed := strings.TrimSpace(string(data))
+	switch name {
+	case "go.mod":
+		return goModuleLine.Match(data)
+	case "package.json", "composer.json":
+		var value map[string]any
+		return json.Unmarshal(data, &value) == nil && value != nil
+	case "Cargo.toml", "pyproject.toml":
+		return strings.Contains(trimmed, "[") && strings.Contains(trimmed, "]")
+	case "Taskfile.yml":
+		return strings.Contains(trimmed, ":")
+	case "tsconfig.json":
+		return strings.HasPrefix(trimmed, "{") && strings.HasSuffix(trimmed, "}")
+	default:
+		return len(data) > 0
+	}
 }
 
 func parseJustRecipes(content string) map[string]bool {

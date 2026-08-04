@@ -16,12 +16,12 @@ func (e *Engine) readFile(args map[string]interface{}) (*ToolResult, error) {
 	if err != nil {
 		return nil, wrapBlockedReadErr(err)
 	}
-	if _, statErr := statForRead(resolved); statErr != nil {
+	if _, statErr := e.statForRead(resolved); statErr != nil {
 		return nil, statErr
 	}
 
 	// Image detection: single source of truth in detectIsImage.
-	detected, isImage := detectIsImage(resolved, resolved)
+	detected, isImage := e.detectIsImage(resolved, resolved)
 	if isImage {
 		return e.readImageFile(resolved, path, detected, args)
 	}
@@ -98,7 +98,7 @@ func (e *Engine) readTextFile(resolved string, args map[string]interface{}) (*To
 // readImageFile reads an image file and returns it as a base64 image block,
 // recording it in the tracker and attaching a checksum when requested.
 func (e *Engine) readImageFile(resolved, path, detected string, args map[string]interface{}) (*ToolResult, error) {
-	data, rerr := os.ReadFile(resolved)
+	data, info, rerr := e.readRegularFile(resolved, maxFileSize)
 	if rerr != nil {
 		if os.IsPermission(rerr) {
 			return nil, permissionDeniedErr(path)
@@ -106,8 +106,7 @@ func (e *Engine) readImageFile(resolved, path, detected string, args map[string]
 		return nil, rerr
 	}
 
-	info, serr := os.Stat(resolved)
-	if serr == nil {
+	if info != nil {
 		e.tracker.record(resolved, info.ModTime(), info.Size())
 	}
 

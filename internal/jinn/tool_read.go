@@ -1,10 +1,12 @@
 package jinn
 
 import (
+	"bufio"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -35,15 +37,11 @@ type readContentResult struct {
 // truncation. The caller is responsible for sandbox validation (checkPath),
 // image detection, checksum computation, and ToolResult wrapping.
 func (e *Engine) readFileContent(resolved string, args map[string]interface{}, needChecksum bool) (*readContentResult, error) {
-	info, err := statForRead(resolved)
-	if err != nil {
-		return nil, err
-	}
-
-	data, checksum, err := e.readAndClassify(resolved, info, needChecksum)
+	lines, info, checksum, err := e.streamTextLines(resolved, needChecksum)
 	if err != nil {
 		return &readContentResult{Checksum: checksum}, err
 	}
+	e.tracker.record(resolved, info.ModTime(), info.Size())
 
 	ext := strings.ToLower(filepath.Ext(resolved))
 
@@ -52,16 +50,13 @@ func (e *Engine) readFileContent(resolved string, args map[string]interface{}, n
 		return nil, err
 	}
 
-	lines := strings.Split(string(data), "\n")
 	total := len(lines)
-	if lines[total-1] == "" {
-		total--
-	}
 	if total == 0 {
 		return &readContentResult{
 			Content:     "",
 			TotalLines:  0,
 			OutputLines: 0,
+			Checksum:    checksum,
 		}, nil
 	}
 
@@ -102,8 +97,14 @@ func (e *Engine) readFileContent(resolved string, args map[string]interface{}, n
 
 // statForRead stats resolved and verifies it is a readable, regular file
 // within the size cap. Errors carry suggestions for the caller to surface.
-func statForRead(resolved string) (os.FileInfo, error) {
-	info, err := os.Stat(resolved)
+func (e *Engine) statForRead(resolved string) (os.FileInfo, error) {
+	var info os.FileInfo
+	var err error
+	if _, relErr := e.rootRelative(resolved); relErr == nil {
+		info, err = e.rootedStat(resolved)
+	} else {
+		info, err = os.Stat(resolved)
+	}
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, &ErrWithSuggestion{
@@ -134,60 +135,62 @@ func statForRead(resolved string) (os.FileInfo, error) {
 	return info, nil
 }
 
-// readFileForOp reads resolved (the sandbox-resolved path) and maps the common
-// filesystem errors onto the canonical jinn errors, using path (the display
-// path) in messages. Not-found and permission-denied share their suggestion
-// text with statForRead and the other readable-file guards.
-func readFileForOp(path, resolved string) ([]byte, error) {
-	data, err := os.ReadFile(resolved)
+// streamTextLines computes the checksum and content classification in a bounded
+// streaming pass, then seeks the same descriptor to collect source lines. It
+// avoids holding both the full byte slice and a whole-file strings.Split copy.
+//
+//nolint:funlen,gocognit,gocyclo,revive // streaming checksum, MIME gates, and line collection must share one bounded descriptor and result shape.
+func (e *Engine) streamTextLines(resolved string, needChecksum bool) ([]string, os.FileInfo, string, error) {
+	file, info, err := e.openRegularFile(resolved, maxFileSize, true)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, &ErrWithSuggestion{
-				Err:        fmt.Errorf("file not found: %s", path),
-				Suggestion: "verify the path exists with list_dir on the parent, or check for typos",
-				Code:       ErrCodeFileNotFound,
+		if os.IsPermission(err) {
+			return nil, info, "", permissionDeniedErr(resolved)
+		}
+		return nil, info, "", err
+	}
+	defer func() { _ = file.Close() }()
+
+	hasher := sha256.New()
+	buffer := make([]byte, 32<<10)
+	sample := make([]byte, 0, 8192)
+	for {
+		n, readErr := file.Read(buffer)
+		//nolint:nestif // bounded sampling must be updated alongside the checksum for each read chunk.
+		if n > 0 {
+			chunk := buffer[:n]
+			if needChecksum {
+				_, _ = hasher.Write(chunk)
+			}
+			if len(sample) < cap(sample) {
+				remaining := cap(sample) - len(sample)
+				if remaining > n {
+					remaining = n
+				}
+				sample = append(sample, chunk[:remaining]...)
 			}
 		}
-		if os.IsPermission(err) {
-			return nil, permissionDeniedErr(path)
+		if errors.Is(readErr, io.EOF) {
+			break
 		}
-		return nil, err
-	}
-	return data, nil
-}
-
-// readAndClassify reads the file, records it in the tracker, and rejects PDF
-// and binary content before any text processing.
-func (e *Engine) readAndClassify(resolved string, info os.FileInfo, needChecksum bool) ([]byte, string, error) {
-	data, err := os.ReadFile(resolved)
-	if err != nil {
-		if os.IsPermission(err) {
-			return nil, "", permissionDeniedErr(resolved)
+		if readErr != nil {
+			return nil, info, "", readErr
 		}
-		return nil, "", err
 	}
-
-	e.tracker.record(resolved, info.ModTime(), info.Size())
-
+	checksum := ""
+	if needChecksum {
+		checksum = hex.EncodeToString(hasher.Sum(nil))
+	}
 	ext := strings.ToLower(filepath.Ext(resolved))
-
-	// Content-based detection: DetectContentType handles <512 bytes automatically.
-	detected := http.DetectContentType(data)
+	detected := http.DetectContentType(sample)
 	// Strip "; charset=..." suffix for a clean MIME.
 	if i := strings.Index(detected, ";"); i != -1 {
 		detected = strings.TrimSpace(detected[:i])
 	}
 
-	checksum := ""
-	if needChecksum {
-		h := sha256.Sum256(data)
-		checksum = hex.EncodeToString(h[:])
-	}
-
 	// PDF: reject before binary checks — pdftotext is a better tool.
 	// Either the content detector or the extension is sufficient evidence.
 	if detected == "application/pdf" || ext == ".pdf" {
-		return nil, checksum, &ErrWithSuggestion{
+		return nil, info, checksum, &ErrWithSuggestion{
 			Err:        errors.New("pdf extraction not supported in zero-dep mode"),
 			Suggestion: "convert the PDF to text first (pdftotext, pdftk, or a cloud OCR service) and read the text file",
 			Code:       ErrCodeBinaryFile,
@@ -195,17 +198,40 @@ func (e *Engine) readAndClassify(resolved string, info os.FileInfo, needChecksum
 	}
 
 	// Binary detection: NUL byte in first 8KB (matches search/replace window).
-	check := data
-	if len(check) > 8192 {
-		check = check[:8192]
-	}
 	// Binary detection: return an error so the caller can decide how to present it.
-	if isBinaryContent(check) {
-		return nil, checksum, &ErrWithSuggestion{
-			Err:        fmt.Errorf("binary file: %d bytes", len(data)),
+	if isBinaryContent(sample) {
+		return nil, info, checksum, &ErrWithSuggestion{
+			Err:        fmt.Errorf("binary file: %d bytes", info.Size()),
 			Suggestion: "use stat_file for metadata or skip content reads",
 			Code:       ErrCodeBinaryFile,
 		}
 	}
-	return data, checksum, nil
+	if _, seekErr := file.Seek(0, io.SeekStart); seekErr != nil {
+		return nil, info, checksum, seekErr
+	}
+	reader := bufio.NewReaderSize(file, 32<<10)
+	lines := make([]string, 0, min(int(info.Size()/40)+1, readDefaultLines))
+	for {
+		line, readErr := reader.ReadString('\n')
+		if strings.HasSuffix(line, "\n") {
+			line = strings.TrimSuffix(line, "\n")
+			lines = append(lines, line)
+		} else if line != "" {
+			lines = append(lines, line)
+		}
+		if errors.Is(readErr, io.EOF) {
+			break
+		}
+		if readErr != nil {
+			return nil, info, checksum, readErr
+		}
+	}
+	finalInfo, err := file.Stat()
+	if err != nil {
+		return nil, info, checksum, err
+	}
+	if finalInfo.Size() != info.Size() || !finalInfo.ModTime().Equal(info.ModTime()) {
+		return nil, finalInfo, checksum, &ErrWithSuggestion{Err: fmt.Errorf("file changed while reading: %s", resolved), Suggestion: "retry the read against stable bytes", Code: ErrCodeStaleFile}
+	}
+	return lines, finalInfo, checksum, nil
 }

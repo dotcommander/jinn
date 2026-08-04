@@ -57,23 +57,76 @@ func (c *lspClient) writeMsg(msg lspRPCMsg) error {
 
 // readReply reads frames until it finds one whose id matches wantID.
 // Notifications and out-of-order messages from the server are discarded.
+//
+//nolint:gocognit // protocol framing, request replies, and notifications must stay in receive order.
 func (c *lspClient) readReply(wantID int64) (json.RawMessage, error) {
 	for {
 		frame, err := c.readFrame()
 		if err != nil {
 			return nil, fmt.Errorf("lsp read: %w", err)
 		}
-		var reply lspRPCMsg
+		var reply struct {
+			JSONRPC string          `json:"jsonrpc"`
+			ID      json.RawMessage `json:"id"`
+			Method  string          `json:"method"`
+			Params  json.RawMessage `json:"params"`
+			Result  json.RawMessage `json:"result"`
+			Error   *lspRPCError    `json:"error"`
+		}
 		if err := json.Unmarshal(frame, &reply); err != nil {
 			return nil, fmt.Errorf("lsp unmarshal: %w", err)
 		}
-		if reply.ID == nil || *reply.ID != wantID {
-			continue // server notification or different id — skip
+		//nolint:nestif // JSON-RPC requests and notifications share the same frame branch.
+		if reply.Method != "" {
+			if len(reply.ID) > 0 && string(reply.ID) != "null" {
+				if err := c.answerServerRequest(reply.ID, reply.Method, reply.Params); err != nil {
+					return nil, err
+				}
+			} else {
+				c.retainNotification(reply.Method, reply.Params)
+			}
+			continue
+		}
+		var responseID int64
+		if len(reply.ID) == 0 || json.Unmarshal(reply.ID, &responseID) != nil || responseID != wantID {
+			continue
 		}
 		if reply.Error != nil {
 			return nil, fmt.Errorf("lsp error %d: %s", reply.Error.Code, reply.Error.Message)
 		}
 		return reply.Result, nil
+	}
+}
+
+func (c *lspClient) answerServerRequest(id json.RawMessage, method string, params json.RawMessage) error {
+	var result any
+	if method == "workspace/configuration" {
+		var request struct {
+			Items []any `json:"items"`
+		}
+		_ = json.Unmarshal(params, &request)
+		result = make([]any, len(request.Items))
+	}
+	body, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": id, "result": result})
+	if err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(c.stdin, "Content-Length: %d\r\n\r\n%s", len(body), body); err != nil {
+		return fmt.Errorf("lsp server request response: %w", err)
+	}
+	return nil
+}
+
+func (c *lspClient) retainNotification(method string, params json.RawMessage) {
+	if method != "textDocument/publishDiagnostics" {
+		return
+	}
+	var published struct {
+		URI         string          `json:"uri"`
+		Diagnostics []lspDiagnostic `json:"diagnostics"`
+	}
+	if json.Unmarshal(params, &published) == nil && published.URI != "" {
+		c.pushDiagnostics[published.URI] = published.Diagnostics
 	}
 }
 

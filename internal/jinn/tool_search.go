@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-var grepExcludeDirs = []string{".git", "node_modules", "vendor", "__pycache__", ".cache", "dist", "build"}
+var grepExcludeDirs = []string{".git", ".ssh", ".aws", ".gnupg", "node_modules", "vendor", "__pycache__", ".cache", "dist", "build"}
 
 const searchDefaultMax = 500 // tunable: config candidate
 
@@ -167,8 +167,9 @@ func (e *Engine) searchEngineBaseArgs(args map[string]interface{}, literal bool)
 	if e.rgPath != "" {
 		cmdArgs := []string{"-n", "--no-heading"}
 		for _, dir := range grepExcludeDirs {
-			cmdArgs = append(cmdArgs, "--glob=!"+dir)
+			cmdArgs = append(cmdArgs, "--glob=!**/"+dir+"/**")
 		}
+		cmdArgs = append(cmdArgs, "--glob=!**/.env", "--glob=!**/.env.*")
 		if include != "" {
 			cmdArgs = append(cmdArgs, "--glob="+include)
 		}
@@ -182,13 +183,15 @@ func (e *Engine) searchEngineBaseArgs(args map[string]interface{}, literal bool)
 	for _, dir := range grepExcludeDirs {
 		cmdArgs = append(cmdArgs, "--exclude-dir="+dir)
 	}
+	cmdArgs = append(cmdArgs, "--exclude=.env", "--exclude=.env.*")
 	if include != "" {
 		cmdArgs = append(cmdArgs, "--include="+include)
 	}
 	if literal {
 		cmdArgs = append(cmdArgs, "-F")
 	}
-	return "grep", cmdArgs
+	grepPath, _ := findExecutableInPath(e.execPath, "grep")
+	return grepPath, cmdArgs
 }
 
 // searchFilenamesOnly handles format=="filenames": per-file match counts via -c.
@@ -216,19 +219,18 @@ func (e *Engine) formatSearchJSON(raw string, req searchRequest) (string, error)
 	shown, total := parseSearchResults(raw, req.maxMatches)
 	truncated := total > req.maxMatches
 
-	resp := searchFilesResult{Results: shown, Truncated: truncated, TotalCount: total}
+	resp := searchFilesResult{Results: shown, Truncated: truncated, TotalCount: total, TotalCountExact: !truncated}
 	if total == 0 {
 		resp.ZeroMatchReason = e.classifyZeroMatch(req.pattern, req.searchPath, req.literal)
+	}
+	if truncated {
+		resp.Hint = "TRUNCATED: use max_matches or a more specific pattern"
 	}
 	jsonBytes, err := json.Marshal(resp)
 	if err != nil {
 		return "", fmt.Errorf("marshal search results: %w", err)
 	}
-	result := string(jsonBytes)
-	if truncated {
-		result += "\n" + formatTruncatedHint(req.maxMatches, total, "'max_matches' or a more specific pattern")
-	}
-	return result, nil
+	return string(jsonBytes), nil
 }
 
 // formatSearchText renders search output as plain text with a line cap.

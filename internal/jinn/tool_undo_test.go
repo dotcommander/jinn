@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // ---- list ----
@@ -246,7 +247,8 @@ func TestUndoRestore_BlobIntegrityFails(t *testing.T) {
 	if len(hf.Entries) == 0 {
 		t.Fatal("expected entry in history")
 	}
-	if err := os.WriteFile(hf.Entries[0].BlobPath, append([]byte{blobTagRaw}, []byte("corrupted")...), 0600); err != nil {
+	blobPath := filepath.Join(e.blobsDir(), hf.Entries[0].BlobID)
+	if err := os.WriteFile(blobPath, append([]byte{blobTagRaw}, []byte("corrupted")...), 0600); err != nil {
 		t.Fatalf("corrupt blob: %v", err)
 	}
 
@@ -382,5 +384,29 @@ func TestUndoTool_UnknownAction(t *testing.T) {
 	_, err := e.undoTool(map[string]interface{}{"action": "explode"})
 	if err == nil || !strings.Contains(err.Error(), "unknown action") {
 		t.Errorf("expected 'unknown action' error, got: %v", err)
+	}
+}
+
+func TestUndoClearWaitsForPreparedMutation(t *testing.T) {
+	e, dir := testEngine(t)
+	writeTestFile(t, dir, "file.txt", "before\n")
+	prepared, release := make(chan struct{}), make(chan struct{})
+	e.snapshotPreparedHook = func() { close(prepared); <-release }
+	writeDone := make(chan error, 1)
+	go func() { _, err := e.writeFile(args("path", "file.txt", "content", "after\n")); writeDone <- err }()
+	<-prepared
+	clearDone := make(chan error, 1)
+	go func() { _, err := e.undoClear(); clearDone <- err }()
+	select {
+	case err := <-clearDone:
+		t.Fatalf("clear raced prepared mutation: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+	if err := <-writeDone; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-clearDone; err != nil {
+		t.Fatal(err)
 	}
 }

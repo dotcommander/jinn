@@ -1,13 +1,16 @@
 # Security
 
-jinn confines every file operation to the working directory. You cannot read from, write to, or traverse into sensitive paths. There is no disable flag -- security is always on.
+jinn confines every file operation to the working directory. You cannot read
+from, write to, or traverse into sensitive paths. Shell execution is disabled
+unless an explicit shell mode is selected.
 
 ## Path Confinement
 
-Every file path goes through two checks before any I/O:
-
-1. **`resolvePath`** joins the path to the working directory and calls `filepath.Clean`. Symlinks in the working directory itself are resolved.
-2. **`checkPath`** resolves any symlinks in the requested path, verifies no sensitive segments are present, and confirms the final path stays within the working directory boundary.
+Accepted paths are normalized relative to a workspace `os.Root`, and I/O uses
+root-relative handles rather than caller-supplied absolute strings. Explicit
+reads may follow symlinks only when they remain in the root. Mutations reject
+every symlink component, and recursive tools never follow directory symlinks.
+Devices, sockets, FIFOs, and other non-regular read targets are rejected.
 
 ```bash
 # This is blocked -- .ssh is a sensitive segment
@@ -35,16 +38,19 @@ echo '{"tool":"read_file","args":{"path":"../.ssh/id_rsa"}}' | jinn
 
 The check matches on path segments, so `src/.env` and `deploy/.env.staging` are both blocked regardless of depth.
 
-## TOCTOU Protection
+## Mutation Preconditions and Locking
 
-jinn tracks file modification times to prevent **time-of-check-to-time-of-use** races. When you read a file, jinn records its mtime. When you write or edit that file, jinn checks whether the mtime has changed since the read. If it has, the write is rejected.
+Mutation tools require an authoritative precondition: `if_checksum` (or an
+`if_checksums` map) for an existing target and `if_absent:true` for creation.
+SHA-256-keyed cross-process locks are held from the authoritative read through
+durable snapshot creation, fsync, and atomic rename.
 
 ```bash
-# Step 1: Read the file (jinn records mtime)
+# Step 1: Read the file and obtain its checksum
 echo '{"tool":"read_file","args":{"path":"config.yaml"}}' | jinn
 
-# Step 2: Edit the file (jinn verifies mtime hasn't changed)
-echo '{"tool":"edit_file","args":{"path":"config.yaml","old_text":"port: 8080","new_text":"port: 9090"}}' | jinn
+# Step 2: Edit using that checksum
+echo '{"tool":"edit_file","args":{"path":"config.yaml","old_text":"port: 8080","new_text":"port: 9090","if_checksum":"<sha256>"}}' | jinn
 ```
 
 If another process modifies `config.yaml` between steps 1 and 2:
@@ -53,9 +59,8 @@ If another process modifies `config.yaml` between steps 1 and 2:
 {"ok": false, "error": "file modified since last read (mtime changed). Re-read before writing: config.yaml"}
 ```
 
-**Exceptions:** New files (never read) and deleted files (stat fails) bypass the TOCTOU check. You can always create a new file or overwrite a deleted one.
-
-The TOCTOU tracker is per-engine instance. Each `jinn` process starts fresh -- there is no global state persisted between invocations.
+Creation must instead state `"if_absent":true`. A stale precondition leaves the
+target bytes unchanged.
 
 ## Atomic Writes
 
@@ -67,14 +72,22 @@ The TOCTOU tracker is per-engine instance. Each `jinn` process starts fresh -- t
 4. `rename` the temp file to the target path.
 
 ```bash
-echo '{"tool":"write_file","args":{"path":"data.json","content":"{\"status\":\"ok\"}\n"}}' | jinn
+echo '{"tool":"write_file","args":{"path":"data.json","content":"{\"status\":\"ok\"}\n","if_absent":true}}' | jinn
 ```
 
 If the process crashes mid-write, the target file is never left in a partial state. The rename is atomic on all major filesystems. The temp file is cleaned up on error.
 
 Batch mutation tools validate all inputs before writing, but they do not roll back earlier successful writes if a later per-file write fails.
 
-## Command Risk Classifier
+## Shell Modes and Command Risk Classifier
+
+`--shell-mode=disabled` is the default and removes `run_shell` from schema,
+MCP registration, discovery, and nested plans. `sandboxed` uses
+`/usr/bin/sandbox-exec` on macOS or an already-installed `bwrap` on Linux and
+fails startup when that facility is unavailable. It denies network and user
+configuration while allowing workspace and per-run temporary writes.
+`--shell-mode=unsafe` is an explicit, prominently reported unconfined
+compatibility mode. `force` never selects a mode or bypasses OS confinement.
 
 Before executing any shell command, `run_shell` classifies it by examining the leading verb and flags:
 
@@ -111,16 +124,17 @@ Pipelines return the maximum risk of any component (`cmd1 | cmd2` inherits the h
 
 | Variable | Why it's kept |
 |----------|---------------|
-| `PATH` | Finds executables |
-| `HOME` | User home directory |
+| `PATH` | Sanitized launch-time host search path containing only absolute existing directories |
+| `HOME` | Synthetic per-run directory in `sandboxed`; allowlisted host value in `unsafe` |
+| `GOMODCACHE` | Allowlisted host Go module cache in `unsafe`; omitted in `sandboxed` |
 | `LANG` | Locale |
 | `LC_ALL` | Locale override |
 | `TERM` | Terminal capabilities |
 | `USER` | Current username |
 | `LOGNAME` | Login name |
-| `TMPDIR` | Temp directory |
+| `TMPDIR` | Synthetic per-run directory in `sandboxed`; allowlisted host value in `unsafe` |
 | `TZ` | Timezone |
-| `SHELL` | Shell path |
+| `SHELL` | Fixed `/bin/bash` in `sandboxed`; allowlisted host value in `unsafe` |
 
 All other environment variables -- including any API keys, tokens, or secrets you have exported -- are removed before the command runs. This prevents accidental credential leakage through child processes.
 
@@ -137,7 +151,10 @@ jinn caps output to prevent unbounded memory growth:
 | Read truncation | Configurable strategy (`head`/`tail`/`middle`/`none`/`smart`); default keeps first N lines. `smart` uses brace-depth heuristic for C-syntax files, cutting at block boundaries. Truncation hint appended: `[Showing lines X-Y of Z. Use start_line=N to continue. Remainder saved to <path>.]` | `read_file` |
 | File size limit | 50 MB | `read_file` |
 
-When shell output exceeds 1 MB, it spills to a temp file (`jinn-shell-*.log`). jinn keeps the tail of the output so you always see the exit code and final lines. Follow-up `read_file` access to a spill file is allowed only for spill paths that Jinn registered when `run_shell` created them; same-prefix temp files, symlinks, and replaced spill files are blocked.
+When shell output exceeds 1 MiB, it spills to a temp file
+(`jinn-shell-*.log`). Capture is limited to 16 MiB total; exceeding that kills
+the process group and reports `resource_limit`. Expired spill files are deleted,
+not merely removed from the registry.
 
 The repeated line collapse replaces 3 or more identical consecutive output lines with `[... N identical lines collapsed ...]`. This keeps build output and log dumps readable without losing the line count.
 
@@ -163,11 +180,14 @@ The `memory` tool stores its data in a SQLite database at `~/Library/Application
 |-----------|-------|-------------|
 | Path confinement | All file tools | No |
 | Sensitive path blocking | All file tools | No |
-| TOCTOU tracking | `read_file` records, mutation tools enforce where applicable | No |
+| Checksums and cross-process target locks | All mutation tools | No |
 | Atomic writes | Per-file writes in mutation tools | No |
-| Environment scrubbing | `run_shell` | No |
+| Shell mode | `run_shell` | `disabled`, `sandboxed`, or explicit `unsafe` |
 | Risk classifier | `run_shell` | `force: true` overrides dangerous block |
 | Output bounds | All tools | No |
 | Memory DB directory permissions | `memory` | `$JINN_CONFIG_DIR` relocates storage |
 
-Security in jinn is enforced at the engine level. Path confinement, sensitive path blocking, TOCTOU tracking, and environment scrubbing have no bypass. The risk classifier has one intentional override (`force: true`) for callers that have verified the command is safe for their context.
+Security in jinn is enforced at the engine level. Rooted access, sensitive-path
+blocking, mutation preconditions, locks, and environment scrubbing have no
+`force` bypass. The classifier override is advisory and does not enable shell
+execution or convert sandboxed execution to unsafe execution.

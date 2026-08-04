@@ -13,6 +13,8 @@ const multiReadMaxFiles = 20
 // Per-file cap (~50 KB) from readFileContent is a separate, independent guard.
 const multiReadGlobalCapBytes = 512 * 1024 // 512 KB total
 
+const multiReadSourceCapBytes = 100 << 20
+
 // multiReadResult is the top-level JSON structure returned by multi_read.
 type multiReadResult struct {
 	Files           map[string]string         `json:"files"`
@@ -42,6 +44,7 @@ func (e *Engine) multiRead(args map[string]interface{}) (*ToolResult, error) {
 	}
 
 	var totalBytes int
+	var sourceBytes int64
 	for _, raw := range rawFiles {
 		entry, ok := raw.(map[string]interface{})
 		if !ok {
@@ -52,11 +55,12 @@ func (e *Engine) multiRead(args map[string]interface{}) (*ToolResult, error) {
 			continue
 		}
 
-		content, trunc, mrErr := e.readMultiReadEntry(path, entry)
+		content, trunc, used, mrErr := e.readMultiReadEntry(path, entry, multiReadSourceCapBytes-sourceBytes)
 		if mrErr != nil {
 			result.Errors[path] = *mrErr
 			continue
 		}
+		sourceBytes += used
 
 		// Success: check global byte budget before adding to result.
 		if totalBytes+len(content) > multiReadGlobalCapBytes {
@@ -117,7 +121,9 @@ func parseMultiReadFiles(args map[string]interface{}) ([]interface{}, error) {
 // readMultiReadEntry validates one file request, performs sandbox + image checks,
 // and delegates to readFileContent. It returns the file content (with byte hint
 // appended), truncation info if any, or a per-file error to record.
-func (e *Engine) readMultiReadEntry(path string, entry map[string]interface{}) (string, *truncationInfo, *multiReadError) {
+//
+//nolint:revive // result fields preserve the established multi-read partial-success contract.
+func (e *Engine) readMultiReadEntry(path string, entry map[string]interface{}, remainingSource int64) (string, *truncationInfo, int64, *multiReadError) {
 	// Build per-file args for readFileContent.
 	perFileArgs := make(map[string]interface{})
 	for _, key := range []string{"start_line", "end_line", "tail", "line_numbers", "truncate"} {
@@ -130,12 +136,20 @@ func (e *Engine) readMultiReadEntry(path string, entry map[string]interface{}) (
 	resolved, err := e.checkPath(path)
 	if err != nil {
 		mrErr := errToMultiRead(err)
-		return "", nil, &mrErr
+		return "", nil, 0, &mrErr
+	}
+	info, err := e.statForRead(resolved)
+	if err != nil {
+		mrErr := errToMultiRead(err)
+		return "", nil, 0, &mrErr
+	}
+	if info.Size() > remainingSource {
+		return "", nil, 0, &multiReadError{Error: fmt.Sprintf("aggregate source cap exceeded: %d MiB", multiReadSourceCapBytes>>20), Suggestion: "request fewer or smaller files", ErrorCode: ErrCodeResourceLimit}
 	}
 
 	// Image/binary detection via the shared detector (same as readFile).
-	if _, isImage := detectIsImage(resolved, path); isImage {
-		return "", nil, &multiReadError{
+	if _, isImage := e.detectIsImage(resolved, path); isImage {
+		return "", nil, 0, &multiReadError{
 			Error:      fmt.Sprintf("image file: %s", path),
 			Suggestion: "use read_file for single-image viewing",
 			ErrorCode:  ErrCodeBinaryFile,
@@ -146,7 +160,7 @@ func (e *Engine) readMultiReadEntry(path string, entry map[string]interface{}) (
 	cr, err := e.readFileContent(resolved, perFileArgs, false)
 	if err != nil {
 		mrErr := errToMultiRead(err)
-		return "", nil, &mrErr
+		return "", nil, 0, &mrErr
 	}
 
 	content := cr.Content
@@ -162,7 +176,7 @@ func (e *Engine) readMultiReadEntry(path string, entry map[string]interface{}) (
 			OutputLines: cr.OutputLines,
 		}
 	}
-	return content, trunc, nil
+	return content, trunc, info.Size(), nil
 }
 
 // errToMultiRead converts an error (typically ErrWithSuggestion) to a multiReadError.

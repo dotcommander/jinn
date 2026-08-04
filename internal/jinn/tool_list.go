@@ -1,178 +1,179 @@
 package jinn
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 )
 
 const (
 	listDefaultMax = 500
 	listCapMax     = 10000
+	listVisitMax   = 100000
 )
 
-// listDirResult is the structured response for list_dir, including truncation metadata.
+var listTimeout = 60 * time.Second
+
 type listDirResult struct {
-	Entries    []string `json:"entries"`
-	Truncated  bool     `json:"truncated"`
-	TotalCount int      `json:"total_count"`
+	Entries         []string `json:"entries"`
+	Truncated       bool     `json:"truncated"`
+	TotalCount      int      `json:"total_count"`
+	TotalCountExact bool     `json:"total_count_exact"`
+	Hint            string   `json:"hint,omitempty"`
 }
 
-// listParams holds the validated, clamped inputs for a list_dir call.
 type listParams struct {
 	listPath     string
 	depth        int
 	maxEntries   int
-	changedSince int64
+	changedAfter time.Time
 }
 
-// parseListArgs extracts and clamps list_dir arguments.
-func parseListArgs(args map[string]interface{}) listParams {
-	p := listParams{listPath: ".", depth: 3}
-	if v, ok := args["path"].(string); ok && v != "" {
-		p.listPath = v
+func parseListArgs(args map[string]interface{}) (listParams, error) {
+	p := listParams{listPath: ".", depth: 3, maxEntries: intArg(args, "max_entries", listDefaultMax)}
+	if value := strArg(args, "path"); value != "" {
+		p.listPath = value
 	}
-	if d, ok := args["depth"].(float64); ok {
-		p.depth = int(d)
+	if value, ok := args["depth"].(float64); ok {
+		p.depth = int(value)
 	}
-	if p.depth < 1 {
-		p.depth = 1
+	p.depth = max(1, min(p.depth, 10))
+	p.maxEntries = min(p.maxEntries, listCapMax)
+	if raw, ok := args["changed_since"].(float64); ok && raw > 0 {
+		seconds := int64(raw)
+		nanos := int64((raw - float64(seconds)) * float64(time.Second))
+		p.changedAfter = time.Unix(seconds, nanos)
 	}
-	if p.depth > 10 {
-		p.depth = 10
+	if raw := strArg(args, "changed_after"); raw != "" {
+		parsed, err := time.Parse(time.RFC3339Nano, raw)
+		if err != nil {
+			return listParams{}, &ErrWithSuggestion{Err: fmt.Errorf("invalid changed_after: %w", err), Suggestion: "use an RFC3339Nano timestamp", Code: ErrCodeInvalidArgs}
+		}
+		p.changedAfter = parsed
 	}
-	p.maxEntries = intArg(args, "max_entries", listDefaultMax)
-	if p.maxEntries > listCapMax {
-		p.maxEntries = listCapMax
-	}
-	if v, ok := args["changed_since"].(float64); ok && v > 0 {
-		p.changedSince = int64(v)
-	}
-	return p
+	return p, nil
 }
 
 func (e *Engine) listDir(args map[string]interface{}) (string, error) {
-	p := parseListArgs(args)
+	return e.listDirContext(context.Background(), args)
+}
 
+func (e *Engine) listDirContext(ctx context.Context, args map[string]interface{}) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, listTimeout)
+	defer cancel()
+	p, err := parseListArgs(args)
+	if err != nil {
+		return "", err
+	}
 	resolved, err := e.checkPath(p.listPath)
 	if err != nil {
 		return "", err
 	}
-
-	info, err := os.Stat(resolved)
+	info, err := e.rootedStat(resolved)
 	if err != nil {
-		return "", &ErrWithSuggestion{
-			Err:        fmt.Errorf("path not found: %s", p.listPath),
-			Suggestion: "check the directory path",
-			Code:       ErrCodeFileNotFound,
-		}
+		return "", &ErrWithSuggestion{Err: fmt.Errorf("path not found: %s", p.listPath), Suggestion: "check the directory path", Code: ErrCodeFileNotFound}
 	}
 	if !info.IsDir() {
-		return "", &ErrWithSuggestion{
-			Err:        fmt.Errorf("not a directory: %s", p.listPath),
-			Suggestion: "use stat_file for individual files",
-			Code:       ErrCodeInvalidArgs,
-		}
+		return "", &ErrWithSuggestion{Err: fmt.Errorf("not a directory: %s", p.listPath), Suggestion: "use stat_file for individual files", Code: ErrCodeInvalidArgs}
 	}
-
-	all, err := e.collectListEntries(resolved, p)
+	entries, total, exact, err := e.collectListEntries(ctx, resolved, p)
 	if err != nil {
 		return "", err
 	}
-
-	return formatListResult(all, p.maxEntries)
+	result := listDirResult{Entries: entries, Truncated: !exact || total > p.maxEntries, TotalCount: total, TotalCountExact: exact}
+	if result.Entries == nil {
+		result.Entries = []string{}
+	}
+	if result.Truncated {
+		result.Hint = "[TRUNCATED: narrow path or depth, or increase max_entries]"
+	}
+	data, err := json.Marshal(result)
+	if err != nil {
+		return "", fmt.Errorf("list_dir: marshal: %w", err)
+	}
+	return string(data), nil
 }
 
-// collectListEntries walks resolved and returns sorted, filtered display entries.
-func (e *Engine) collectListEntries(resolved string, p listParams) ([]string, error) {
-	// Compute the depth of the resolved base path to enforce maxdepth.
-	baseDepth := strings.Count(resolved, string(os.PathSeparator))
-
-	var all []string
-	err := filepath.WalkDir(resolved, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return nil //nolint:nilerr // skip unreadable entry, continue walking the rest of the tree
+//nolint:gocognit,gocyclo,revive // directory traversal limits and rendering decisions share one ordered walk callback and result shape.
+func (e *Engine) collectListEntries(ctx context.Context, resolved string, p listParams) ([]string, int, bool, error) {
+	rootPath, err := e.rootRelative(resolved)
+	if err != nil {
+		return nil, 0, false, err
+	}
+	baseDepth := strings.Count(filepath.ToSlash(rootPath), "/")
+	entries := make([]string, 0, min(p.maxEntries, 128))
+	total, visited := 0, 0
+	exact := true
+	err = fs.WalkDir(e.root.FS(), rootPath, func(path string, entry fs.DirEntry, walkErr error) error {
+		if ctx.Err() != nil {
+			return ctx.Err()
 		}
-		entry, walkErr := listWalkEntry(path, d, baseDepth, p)
 		if walkErr != nil {
 			return walkErr
 		}
-		if entry != "" {
-			rel, _ := filepath.Rel(e.workDir, path)
-			if rel == "." {
-				rel = p.listPath
+		relBase, relErr := filepath.Rel(rootPath, path)
+		if relErr != nil {
+			return relErr
+		}
+		if relBase == "." {
+			return nil
+		}
+		if shouldPruneTraversal(relBase, entry.IsDir()) {
+			if entry.IsDir() {
+				return filepath.SkipDir
 			}
-			out := rel
-			if d.IsDir() {
-				out += "/"
+			return nil
+		}
+		visited++
+		if visited > listVisitMax {
+			exact = false
+			return fs.SkipAll
+		}
+		currentDepth := strings.Count(filepath.ToSlash(path), "/") - baseDepth
+		if currentDepth > p.depth {
+			if entry.IsDir() {
+				return filepath.SkipDir
 			}
-			all = append(all, out)
+			return nil
+		}
+		if !p.changedAfter.IsZero() && !entry.IsDir() {
+			info, infoErr := entry.Info()
+			if infoErr != nil {
+				return infoErr
+			}
+			if !info.ModTime().After(p.changedAfter) {
+				return nil
+			}
+		}
+		value := filepath.ToSlash(path)
+		if entry.IsDir() {
+			value += "/"
+		}
+		total++
+		if len(entries) < p.maxEntries {
+			entries = append(entries, value)
+		}
+		if total > p.maxEntries {
+			exact = false
+			return fs.SkipAll
 		}
 		return nil
 	})
 	if err != nil {
-		return nil, err
-	}
-	slices.Sort(all)
-	return all, nil
-}
-
-// listWalkEntry applies hidden/depth/mtime filters for one walk entry.
-// Returns (path, nil) to include it, ("", nil) to skip it, or ("", SkipDir) to prune.
-func listWalkEntry(path string, d fs.DirEntry, baseDepth int, p listParams) (string, error) {
-	// Skip hidden entries (starting with '.')
-	if d.Name() != "." && strings.HasPrefix(d.Name(), ".") {
-		if d.IsDir() {
-			return "", filepath.SkipDir
+		if errors.Is(err, context.DeadlineExceeded) {
+			return nil, total, false, &ErrWithSuggestion{Err: fmt.Errorf("list_dir timed out after %s", listTimeout), Suggestion: "narrow path or depth", Code: ErrCodeTimeout}
 		}
-		return "", nil
-	}
-	// Enforce depth limit
-	currentDepth := strings.Count(path, string(os.PathSeparator)) - baseDepth
-	if currentDepth > p.depth {
-		if d.IsDir() {
-			return "", filepath.SkipDir
+		if errors.Is(err, context.Canceled) {
+			return nil, total, false, &ErrWithSuggestion{Err: errors.New("list_dir canceled"), Suggestion: "retry if cancellation was unintended", Code: ErrCodeCanceled}
 		}
-		return "", nil
+		return nil, total, exact, err
 	}
-	// Mtime filter: skip listing entries older than threshold.
-	// Always descend into directories regardless of their own mtime.
-	if p.changedSince > 0 {
-		if fi, fiErr := d.Info(); fiErr == nil && fi.ModTime().Unix() < p.changedSince {
-			return "", nil
-		}
-	}
-	return path, nil
-}
-
-// formatListResult applies truncation and marshals the list_dir response.
-func formatListResult(all []string, maxEntries int) (string, error) {
-	total := len(all)
-	truncated := total > maxEntries
-	shown := all
-	if truncated {
-		shown = all[:maxEntries]
-	}
-
-	res := listDirResult{
-		Entries:    shown,
-		Truncated:  truncated,
-		TotalCount: total,
-	}
-	if res.Entries == nil {
-		res.Entries = []string{}
-	}
-	b, err := json.Marshal(res)
-	if err != nil {
-		return "", fmt.Errorf("listDir: marshal: %w", err)
-	}
-	result := string(b)
-	if truncated {
-		result += "\n" + formatTruncatedHint(maxEntries, total, "'max_entries' or 'depth'")
-	}
-	return result, nil
+	slices.Sort(entries)
+	return entries, total, exact, nil
 }

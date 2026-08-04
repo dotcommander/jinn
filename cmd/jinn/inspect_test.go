@@ -33,16 +33,28 @@ func TestInspector_ListToolsAndSchema(t *testing.T) {
 			Name string `json:"name"`
 		} `json:"function"`
 	}
-	if err := json.NewDecoder(schemaResp.Body).Decode(&schema); err != nil {
-		t.Fatalf("decode schema: %v", err)
+	if decodeErr := json.NewDecoder(schemaResp.Body).Decode(&schema); decodeErr != nil {
+		t.Fatalf("decode schema: %v", decodeErr)
 	}
 	schemaNames := make([]string, 0, len(schema))
 	for _, tool := range schema {
 		schemaNames = append(schemaNames, tool.Function.Name)
 	}
-	wantNames, err := jinn.SchemaToolNames()
+	lean, err := jinn.LeanSchemaForMode(jinn.ShellModeDisabled)
 	if err != nil {
-		t.Fatalf("schema tool names: %v", err)
+		t.Fatalf("disabled lean schema: %v", err)
+	}
+	var wantSchema []struct {
+		Function struct {
+			Name string `json:"name"`
+		} `json:"function"`
+	}
+	if decodeErr := json.Unmarshal([]byte(lean), &wantSchema); decodeErr != nil {
+		t.Fatalf("decode disabled schema: %v", decodeErr)
+	}
+	wantNames := make([]string, 0, len(wantSchema))
+	for _, tool := range wantSchema {
+		wantNames = append(wantNames, tool.Function.Name)
 	}
 	if !reflect.DeepEqual(schemaNames, wantNames) {
 		t.Fatalf("inspector schema tools = %v, want %v", schemaNames, wantNames)

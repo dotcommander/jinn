@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 )
 
@@ -40,25 +39,39 @@ func (e *Engine) applyPatch(args map[string]interface{}) (*ToolResult, error) {
 		return nil, err
 	}
 
-	preflights, err := preflightPatch(resolved)
-	if err != nil {
-		return nil, err
+	targets := make([]string, len(resolved))
+	for i := range resolved {
+		targets[i] = resolved[i].resolved
 	}
-	if err := verifyPatchChecksums(args, resolved, preflights); err != nil {
-		return nil, err
-	}
-
-	if boolArg(args, "dry_run") {
-		return renderPatchDryRun(resolved, preflights), nil
-	}
-
-	return e.applyPatchOps(resolved, preflights)
+	var result *ToolResult
+	err = e.withTargetLocks(targets, func() error {
+		preflights, preflightErr := e.preflightPatch(resolved)
+		if preflightErr != nil {
+			return preflightErr
+		}
+		if checksumErr := e.verifyPatchChecksums(args, resolved, preflights); checksumErr != nil {
+			return checksumErr
+		}
+		if boolArg(args, "dry_run") {
+			result = renderPatchDryRun(resolved, preflights)
+			return nil
+		}
+		result, err = e.applyPatchOps(resolved, preflights)
+		return err
+	})
+	return result, err
 }
 
-func verifyPatchChecksums(args map[string]interface{}, resolved []resolvedOp, preflights []preflightResult) error {
+func (e *Engine) verifyPatchChecksums(args map[string]interface{}, resolved []resolvedOp, preflights []preflightResult) error {
 	checksums, _ := args["if_checksums"].(map[string]interface{})
 	for i, r := range resolved {
 		want, _ := checksums[r.op.path].(string)
+		if e.requireMutationPreconditions && r.op.kind == "add" && !boolArg(args, "if_absent") {
+			return &ErrWithSuggestion{Err: fmt.Errorf("if_absent:true is required to add %s", r.op.path), Suggestion: "set if_absent:true after confirming every add target should not exist", Code: ErrCodeInvalidArgs}
+		}
+		if e.requireMutationPreconditions && r.op.kind != "add" && want == "" {
+			return &ErrWithSuggestion{Err: fmt.Errorf("if_checksums[%q] is required for %s", r.op.path, r.op.kind), Suggestion: "read each existing target with include_checksum=true and supply its digest", Code: ErrCodeInvalidArgs}
+		}
 		if want == "" {
 			continue
 		}
@@ -75,7 +88,7 @@ func verifyPatchChecksums(args map[string]interface{}, resolved []resolvedOp, pr
 func (e *Engine) resolvePatchPaths(ops []patchOperation) ([]resolvedOp, error) {
 	resolved := make([]resolvedOp, 0, len(ops))
 	for _, op := range ops {
-		resolvedPath, err := e.checkPath(op.path)
+		resolvedPath, err := e.checkPathForMutation(op.path)
 		if err != nil {
 			return nil, fmt.Errorf("%s %s: %w", op.kind, op.path, err)
 		}
@@ -89,17 +102,17 @@ func (e *Engine) resolvePatchPaths(ops []patchOperation) ([]resolvedOp, error) {
 // have no entry; callers treat a missing entry as a no-op, matching the prior
 // switch statements' default behavior.
 var patchOpHandlers = map[string]struct {
-	preflight func(resolvedOp) (preflightResult, error)
+	preflight func(*Engine, resolvedOp) (preflightResult, error)
 	apply     func(*Engine, resolvedOp, preflightResult) (applyOpResult, error)
 }{
-	"add":    {preflightAdd, (*Engine).applyAdd},
-	"delete": {preflightDelete, (*Engine).applyDelete},
-	"update": {preflightUpdate, (*Engine).applyUpdate},
+	"add":    {(*Engine).preflightAdd, (*Engine).applyAdd},
+	"delete": {(*Engine).preflightDelete, (*Engine).applyDelete},
+	"update": {(*Engine).preflightUpdate, (*Engine).applyUpdate},
 }
 
 // preflightPatch validates all operations without writing, returning the
 // computed old/new content for each so the apply phase can reuse it.
-func preflightPatch(resolved []resolvedOp) ([]preflightResult, error) {
+func (e *Engine) preflightPatch(resolved []resolvedOp) ([]preflightResult, error) {
 	preflights := make([]preflightResult, len(resolved))
 
 	for i, r := range resolved {
@@ -107,7 +120,7 @@ func preflightPatch(resolved []resolvedOp) ([]preflightResult, error) {
 		if !ok {
 			continue
 		}
-		pre, err := h.preflight(r)
+		pre, err := h.preflight(e, r)
 		if err != nil {
 			return nil, err
 		}
@@ -118,8 +131,8 @@ func preflightPatch(resolved []resolvedOp) ([]preflightResult, error) {
 }
 
 // preflightAdd validates an add operation: the target must not already exist.
-func preflightAdd(r resolvedOp) (preflightResult, error) {
-	if _, err := os.Stat(r.resolved); err == nil {
+func (e *Engine) preflightAdd(r resolvedOp) (preflightResult, error) {
+	if _, err := e.rootedStat(r.resolved); err == nil {
 		return preflightResult{}, fmt.Errorf("add %s: file already exists", r.op.path)
 	} else if !os.IsNotExist(err) {
 		return preflightResult{}, fmt.Errorf("add %s: %w", r.op.path, err)
@@ -129,11 +142,11 @@ func preflightAdd(r resolvedOp) (preflightResult, error) {
 
 // preflightDelete validates a delete operation and captures the file's
 // current content for the undo snapshot.
-func preflightDelete(r resolvedOp) (preflightResult, error) {
-	if _, err := os.Stat(r.resolved); os.IsNotExist(err) {
+func (e *Engine) preflightDelete(r resolvedOp) (preflightResult, error) {
+	if _, err := e.rootedStat(r.resolved); os.IsNotExist(err) {
 		return preflightResult{}, fmt.Errorf("delete %s: file does not exist", r.op.path)
 	}
-	data, err := os.ReadFile(r.resolved)
+	data, _, err := e.rootedReadFile(r.resolved, maxFileSize)
 	if err != nil {
 		return preflightResult{}, fmt.Errorf("delete %s: %w", r.op.path, err)
 	}
@@ -142,8 +155,8 @@ func preflightDelete(r resolvedOp) (preflightResult, error) {
 
 // preflightUpdate validates an update operation, deriving the new content
 // from the chunks against the file's current content.
-func preflightUpdate(r resolvedOp) (preflightResult, error) {
-	data, err := os.ReadFile(r.resolved)
+func (e *Engine) preflightUpdate(r resolvedOp) (preflightResult, error) {
+	data, _, err := e.rootedReadFile(r.resolved, maxFileSize)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return preflightResult{}, fmt.Errorf("update %s: file not found", r.op.path)
@@ -228,15 +241,10 @@ func (e *Engine) applyPatchOps(resolved []resolvedOp, preflights []preflightResu
 // applyAdd writes a new file, creating parent directories and recording an
 // undo snapshot of any pre-existing content.
 func (e *Engine) applyAdd(r resolvedOp, pre preflightResult) (applyOpResult, error) {
-	if err := verifyPreflightState(r.resolved, nil, false); err != nil {
+	if err := e.verifyPreflightState(r.resolved, nil, false); err != nil {
 		return applyOpResult{}, fmt.Errorf("add %s: %w", r.op.path, err)
 	}
-	dir := filepath.Dir(r.resolved)
-	if err := os.MkdirAll(dir, 0o750); err != nil {
-		return applyOpResult{}, fmt.Errorf("add %s: mkdir: %w", r.op.path, err)
-	}
-	preContent, _ := os.ReadFile(r.resolved)
-	id, err := e.snapshotAndWrite(r.resolved, r.op.path, "apply_patch", preContent, pre.newContent)
+	id, err := e.snapshotAndWrite(r.resolved, r.op.path, "apply_patch", nil, pre.newContent)
 	if err != nil {
 		return applyOpResult{}, fmt.Errorf("add %s: %w", r.op.path, err)
 	}
@@ -245,16 +253,21 @@ func (e *Engine) applyAdd(r resolvedOp, pre preflightResult) (applyOpResult, err
 
 // applyDelete removes a file after recording an undo snapshot.
 func (e *Engine) applyDelete(r resolvedOp, pre preflightResult) (applyOpResult, error) {
-	if err := verifyPreflightState(r.resolved, []byte(pre.oldContent), true); err != nil {
+	if err := e.verifyPreflightState(r.resolved, []byte(pre.oldContent), true); err != nil {
 		return applyOpResult{}, fmt.Errorf("delete %s: %w", r.op.path, err)
 	}
-	preContent, _ := os.ReadFile(r.resolved)
-	id, err := e.recordSnapshotForMutation(r.resolved, r.op.path, "apply_patch", preContent)
+	preContent := []byte(pre.oldContent)
+	id, err := e.recordSnapshotForMutation(r.resolved, r.op.path, "apply_patch", snapshotTransition{preContent: preContent})
 	if err != nil {
 		return applyOpResult{}, fmt.Errorf("delete %s: %w", r.op.path, err)
 	}
-	if err := os.Remove(r.resolved); err != nil {
+	if err := e.removeFileDurable(r.resolved); err != nil {
+		_ = e.markSnapshotState(id, historyStateUncertain)
 		return applyOpResult{}, fmt.Errorf("delete %s: %w", r.op.path, err)
+	}
+	if err := e.markSnapshotState(id, historyStateCommitted); err != nil {
+		_ = e.markSnapshotState(id, historyStateUncertain)
+		return applyOpResult{}, fmt.Errorf("delete %s committed but history state is uncertain: %w", r.op.path, err)
 	}
 	return applyOpResult{summary: fmt.Sprintf("deleted %s", r.op.path), undoID: id}, nil
 }
@@ -265,7 +278,7 @@ func (e *Engine) applyUpdate(r resolvedOp, pre preflightResult) (applyOpResult, 
 	if err := e.tracker.checkStale(r.resolved); err != nil {
 		return applyOpResult{}, fmt.Errorf("update %s: %w", r.op.path, err)
 	}
-	if err := verifyPreflightState(r.resolved, []byte(pre.oldContent), true); err != nil {
+	if err := e.verifyPreflightState(r.resolved, []byte(pre.oldContent), true); err != nil {
 		return applyOpResult{}, fmt.Errorf("update %s: %w", r.op.path, err)
 	}
 	id, err := e.snapshotAndWrite(r.resolved, r.op.path, "apply_patch", []byte(pre.oldContent), pre.newContent)

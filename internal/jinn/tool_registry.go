@@ -54,10 +54,29 @@ func lookupToolDescriptor(name string) (toolDescriptor, bool) {
 	return toolDescriptor{}, false
 }
 
+func (e *Engine) lookupToolDescriptor(name string) (toolDescriptor, bool) {
+	descriptor, ok := lookupToolDescriptor(name)
+	if ok && descriptor.routeRisk == toolRouteRiskShell && e.shellMode == ShellModeDisabled {
+		return toolDescriptor{}, false
+	}
+	return descriptor, ok
+}
+
 func registeredToolNames() []string {
 	names := make([]string, len(toolCatalog))
 	for i, descriptor := range toolCatalog {
 		names[i] = descriptor.name
+	}
+	return names
+}
+
+func (e *Engine) registeredToolNames() []string {
+	names := make([]string, 0, len(toolCatalog))
+	for _, descriptor := range toolCatalog {
+		if descriptor.routeRisk == toolRouteRiskShell && e.shellMode == ShellModeDisabled {
+			continue
+		}
+		names = append(names, descriptor.name)
 	}
 	return names
 }
@@ -68,6 +87,14 @@ func registeredToolFeatures() map[string][]string {
 		if descriptor.features != nil {
 			features[descriptor.name] = cloneStrings(descriptor.features)
 		}
+	}
+	return features
+}
+
+func (e *Engine) registeredToolFeatures() map[string][]string {
+	features := registeredToolFeatures()
+	if e.shellMode == ShellModeDisabled {
+		delete(features, "run_shell")
 	}
 	return features
 }

@@ -39,8 +39,8 @@ func writeLSPFile(t *testing.T, dir, name string) {
 
 func TestLSPDiagnosticsGoUsesGoplsCheckForValidFile(t *testing.T) {
 	t.Parallel()
-	if _, err := exec.LookPath("gopls"); err != nil {
-		t.Skip("gopls not installed")
+	if _, err := findSystemExecutable("gopls"); err != nil {
+		t.Skip("gopls not installed in launch-time PATH")
 	}
 	wd, err := os.Getwd()
 	if err != nil {
@@ -120,13 +120,13 @@ func TestLSP_Definition_Succeeds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// mock replies with file:///fake/src.go, line 9 (0-based) → 10, char 0 → 1
+	// mock replies inside the workspace, line 9 (0-based) → 10, char 0 → 1
 	// After LSP enhancements: definition returns relative paths + header
 	if !strings.Contains(out, "1 location(s) found") {
 		t.Errorf("expected header in output, got: %q", out)
 	}
-	if !strings.Contains(out, "/fake/src.go:10:1") {
-		t.Errorf("expected position /fake/src.go:10:1 in output, got: %q", out)
+	if !strings.Contains(out, "src.go:10:1") {
+		t.Errorf("expected position src.go:10:1 in output, got: %q", out)
 	}
 }
 
@@ -144,13 +144,13 @@ func TestLSP_References_Returns3Locations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// mock returns 3 locations: file:///fake/ref0.go, ref1.go, ref2.go
+	// mock returns 3 workspace-local locations: ref0.go, ref1.go, ref2.go
 	// After LSP enhancements: references returns header + relative paths
 	if !strings.Contains(out, "3 location(s) found") {
 		t.Errorf("expected header in output, got: %q", out)
 	}
 	for i := 0; i < 3; i++ {
-		want := fmt.Sprintf("/fake/ref%d.go", i)
+		want := fmt.Sprintf("ref%d.go", i)
 		if !strings.Contains(out, want) {
 			t.Errorf("expected %q in output, got: %q", want, out)
 		}
@@ -540,8 +540,8 @@ func TestGoASTSymbols_ShallowOutline(t *testing.T) {
 
 func TestLSPGoSymbolsFallbackWithoutGopls(t *testing.T) {
 	dir := t.TempDir()
-	e := New(dir, "dev")
 	t.Setenv("PATH", "")
+	e := New(dir, "dev")
 	writeTestFile(t, dir, "src.go", strings.Join([]string{
 		"package main",
 		"type Config struct{}",
@@ -861,7 +861,8 @@ func TestLspServerForExt_KnownExtensions(t *testing.T) {
 	for _, ext := range knownExts {
 		t.Run(ext, func(t *testing.T) {
 			t.Parallel()
-			_, err := lspServerForExt(ext)
+			e, _ := testEngine(t)
+			_, err := e.lspServerForExt(ext)
 			if err == nil {
 				return // binary present — great
 			}
@@ -879,7 +880,8 @@ func TestLspServerForExt_KnownExtensions(t *testing.T) {
 
 func TestLspServerForExt_UnknownExtension(t *testing.T) {
 	t.Parallel()
-	_, err := lspServerForExt(".unknownxyz")
+	e, _ := testEngine(t)
+	_, err := e.lspServerForExt(".unknownxyz")
 	if err == nil {
 		t.Fatal("expected error for unknown extension, got nil")
 	}
@@ -932,5 +934,25 @@ func TestLSP_DidOpenSizeGuard(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "too large") {
 		t.Errorf("expected 'too large' in error message, got: %q", err.Error())
+	}
+}
+
+func TestLSPFileURIsEscapeAndRejectAuthority(t *testing.T) {
+	path := "/work/a b#c%.go"
+	uri := pathToURI(path)
+	if !strings.Contains(uri, "a%20b%23c%25.go") {
+		t.Fatalf("escaped URI = %q", uri)
+	}
+	got, err := fileURIPath(uri)
+	if err != nil || got != path {
+		t.Fatalf("round trip = %q, %v", got, err)
+	}
+	if _, authorityErr := fileURIPath("file://host/work/a.go"); authorityErr == nil {
+		t.Fatal("authority accepted")
+	}
+	loc := lspLocation{URI: "file:///outside.go"}
+	_, err = renderLocationsWithReader([]lspLocation{loc}, "/work", func(string) (string, error) { return "", errors.New("outside") }, 0, func(string) []string { return nil })
+	if err == nil {
+		t.Fatal("external URI rendered")
 	}
 }

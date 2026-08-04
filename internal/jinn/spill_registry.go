@@ -78,18 +78,41 @@ func registerShellSpill(path string) {
 
 		kept := make([]spillRegistryRecord, 0, len(reg.Records)+1)
 		for _, existing := range reg.Records {
-			if existing.Path == rec.Path || now-existing.CreatedAt > int64(spillRegistryMaxAge.Seconds()) {
+			if existing.Path == rec.Path {
+				continue
+			}
+			if now-existing.CreatedAt > int64(spillRegistryMaxAge.Seconds()) {
+				deleteRecordedSpill(existing)
 				continue
 			}
 			kept = append(kept, existing)
 		}
 		kept = append(kept, rec)
 		if len(kept) > spillRegistryMaxEntries {
+			for _, expired := range kept[:len(kept)-spillRegistryMaxEntries] {
+				deleteRecordedSpill(expired)
+			}
 			kept = kept[len(kept)-spillRegistryMaxEntries:]
 		}
 		reg.Records = kept
 		return atomicWriteJSON(regPath, reg)
 	})
+}
+
+func deleteRecordedSpill(record spillRegistryRecord) {
+	clean := filepath.Clean(record.Path)
+	if filepath.Dir(clean) != filepath.Clean(os.TempDir()) || !hasShellSpillName(clean) {
+		return
+	}
+	info, err := os.Lstat(clean)
+	if err != nil || !info.Mode().IsRegular() {
+		return
+	}
+	identity, ok := spillFileIdentity(info)
+	if !ok || identity.dev != record.Dev || identity.ino != record.Ino {
+		return
+	}
+	_ = os.Remove(clean)
 }
 
 func readSpillRegistry(path string) spillRegistryFile {
@@ -113,6 +136,10 @@ func isRegisteredShellSpill(path string) bool {
 	if err != nil || !info.Mode().IsRegular() {
 		return false
 	}
+	return isRegisteredShellSpillFile(clean, info)
+}
+
+func isRegisteredShellSpillFile(clean string, info os.FileInfo) bool {
 	ident, ok := spillFileIdentity(info)
 	if !ok {
 		return false

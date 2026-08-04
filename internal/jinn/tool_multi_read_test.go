@@ -182,8 +182,8 @@ func TestMultiReadCap(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for >20 files")
 	}
-	if !strings.Contains(err.Error(), "too many files") {
-		t.Errorf("expected 'too many files', got: %v", err)
+	if !strings.Contains(err.Error(), "at most 20") {
+		t.Errorf("expected schema maximum, got: %v", err)
 	}
 	var sErr *ErrWithSuggestion
 	if !errors.As(err, &sErr) {
@@ -192,7 +192,7 @@ func TestMultiReadCap(t *testing.T) {
 	if sErr.Code != ErrCodeInvalidArgs {
 		t.Errorf("expected error_code %q, got %q", ErrCodeInvalidArgs, sErr.Code)
 	}
-	wantSuggestion := `valid shape: {"files":[{"path":"..."}]} (max 20 files); split into batches`
+	wantSuggestion := `use list_tools with include_schema=true to inspect the accepted arguments`
 	if sErr.Suggestion != wantSuggestion {
 		t.Errorf("unexpected suggestion: %q", sErr.Suggestion)
 	}
@@ -324,8 +324,8 @@ func TestMultiReadEmptyFilesArray(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for empty files array")
 	}
-	if !strings.Contains(err.Error(), "non-empty array") {
-		t.Errorf("expected 'non-empty array' in error, got: %v", err)
+	if !strings.Contains(err.Error(), "at least 1") {
+		t.Errorf("expected schema minimum, got: %v", err)
 	}
 	var sErr *ErrWithSuggestion
 	if !errors.As(err, &sErr) {

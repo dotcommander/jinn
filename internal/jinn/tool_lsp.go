@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -55,8 +54,8 @@ func supportedLSPExts() string {
 
 // lspServerForExt returns the LSP server argv for ext.
 // Returns ErrWithSuggestion when the extension is unknown or the binary is absent.
-func lspServerForExt(ext string) ([]string, error) {
-	e, ok := lspExtTable[ext]
+func (e *Engine) lspServerForExt(ext string) ([]string, error) {
+	entry, ok := lspExtTable[ext]
 	if !ok {
 		return nil, &ErrWithSuggestion{
 			Err:        fmt.Errorf("no LSP server known for extension %s", ext),
@@ -64,20 +63,17 @@ func lspServerForExt(ext string) ([]string, error) {
 			Code:       ErrCodeLspUnavailable,
 		}
 	}
-	if _, err := exec.LookPath(e.argv[0]); err != nil {
+	resolved, err := findExecutableInPath(e.execPath, entry.argv[0])
+	if err != nil {
 		return nil, &ErrWithSuggestion{
-			Err:        fmt.Errorf("LSP server %q not found on PATH", e.argv[0]),
-			Suggestion: fmt.Sprintf("install with: %s", e.install),
+			Err:        fmt.Errorf("LSP server %q not found on PATH", entry.argv[0]),
+			Suggestion: fmt.Sprintf("install with: %s", entry.install),
 			Code:       ErrCodeLspUnavailable,
 		}
 	}
-	return e.argv, nil
-}
-
-// pathToURI converts an absolute path to a file:// URI.
-// Note: Windows drive-letter paths (C:\...) are not handled; jinn targets unix-first.
-func pathToURI(abs string) string {
-	return "file://" + abs
+	argv := append([]string(nil), entry.argv...)
+	argv[0] = resolved
+	return argv, nil
 }
 
 // langIDForExt returns the LSP language identifier for a file extension.
@@ -107,7 +103,7 @@ type lspRequest struct {
 
 // parseLSPArgs validates the raw args, resolves the path, picks the LSP server,
 // and auto-detects the column from a symbol when needed.
-func (e *Engine) parseLSPArgs(args map[string]interface{}) (lspRequest, error) {
+func (e *Engine) parseLSPArgs(args map[string]interface{}, resolveBinary ...bool) (lspRequest, error) {
 	action, _ := args["action"].(string)
 	path, _ := args["path"].(string)
 	line := intArg(args, "line", 0)
@@ -135,14 +131,6 @@ func (e *Engine) parseLSPArgs(args map[string]interface{}) (lspRequest, error) {
 	}
 
 	ext := strings.ToLower(filepath.Ext(absPath))
-	argv, err := lspServerForExt(ext)
-	if err != nil {
-		if !(action == "symbols" && ext == ".go") {
-			return lspRequest{}, err
-		}
-		argv = nil
-	}
-
 	// rename requires new_name
 	if action == "rename" && newName == "" {
 		return lspRequest{}, &ErrWithSuggestion{
@@ -152,9 +140,26 @@ func (e *Engine) parseLSPArgs(args map[string]interface{}) (lspRequest, error) {
 		}
 	}
 
-	char, err = resolveLSPPosition(action, absPath, line, char, symbol)
+	char, err = e.resolveLSPPosition(action, absPath, line, char, symbol)
 	if err != nil {
 		return lspRequest{}, err
+	}
+
+	entry, known := lspExtTable[ext]
+	if !known {
+		_, serverErr := e.lspServerForExt(ext)
+		return lspRequest{}, serverErr
+	}
+	argv := append([]string(nil), entry.argv...)
+	shouldResolve := len(resolveBinary) == 0 || resolveBinary[0]
+	if shouldResolve {
+		argv, err = e.lspServerForExt(ext)
+		if err != nil {
+			if action != "symbols" || ext != ".go" {
+				return lspRequest{}, err
+			}
+			argv = nil
+		}
 	}
 
 	return lspRequest{
@@ -173,7 +178,7 @@ func (e *Engine) parseLSPArgs(args map[string]interface{}) (lspRequest, error) {
 // present for actions that require one, auto-detecting the column from a symbol
 // when character is unset. Whole-file actions (symbols, diagnostics) need no
 // position and pass char through unchanged.
-func resolveLSPPosition(action, absPath string, line, char int, symbol string) (int, error) {
+func (e *Engine) resolveLSPPosition(action, absPath string, line, char int, symbol string) (int, error) {
 	needsPosition := action != "symbols" && action != "diagnostics"
 	if !needsPosition {
 		return char, nil
@@ -194,7 +199,7 @@ func resolveLSPPosition(action, absPath string, line, char int, symbol string) (
 
 	// symbol → character auto-detect: read the file line, find the symbol
 	if char <= 0 && symbol != "" {
-		col, err := findSymbolColumn(absPath, line-1, symbol) // line is 1-based, findSymbolColumn wants 0-based
+		col, err := e.findSymbolColumn(absPath, line-1, symbol) // line is 1-based, helper wants 0-based
 		if err != nil {
 			return 0, &ErrWithSuggestion{
 				Err:        fmt.Errorf("lsp_query: %w", err),
@@ -220,9 +225,9 @@ func resolveLSPPosition(action, absPath string, line, char int, symbol string) (
 func (e *Engine) dispatchLSPAction(client *lspClient, req lspRequest) (string, error) {
 	switch req.action {
 	case "definition":
-		return client.definition(req.absPath, req.line, req.char, e.workDir, e.checkPath)
+		return client.definition(req.absPath, req.line, req.char, e)
 	case "references":
-		return client.references(req.absPath, req.line, req.char, e.workDir, e.checkPath)
+		return client.references(req.absPath, req.line, req.char, e)
 	case "hover":
 		return client.hover(req.absPath, req.line, req.char)
 	case "symbols":
@@ -230,7 +235,7 @@ func (e *Engine) dispatchLSPAction(client *lspClient, req lspRequest) (string, e
 	case "diagnostics":
 		return client.diagnostics(req.absPath)
 	case "rename":
-		return client.rename(req.absPath, req.line, req.char, req.newName, e.workDir)
+		return client.rename(req.absPath, req.line, req.char, req.newName, e.workDir, e.checkPath)
 	default:
 		return "", &ErrWithSuggestion{
 			Err:        fmt.Errorf("unknown lsp action: %s", req.action),
@@ -248,7 +253,11 @@ func (e *Engine) runLSPSession(client *lspClient, req lspRequest) (string, error
 	if err := client.handshake(e.workDir); err != nil {
 		return "", err
 	}
-	if err := client.didOpen(req.absPath, langIDForExt(req.ext)); err != nil {
+	data, _, err := e.readRegularFile(req.absPath, maxLSPFileSize)
+	if err != nil {
+		return "", fmt.Errorf("lsp didOpen read: %w", err)
+	}
+	if err := client.didOpenText(req.absPath, langIDForExt(req.ext), data); err != nil {
 		return "", err
 	}
 	// Symbol-only position actions: resolve line+char from document symbols now
@@ -275,7 +284,7 @@ func (r lspRequest) needsSymbolResolution() bool {
 
 // lspQueryWithLauncher is the testable variant — tests inject a fake launcher.
 func (e *Engine) lspQueryWithLauncher(ctx context.Context, args map[string]interface{}, launcher lspLauncher) (string, error) {
-	req, err := e.parseLSPArgs(args)
+	req, err := e.parseLSPArgs(args, launcher == nil)
 	if err != nil {
 		return "", err
 	}
@@ -297,6 +306,12 @@ func (e *Engine) lspQueryWithLauncher(ctx context.Context, args map[string]inter
 	}
 	done := make(chan result, 1)
 
+	if launcher == nil {
+		env := e.subprocessEnv()
+		launcher = func(ctx context.Context, argv []string) (lspProc, error) {
+			return launchLSP(ctx, argv, env)
+		}
+	}
 	client := newLSPClient(launcher)
 	if err := client.start(ctx, req.argv); err != nil {
 		return "", err
@@ -308,7 +323,7 @@ func (e *Engine) lspQueryWithLauncher(ctx context.Context, args map[string]inter
 		// ordering relative to the select/timeout consumer.
 		defer func() {
 			client.didClose(req.absPath) //nolint:errcheck
-			client.shutdown()
+			client.shutdownBounded()
 			client.stop()
 		}()
 

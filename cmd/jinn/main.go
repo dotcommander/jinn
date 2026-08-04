@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/dotcommander/jinn/internal/jinn"
@@ -15,12 +16,13 @@ import (
 
 var version = "dev"
 
-const helpText = `Usage: jinn [--schema | --inspect [addr] | --mcp | --version | --help]
+const helpText = `Usage: jinn [--shell-mode=disabled|sandboxed|unsafe] [--schema | --inspect [addr] | --mcp | --version | --help]
 
 Sandboxed tool executor for AI coding agents.
 Reads a JSON tool request from stdin, writes a JSON response to stdout.
 
 Flags:
+	--shell-mode  Shell execution policy: disabled, sandboxed, or unsafe (default: disabled)
   --schema   Print tool definitions (OpenAI function-calling format)
   --inspect  Start a local browser inspector UI (default: 127.0.0.1:8787)
   --mcp      Start MCP 2026-07-28 stdio broker with one jinn_route tool
@@ -81,14 +83,18 @@ func writeResponse(resp jinn.Response) error {
 }
 
 func run(ctx context.Context) error {
-	if len(os.Args) > 1 {
-		handled, err := handleFlag(ctx, os.Args[1], os.Args[2:])
-		if handled || err != nil {
-			return err
+	mode, positional, err := parseShellModeArgs(os.Args[1:])
+	if err != nil {
+		return fail(jinn.Response{Error: err.Error(), ErrorCode: jinn.ErrCodeInvalidArgs})
+	}
+	if len(positional) > 0 {
+		handled, flagErr := handleFlag(ctx, positional[0], positional[1:], mode)
+		if handled || flagErr != nil {
+			return flagErr
 		}
 	}
 
-	if fi, err := os.Stdin.Stat(); err == nil && fi.Mode()&os.ModeCharDevice != 0 {
+	if fi, statErr := os.Stdin.Stat(); statErr == nil && fi.Mode()&os.ModeCharDevice != 0 {
 		fmt.Print(helpText)
 		return nil
 	}
@@ -101,7 +107,10 @@ func run(ctx context.Context) error {
 		return fail(jinn.Response{Error: fmt.Sprintf("getwd: %s", err)})
 	}
 
-	e := jinn.New(wd, version)
+	e, err := jinn.NewWithConfig(wd, jinn.EngineConfig{Version: version, ShellMode: mode})
+	if err != nil {
+		return fail(jinn.Response{Error: err.Error(), ErrorCode: jinn.ErrCodeInvalidArgs})
+	}
 	defer func() { _ = e.Close() }()
 
 	req, err := readRequest()
@@ -119,10 +128,10 @@ func run(ctx context.Context) error {
 	return writeResponse(successResponse(req, result, meta))
 }
 
-func handleFlag(ctx context.Context, flag string, args []string) (bool, error) {
+func handleFlag(ctx context.Context, flag string, args []string, mode jinn.ShellMode) (bool, error) {
 	switch flag {
 	case "--schema":
-		schema, err := jinn.LeanSchema()
+		schema, err := jinn.LeanSchemaForMode(mode)
 		if err != nil {
 			return true, fail(jinn.Response{Error: fmt.Sprintf("lean schema: %s", err)})
 		}
@@ -139,17 +148,44 @@ func handleFlag(ctx context.Context, flag string, args []string) (bool, error) {
 		if len(args) > 0 && args[0] != "" {
 			addr = args[0]
 		}
-		return true, serveInspector(ctx, addr, version)
+		return true, serveInspector(ctx, addr, version, mode)
 	case "--mcp":
-		return true, runMCP(ctx, os.Stdin, os.Stdout, version)
+		return true, runMCP(ctx, os.Stdin, os.Stdout, version, mode)
 	default:
 		return false, nil
 	}
 }
 
+func parseShellModeArgs(arguments []string) (jinn.ShellMode, []string, error) {
+	mode := jinn.ShellModeDisabled
+	positional := make([]string, 0, len(arguments))
+	for i := 0; i < len(arguments); i++ {
+		arg := arguments[i]
+		var value string
+		switch {
+		case strings.HasPrefix(arg, "--shell-mode="):
+			value = strings.TrimPrefix(arg, "--shell-mode=")
+		case arg == "--shell-mode":
+			if i+1 >= len(arguments) {
+				return "", nil, errors.New("--shell-mode requires a value")
+			}
+			i++
+			value = arguments[i]
+		default:
+			positional = append(positional, arg)
+			continue
+		}
+		parsed, err := jinn.ParseShellMode(value)
+		if err != nil {
+			return "", nil, err
+		}
+		mode = parsed
+	}
+	return mode, positional, nil
+}
+
 func readRequest() (jinn.Request, error) {
-	var req jinn.Request
-	decodeErr := json.NewDecoder(os.Stdin).Decode(&req)
+	req, decodeErr := jinn.DecodeOneRequest(os.Stdin, 16<<20)
 	if decodeErr == nil {
 		return req, nil
 	}
@@ -160,7 +196,7 @@ func readRequest() (jinn.Request, error) {
 }
 
 func attachRequestID(req *jinn.Request) {
-	if req.RequestID == "" {
+	if req.RequestID == "" || req.Tool != "memory" {
 		return
 	}
 	if req.Args == nil {

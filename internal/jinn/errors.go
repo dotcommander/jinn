@@ -22,6 +22,7 @@ const (
 	ErrCodeConflict           = "conflict"
 	ErrCodePlanInvalid        = "plan_invalid"
 	ErrCodePlanCoerceFailed   = "plan_coerce_failed"
+	ErrCodeResourceLimit      = "resource_limit"
 )
 
 // ErrWithSuggestion wraps an error with a user-facing suggestion and an

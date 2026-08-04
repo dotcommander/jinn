@@ -14,11 +14,13 @@
               "nodes": {
                 "type": "array",
                 "minItems": 1,
+                "maxItems": 64,
                 "items": {
                   "type": "object",
                   "properties": {
                     "id": {"type": "string"},
                     "commands": {
+                      "maxItems": 16,
                       "type": "array",
                       "minItems": 1,
                       "items": {
@@ -38,6 +40,7 @@
                     "mutates": {"type": "boolean"},
                     "force": {"type": "boolean"},
                     "edges": {
+                      "maxItems": 32,
                       "type": "array",
                       "items": {
                         "type": "object",
@@ -98,7 +101,7 @@
                 }
               },
               "cwd": {"type": "string"},
-              "max_depth": {"type": "integer"},
+              "max_depth": {"type": "integer", "minimum": 0, "maximum": 32},
               "force": {"type": "boolean"}
             },
             "required": ["root", "nodes"]
@@ -188,7 +191,8 @@
           "path": {"type": "string", "description": "file path to write"},
           "content": {"type": "string", "description": "file content"},
           "dry_run": {"type": "boolean", "description": "preview changes without writing (default: false)"},
-          "if_checksum": {"type": "string", "description": "SHA-256 hex digest from a previous read_file response (meta.sha256). When set, the write is rejected with error_code=stale_file if the file's current content no longer hashes to this digest — protects against lost updates when the file changed since you read it."}
+          "if_checksum": {"type": "string", "description": "Required when replacing an existing file. SHA-256 hex digest from read_file meta.sha256."},
+          "if_absent": {"type": "boolean", "description": "Required and true when creating a new file."}
         },
         "required": ["path", "content"]
       }
@@ -254,6 +258,7 @@
         "properties": {
           "patch": {"type": "string", "description": "Codex-style patch payload. Must start with '*** Begin Patch' and end with '*** End Patch'. Supports *** Add File:, *** Delete File:, and *** Update File: operations."},
           "if_checksums": {"type": "object", "description": "Optional map of patch target path to SHA-256 digest from read_file. Any mismatch rejects the patch before writes.", "additionalProperties": {"type": "string"}},
+          "if_absent": {"type": "boolean", "description": "Required and true when the patch adds files."},
           "dry_run": {"type": "boolean", "description": "Preview changes without writing (default: false)"}
         },
         "required": ["patch"]
@@ -307,6 +312,7 @@
           "depth": {"type": "integer", "description": "max depth (default: 3)"},
           "max_entries": {"type": "integer", "description": "Maximum number of entries to return (default: 500, cap: 10000). When exceeded, response includes truncated=true and total_count.", "default": 500},
           "changed_since": {"type": "number", "description": "Unix epoch seconds. Only list entries modified after this timestamp. 0 or absent = no filter.", "default": 0}
+          ,"changed_after": {"type": "string", "description": "RFC3339Nano timestamp. Only entries modified strictly after this instant are included."}
         }
       }
     }
@@ -315,7 +321,7 @@
     "type": "function",
     "function": {
       "name": "find_files",
-      "description": "Find files by glob pattern. Uses fd when available (respects .gitignore), falls back to POSIX find. Returns matching file paths relative to workdir. Default limit is 1000 results.",
+      "description": "Find files with a native glob walker. Hidden and sensitive paths are pruned; .gitignore is not interpreted. Returns workspace-relative paths and exactness metadata.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -387,6 +393,7 @@
           "action": {"type": "string", "enum": ["list", "preview", "restore", "clear"], "description": "Operation: list=show history, preview=diff snapshot vs current, restore=revert file, clear=delete all history for this workdir."},
           "id":     {"type": "string", "description": "Snapshot ID (prefix match). Required for preview and restore."},
           "if_checksum": {"type": "string", "description": "For restore, optional SHA-256 digest of the target's current bytes from read_file. A mismatch rejects the restore with error_code=stale_file."},
+          "if_absent": {"type": "boolean", "description": "For restore, required and true when recreating a missing target."},
           "limit":  {"type": "integer", "description": "Max entries to return for list (default: 50)."}
         },
         "required": ["action"]

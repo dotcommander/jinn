@@ -1,13 +1,17 @@
 package jinn
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"golang.org/x/sys/unix"
 )
 
 // atomicWriteJSON marshals v as indented JSON and atomically writes it to path
@@ -21,7 +25,7 @@ func atomicWriteJSON(path string, v any) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("mkdir: %w", err)
 	}
-	if err := atomicWriteBytes(path, data, 0o600); err != nil {
+	if err := atomicWriteBytes(path, data); err != nil {
 		return fmt.Errorf("atomic write: %w", err)
 	}
 	return nil
@@ -33,17 +37,104 @@ func atomicWriteJSON(path string, v any) error {
 func (e *Engine) atomicWriteFile(resolved, content string) error {
 	// Capture existing file permissions before overwriting.
 	perm := os.FileMode(0644)
-	if info, err := os.Stat(resolved); err == nil {
+	rel, relErr := e.rootRelative(resolved)
+	if relErr != nil {
+		return relErr
+	}
+	if info, statErr := e.root.Stat(rel); statErr == nil {
 		perm = info.Mode().Perm()
 	}
-
-	if err := atomicWriteBytes(resolved, []byte(content), perm); err != nil {
+	parent := filepath.Dir(rel)
+	if mkdirErr := e.root.MkdirAll(parent, 0o750); mkdirErr != nil {
+		return mkdirErr
+	}
+	var nonce [8]byte
+	if _, randErr := rand.Read(nonce[:]); randErr != nil {
+		return randErr
+	}
+	tempName := filepath.Join(parent, ".jinn-"+hex.EncodeToString(nonce[:]))
+	temp, err := e.root.OpenFile(tempName, os.O_CREATE|os.O_EXCL|os.O_WRONLY, perm)
+	if err != nil {
 		return err
+	}
+	committed := false
+	defer func() {
+		_ = temp.Close()
+		if !committed {
+			_ = e.root.Remove(tempName)
+		}
+	}()
+	if _, writeErr := temp.Write([]byte(content)); writeErr != nil {
+		return writeErr
+	}
+	if syncErr := temp.Sync(); syncErr != nil {
+		return syncErr
+	}
+	if closeErr := temp.Close(); closeErr != nil {
+		return closeErr
+	}
+	if renameErr := e.root.Rename(tempName, rel); renameErr != nil {
+		return renameErr
+	}
+	committed = true
+	dir, err := e.root.Open(parent)
+	if err != nil {
+		return fmt.Errorf("open parent directory for durability: %w", err)
+	}
+	if syncErr := dir.Sync(); syncErr != nil {
+		_ = dir.Close()
+		return fmt.Errorf("sync parent directory for durability: %w", syncErr)
+	}
+	if closeErr := dir.Close(); closeErr != nil {
+		return fmt.Errorf("close parent directory after durability sync: %w", closeErr)
 	}
 
 	// Record the post-write mtime so the staleness tracker stays consistent.
-	if info, err := os.Stat(resolved); err == nil {
+	if info, err := e.root.Stat(rel); err == nil {
 		e.tracker.record(resolved, info.ModTime(), info.Size())
+	}
+	return nil
+}
+
+// removeFileDurable unlinks one rooted file then fsyncs its exact parent so a
+// successful delete has the same crash-durability contract as atomic writes.
+func (e *Engine) removeFileDurable(resolved string) error {
+	rel, err := e.rootRelative(resolved)
+	if err != nil {
+		return err
+	}
+	parent := filepath.Dir(rel)
+	dir, err := e.root.Open(parent)
+	if err != nil {
+		return fmt.Errorf("open parent directory for delete durability: %w", err)
+	}
+	defer func() { _ = dir.Close() }()
+	if e.removeDurabilityHook != nil {
+		if hookErr := e.removeDurabilityHook("open"); hookErr != nil {
+			return hookErr
+		}
+	}
+	if unlinkErr := unix.Unlinkat(int(dir.Fd()), filepath.Base(rel), 0); unlinkErr != nil {
+		return unlinkErr
+	}
+	if e.removeDurabilityHook != nil {
+		if err := e.removeDurabilityHook("sync"); err != nil {
+			_ = dir.Close()
+			return err
+		}
+	}
+	if err := dir.Sync(); err != nil {
+		_ = dir.Close()
+		return fmt.Errorf("sync parent directory after delete: %w", err)
+	}
+	if e.removeDurabilityHook != nil {
+		if err := e.removeDurabilityHook("close"); err != nil {
+			_ = dir.Close()
+			return err
+		}
+	}
+	if err := dir.Close(); err != nil {
+		return fmt.Errorf("close parent directory after delete sync: %w", err)
 	}
 	return nil
 }
@@ -52,11 +143,22 @@ func (e *Engine) atomicWriteFile(resolved, content string) error {
 // Combining them keeps the invariant structural: no mutating write skips
 // history. Returns the undo id ("" when the snapshot was skipped).
 func (e *Engine) snapshotAndWrite(resolved, displayPath, op string, preContent []byte, content string) (string, error) {
-	id, err := e.recordSnapshotForMutation(resolved, displayPath, op, preContent)
+	id, err := e.recordSnapshotForMutation(resolved, displayPath, op, snapshotTransition{preContent: preContent, expectedAfter: []byte(content), expectedExists: true})
 	if err != nil {
 		return "", err
 	}
-	return id, e.atomicWriteFile(resolved, content)
+	if e.snapshotPreparedHook != nil {
+		e.snapshotPreparedHook()
+	}
+	if err := e.atomicWriteFile(resolved, content); err != nil {
+		_ = e.markSnapshotState(id, historyStateUncertain)
+		return id, err
+	}
+	if err := e.markSnapshotState(id, historyStateCommitted); err != nil {
+		_ = e.markSnapshotState(id, historyStateUncertain)
+		return id, fmt.Errorf("mutation committed but history state is uncertain: %w", err)
+	}
+	return id, nil
 }
 
 // verifyIfChecksum enforces the optional if_checksum write precondition:
@@ -97,8 +199,8 @@ func verifyChecksum(want, path string, current []byte, exists bool) error {
 // verifyPreflightState rejects a write when the target changed after phase-1
 // validation. This closes the in-process preflight-to-write window even when
 // the caller did not supply a cross-call checksum.
-func verifyPreflightState(path string, expected []byte, expectedExists bool) error {
-	current, err := os.ReadFile(path)
+func (e *Engine) verifyPreflightState(path string, expected []byte, expectedExists bool) error {
+	current, _, err := e.readRegularFile(path, maxFileSize)
 	exists := err == nil
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("re-read before write: %w", err)
@@ -136,9 +238,23 @@ func (e *Engine) writeFileWithPreCommitHook(args map[string]interface{}, beforeC
 	path, _ := args["path"].(string)
 	content, _ := args["content"].(string)
 
-	resolved, err := e.checkPath(path)
+	resolved, err := e.checkPathForMutation(path)
 	if err != nil {
 		return "", err
+	}
+	var result string
+	err = e.withTargetLocks([]string{resolved}, func() error {
+		var innerErr error
+		result, innerErr = e.writeFileLocked(args, path, content, resolved, beforeCommit)
+		return innerErr
+	})
+	return result, err
+}
+
+//nolint:gocyclo // preflight, dry-run, assertion, and commit branches must share one target lock.
+func (e *Engine) writeFileLocked(args map[string]interface{}, path, content, resolved string, beforeCommit func()) (string, error) {
+	if strArg(args, "if_checksum") != "" && boolArg(args, "if_absent") {
+		return "", &ErrWithSuggestion{Err: errors.New("if_checksum and if_absent:true are mutually exclusive"), Suggestion: "use if_checksum for a replacement or if_absent:true for a creation", Code: ErrCodeInvalidArgs}
 	}
 	if staleErr := e.tracker.checkStale(resolved); staleErr != nil {
 		return "", staleErr
@@ -147,8 +263,11 @@ func (e *Engine) writeFileWithPreCommitHook(args map[string]interface{}, beforeC
 	// Read current state once: the if_checksum precondition, the dry-run
 	// diff, and the undo snapshot all reuse these bytes. nil preContent =
 	// file did not exist or was unreadable (skip snapshot, don't block write).
-	preContent, readErr := os.ReadFile(resolved)
+	preContent, _, readErr := e.readRegularFile(resolved, maxFileSize)
 	exists := readErr == nil
+	if readErr != nil && !os.IsNotExist(readErr) {
+		return "", fmt.Errorf("read current target: %w", readErr)
+	}
 	if readErr != nil {
 		preContent = nil
 	}
@@ -162,21 +281,22 @@ func (e *Engine) writeFileWithPreCommitHook(args map[string]interface{}, beforeC
 		}
 		return unifiedDiff(string(preContent), content, path), nil
 	}
+	if e.requireMutationPreconditions {
+		if exists && strArg(args, "if_checksum") == "" {
+			return "", &ErrWithSuggestion{Err: fmt.Errorf("if_checksum is required to replace existing file %s", path), Suggestion: "read the file with include_checksum=true and retry with that digest", Code: ErrCodeInvalidArgs}
+		}
+		if !exists && !boolArg(args, "if_absent") {
+			return "", &ErrWithSuggestion{Err: fmt.Errorf("if_absent:true is required to create %s", path), Suggestion: "set if_absent:true after confirming the target should not exist", Code: ErrCodeInvalidArgs}
+		}
+	}
 
 	if beforeCommit != nil {
 		beforeCommit()
 	}
-	if err := verifyPreflightState(resolved, preContent, exists); err != nil {
+	if err := e.verifyPreflightState(resolved, preContent, exists); err != nil {
 		return "", err
 	}
-	if _, snapshotErr := e.recordSnapshotForMutation(resolved, path, "write_file", preContent); snapshotErr != nil {
-		return "", snapshotErr
-	}
-
-	if err := os.MkdirAll(filepath.Dir(resolved), 0o750); err != nil {
-		return "", fmt.Errorf("mkdir: %w", err)
-	}
-	if err := e.atomicWriteFile(resolved, content); err != nil {
+	if _, err := e.snapshotAndWrite(resolved, path, "write_file", preContent, content); err != nil {
 		return "", err
 	}
 	return fmt.Sprintf("wrote %d bytes to %s", len(content), path), nil

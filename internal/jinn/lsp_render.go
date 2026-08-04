@@ -45,14 +45,34 @@ func nonEmptyURILocations(locs []lspLocation) []lspLocation {
 	return out
 }
 
-// renderLocations formats a list of LSP locations as "file:line:col" headers with
-// surrounding source context (contextRadius lines on each side).
-func renderLocations(locs []lspLocation, workDir string, pathOK func(string) (string, error), contextRadius int) string {
-	fileCache := make(map[string][]string)
+func renderLocationsRooted(locs []lspLocation, engine *Engine, contextRadius int) (string, error) {
+	cache := make(map[string][]string)
+	return renderLocationsWithReader(locs, engine.workDir, engine.checkPath, contextRadius, func(path string) []string {
+		if lines, ok := cache[path]; ok {
+			return lines
+		}
+		data, _, err := engine.readRegularFile(path, maxLSPFileSize)
+		if err != nil {
+			return nil
+		}
+		lines := strings.Split(string(data), "\n")
+		cache[path] = lines
+		return lines
+	})
+}
+
+func renderLocationsWithReader(locs []lspLocation, workDir string, pathOK func(string) (string, error), contextRadius int, readLines func(string) []string) (string, error) {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "%d location(s) found:\n\n", len(locs))
 	for _, loc := range locs {
-		path := strings.TrimPrefix(loc.URI, "file://")
+		path, uriErr := fileURIPath(loc.URI)
+		if uriErr != nil {
+			return "", fmt.Errorf("lsp returned unsupported URI: %w", uriErr)
+		}
+		safePath, perr := pathOK(path)
+		if perr != nil {
+			return "", fmt.Errorf("lsp returned path outside workspace: %w", perr)
+		}
 		rel := path
 		if workDir != "" {
 			if r, err := filepath.Rel(workDir, path); err == nil {
@@ -60,17 +80,13 @@ func renderLocations(locs []lspLocation, workDir string, pathOK func(string) (st
 			}
 		}
 		fmt.Fprintf(&sb, "%s:%d:%d\n", rel, loc.Range.Start.Line+1, loc.Range.Start.Character+1)
-		safePath, perr := pathOK(path)
-		if perr != nil {
-			continue // server-supplied location escapes sandbox — skip context, keep the file:line header
-		}
-		lines := lspCachedLines(fileCache, safePath)
+		lines := readLines(safePath)
 		if ctx := lspFormatContext(lines, loc.Range.Start.Line, contextRadius); ctx != "" {
 			sb.WriteString(ctx)
 			sb.WriteByte('\n')
 		}
 	}
-	return strings.TrimRight(sb.String(), "\n")
+	return strings.TrimRight(sb.String(), "\n"), nil
 }
 
 // formatSymbolTree renders symbols as "{indent}Kind Name (line N)" with

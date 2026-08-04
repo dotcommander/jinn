@@ -7,6 +7,9 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -34,13 +37,13 @@ import (
 //	    like XDG_CONFIG_HOME, XDG_CACHE_HOME, XDG_DATA_HOME, XDG_RUNTIME_DIR are
 //	    omitted because they are not required for correctness and can leak host
 //	    paths / state into the subprocess. Omit unless a concrete need is proven.
-var shellAllowList = []string{"PATH", "HOME", "LANG", "LC_ALL", "TERM", "USER", "LOGNAME", "TMPDIR", "TZ", "SHELL"} // tunable: config candidate
+var shellAllowList = []string{"HOME", "GOMODCACHE", "LANG", "LC_ALL", "TERM", "TZ", "USER", "LOGNAME", "TMPDIR", "SHELL"}
 
 // subprocessEnv returns a minimal environment for subprocess tools, preventing
 // accidental leakage of host secrets (API keys, credentials). Extra values are
 // explicit per-tool overlays, such as a dedicated Go build cache.
 func subprocessEnv(extra map[string]string) []string {
-	env := make([]string, 0, len(shellAllowList)+len(extra))
+	env := []string{"PATH=/usr/bin:/bin:/usr/sbin:/sbin"}
 	for _, key := range shellAllowList {
 		if v, ok := os.LookupEnv(key); ok {
 			env = append(env, key+"="+v)
@@ -52,10 +55,18 @@ func subprocessEnv(extra map[string]string) []string {
 	return env
 }
 
-// shellEnv preserves the run_shell helper name for tests and callers while
-// sharing the same policy with LSP subprocesses.
-func shellEnv() []string {
-	return subprocessEnv(nil)
+func (e *Engine) subprocessEnv() []string {
+	env := subprocessEnv(nil)
+	if len(e.execPath) == 0 {
+		return env
+	}
+	for i, value := range env {
+		if strings.HasPrefix(value, "PATH=") {
+			env[i] = "PATH=" + strings.Join(e.execPath, string(os.PathListSeparator))
+			break
+		}
+	}
+	return env
 }
 
 // waitExitCode waits for c and returns its exit code: the process exit code for
@@ -74,13 +85,12 @@ func waitExitCode(c *exec.Cmd) int {
 const shellCanceledExitCode = 130
 
 type shellRunResult struct {
-	exitCode int
-	canceled bool
+	exitCode        int
+	canceled        bool
+	resourceLimited bool
 }
 
-// runWithTimeout starts c, kills its process group after timeout seconds or
-// parent cancellation, waits for cleanup, and returns the exit status.
-func runWithTimeout(ctx context.Context, c *exec.Cmd, timeout int) shellRunResult {
+func runWithTimeoutControl(ctx context.Context, c *exec.Cmd, timeout int, resourceLimit <-chan struct{}, interrupt func()) shellRunResult {
 	if err := ctx.Err(); err != nil {
 		return shellRunResult{exitCode: shellCanceledExitCode, canceled: true}
 	}
@@ -91,6 +101,10 @@ func runWithTimeout(ctx context.Context, c *exec.Cmd, timeout int) shellRunResul
 	killGroup := func() {
 		// Negative pgid targets the whole process group.
 		syscall.Kill(-pgid, syscall.SIGKILL) //nolint:errcheck
+		_ = c.Process.Kill()
+		if interrupt != nil {
+			interrupt()
+		}
 	}
 	done := make(chan int, 1)
 	go func() { done <- waitExitCode(c) }()
@@ -109,6 +123,20 @@ func runWithTimeout(ctx context.Context, c *exec.Cmd, timeout int) shellRunResul
 		killGroup()
 		<-done
 		return shellRunResult{exitCode: shellCanceledExitCode, canceled: true}
+	case <-resourceLimit:
+		killGroup()
+		<-done
+		return shellRunResult{exitCode: 1, resourceLimited: true}
+	}
+}
+
+func killCommandGroup(c *exec.Cmd, interrupt func()) {
+	if c.Process != nil {
+		_ = syscall.Kill(-c.Process.Pid, syscall.SIGKILL)
+		_ = c.Process.Kill()
+	}
+	if interrupt != nil {
+		interrupt()
 	}
 }
 
@@ -151,12 +179,13 @@ func shapeShellOutput(capture *shellOutputCapture, cmd string, exitCode, timeout
 // result envelope and meta map: the shaped/framed content, the process exit
 // code, and the separately-buffered stdout/stderr (stderr also feeds hint matching).
 type shellExecution struct {
-	content    string
-	exitCode   int
-	canceled   bool
-	stdout     string
-	stderr     string
-	durationMs int64
+	content         string
+	exitCode        int
+	canceled        bool
+	resourceLimited bool
+	stdout          string
+	stderr          string
+	durationMs      int64
 }
 
 // executeShellCommand sets up the bash subprocess (minimal env, process group,
@@ -164,7 +193,9 @@ type shellExecution struct {
 // the captured output. It covers the execution half of runShell; classification,
 // hint matching and meta assembly stay in the caller. ctx threads to the subprocess
 // via explicit cancellation handling; a nil ctx is a caller bug and panics.
-func executeShellCommand(ctx context.Context, cmd string, timeout int) shellExecution {
+//
+//nolint:funlen,gocyclo // process setup, capture wiring, deadline drainage, and cleanup share cancellation ownership.
+func (e *Engine) executeShellCommand(ctx context.Context, cmd string, timeout int) shellExecution {
 	// Always use a process group so SIGKILL reaches background processes too.
 	// Both timeout and parent cancellation must kill -pgid, not only bash.
 	// nil ctx is a caller bug — guard with panic so it surfaces in tests rather
@@ -172,35 +203,186 @@ func executeShellCommand(ctx context.Context, cmd string, timeout int) shellExec
 	if ctx == nil {
 		panic("runShell: nil ctx")
 	}
-	c := exec.CommandContext(context.WithoutCancel(ctx), "bash", "-c", cmd) //nolint:gosec // G204: the shell tool intentionally executes agent-provided commands (its documented purpose)
+	runDir, err := os.MkdirTemp("", "jinn-run-")
+	if err != nil {
+		return shellExecution{exitCode: 1, stderr: err.Error()}
+	}
+	defer func() { _ = os.RemoveAll(runDir) }()
+	homeDir := filepath.Join(runDir, "home")
+	tmpDir := filepath.Join(runDir, "tmp")
+	if mkdirErr := os.MkdirAll(homeDir, 0o700); mkdirErr != nil {
+		return shellExecution{exitCode: 1, stderr: mkdirErr.Error()}
+	}
+	if mkdirErr := os.MkdirAll(tmpDir, 0o700); mkdirErr != nil {
+		return shellExecution{exitCode: 1, stderr: mkdirErr.Error()}
+	}
+	argv := e.shellArgv(cmd, runDir, homeDir, tmpDir)
+	c := exec.CommandContext(context.WithoutCancel(ctx), argv[0], argv[1:]...) //nolint:gosec // explicit policy-gated shell execution
 	c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	c.Dir = e.workDir
 
-	capture := newShellOutputCapture(1 << 20) // 1 MB response tail + full spill on overflow
+	capture := newShellOutputCapture(1 << 20) // 1 MB response tail + bounded spill on overflow
 	defer capture.Close()
 	outBuf := &boundedWriter{limit: 1 << 20} // 1 MB stdout meta buffer
 	errBuf := &boundedWriter{limit: 1 << 20} // 1 MB stderr meta buffer
-	c.Env = shellEnv()
-	c.Stdout = io.MultiWriter(capture, outBuf)
-	c.Stderr = io.MultiWriter(capture, errBuf)
+	c.Env = e.shellProcessEnv(homeDir, tmpDir)
+	stdoutR, stdoutW, err := os.Pipe()
+	if err != nil {
+		return shellExecution{exitCode: 1, stderr: err.Error()}
+	}
+	defer func() { _ = stdoutR.Close() }()
+	defer func() { _ = stdoutW.Close() }()
+	stderrR, stderrW, err := os.Pipe()
+	if err != nil {
+		return shellExecution{exitCode: 1, stderr: err.Error()}
+	}
+	defer func() { _ = stderrR.Close() }()
+	defer func() { _ = stderrW.Close() }()
+	c.Stdout = stdoutW
+	c.Stderr = stderrW
+	copyDone := make(chan struct{}, 2)
+	go func() {
+		_, _ = io.Copy(io.MultiWriter(capture, outBuf), stdoutR)
+		copyDone <- struct{}{}
+	}()
+	go func() {
+		_, _ = io.Copy(io.MultiWriter(capture, errBuf), stderrR)
+		copyDone <- struct{}{}
+	}()
+	interrupt := func() {
+		_ = stdoutR.Close()
+		_ = stderrR.Close()
+		_ = stdoutW.Close()
+		_ = stderrW.Close()
+	}
 
 	start := time.Now()
-	run := runWithTimeout(ctx, c, timeout)
+	run := runWithTimeoutControl(ctx, c, timeout, capture.LimitReached(), interrupt)
+	_ = stdoutW.Close()
+	_ = stderrW.Close()
+	drained := make(chan struct{})
+	go func() {
+		<-copyDone
+		<-copyDone
+		close(drained)
+	}()
+	// bash can exit while a background descendant still owns its pipes. Keep
+	// the same deadline authority until those pipes drain, otherwise a command
+	// such as `sleep 30 & echo done` would outlive its requested timeout.
+	if run.exitCode != 124 && !run.canceled && !run.resourceLimited {
+		remaining := time.Duration(timeout)*time.Second - time.Since(start)
+		if remaining < 0 {
+			remaining = 0
+		}
+		timer := time.NewTimer(remaining)
+		select {
+		case <-drained:
+		case <-timer.C:
+			killCommandGroup(c, interrupt)
+			run.exitCode = 124
+			<-drained
+		case <-ctx.Done():
+			killCommandGroup(c, interrupt)
+			run.exitCode = shellCanceledExitCode
+			run.canceled = true
+			<-drained
+		case <-capture.LimitReached():
+			killCommandGroup(c, interrupt)
+			run.exitCode = 1
+			run.resourceLimited = true
+			<-drained
+		}
+		if !timer.Stop() {
+			select {
+			case <-timer.C:
+			default:
+			}
+		}
+	} else {
+		<-drained
+	}
 	content := shapeShellOutput(capture, cmd, run.exitCode, timeout)
 
 	return shellExecution{
-		content:    content,
-		exitCode:   run.exitCode,
-		canceled:   run.canceled,
-		stdout:     outBuf.String(),
-		stderr:     errBuf.String(),
-		durationMs: time.Since(start).Milliseconds(),
+		content:         content,
+		exitCode:        run.exitCode,
+		canceled:        run.canceled,
+		resourceLimited: run.resourceLimited || capture.ResourceLimited(),
+		stdout:          outBuf.String(),
+		stderr:          errBuf.String(),
+		durationMs:      time.Since(start).Milliseconds(),
 	}
+}
+
+func (e *Engine) shellProcessEnv(homeDir, tmpDir string) []string {
+	if e.shellMode == ShellModeUnsafe {
+		return e.subprocessEnv()
+	}
+	path := "/usr/bin:/bin:/usr/sbin:/sbin"
+	if len(e.execPath) > 0 {
+		path = strings.Join(e.execPath, string(os.PathListSeparator))
+	}
+	env := []string{
+		"PATH=" + path,
+		"HOME=" + homeDir,
+		"TMPDIR=" + tmpDir,
+		"SHELL=/bin/bash",
+	}
+	for _, key := range []string{"LANG", "LC_ALL", "TERM", "TZ"} {
+		if value, ok := os.LookupEnv(key); ok {
+			env = append(env, key+"="+value)
+		}
+	}
+	return env
+}
+
+func (e *Engine) shellArgv(command, runDir, homeDir, tmpDir string) []string {
+	if e.shellMode == ShellModeUnsafe {
+		return []string{"/bin/bash", "-c", command}
+	}
+	if runtime.GOOS == "darwin" {
+		home, _ := os.UserHomeDir()
+		readFilter := `(require-all (require-not (subpath "/etc")) (require-not (subpath "/private/etc"))`
+		if home != "" {
+			readFilter += ` (require-not (subpath ` + strconv.Quote(home) + `))`
+		}
+		readFilter += `)`
+		profile := `(version 1)(deny default)(allow process-exec)(allow process-fork)` +
+			`(allow sysctl-read)(allow file-read-metadata)` +
+			`(allow file-read* ` + readFilter + `)` +
+			`(allow file-read* (subpath ` + strconv.Quote(e.workDir) + `) (subpath ` + strconv.Quote(runDir) + `))` +
+			`(allow file-write* (subpath ` + strconv.Quote(e.workDir) + `) (subpath ` + strconv.Quote(runDir) + `))`
+		return []string{e.sandboxBinary, "-p", profile, "/bin/bash", "-c", command}
+	}
+	args := []string{e.sandboxBinary, "--die-with-parent", "--new-session", "--unshare-net"}
+	for _, path := range []string{"/usr", "/bin", "/sbin", "/lib", "/lib64"} {
+		if _, err := os.Stat(path); err == nil {
+			args = append(args, "--ro-bind", path, path)
+		}
+	}
+	return append(args,
+		"--proc", "/proc", "--dev", "/dev",
+		"--bind", e.workDir, e.workDir,
+		"--bind", tmpDir, tmpDir,
+		"--bind", homeDir, homeDir,
+		"--chdir", e.workDir,
+		"/bin/bash", "-c", command,
+	)
 }
 
 // runShell executes a shell command and returns (result, meta, error).
 // Meta keys: "risk" (pre-execution risk level) and "classification" (exit-code class).
 // Dangerous commands are blocked unless args["force"] is true.
+//
+//nolint:funlen // request validation and command lifecycle share one response contract.
 func (e *Engine) runShell(ctx context.Context, args map[string]interface{}) (string, map[string]any, error) {
+	if e.shellMode == ShellModeDisabled {
+		return "", nil, &ErrWithSuggestion{
+			Err:        errors.New("run_shell is disabled"),
+			Suggestion: "restart jinn with --shell-mode=sandboxed, or explicitly choose --shell-mode=unsafe",
+			Code:       ErrCodeCommandBlocked,
+		}
+	}
 	cmd, _ := args["command"].(string)
 	if strings.TrimSpace(cmd) == "" {
 		return "", nil, &ErrWithSuggestion{
@@ -239,7 +421,7 @@ func (e *Engine) runShell(ctx context.Context, args map[string]interface{}) (str
 		timeout = 300
 	}
 
-	res := executeShellCommand(ctx, cmd, timeout)
+	res := e.executeShellCommand(ctx, cmd, timeout)
 
 	argv0 := extractArgv0(cmd)
 	class, reason := classifyExitCode(argv0, res.exitCode)
@@ -251,6 +433,18 @@ func (e *Engine) runShell(ctx context.Context, args map[string]interface{}) (str
 		"exit_code":      res.exitCode,
 		"timeout_ms":     int64(timeout * 1000),
 		"duration_ms":    res.durationMs,
+		"shell_mode":     string(e.shellMode),
+	}
+	if e.shellMode == ShellModeUnsafe {
+		meta["shell_security"] = "unconfined"
+	}
+	if res.resourceLimited {
+		meta["classification"] = "resource_limit"
+		return "", meta, &ErrWithSuggestion{
+			Err:        errShellOutputLimit,
+			Suggestion: "reduce command output or redirect it to a bounded workspace file",
+			Code:       ErrCodeResourceLimit,
+		}
 	}
 	if res.canceled {
 		return "", meta, &ErrWithSuggestion{

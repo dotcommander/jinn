@@ -39,7 +39,7 @@ type mcpToolCallParams struct {
 	Arguments json.RawMessage `json:"arguments"`
 }
 
-func runLegacyMCP(ctx context.Context, in io.Reader, out io.Writer, ldVersion string) error {
+func runLegacyMCP(ctx context.Context, in io.Reader, out io.Writer, ldVersion string, mode jinn.ShellMode) error {
 	scanner := bufio.NewScanner(in)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	enc := json.NewEncoder(out)
@@ -53,7 +53,7 @@ func runLegacyMCP(ctx context.Context, in io.Reader, out io.Writer, ldVersion st
 		if line == "" {
 			continue
 		}
-		resp, respond := handleMCPLine([]byte(line), ldVersion)
+		resp, respond := handleMCPLine([]byte(line), ldVersion, mode)
 		if !respond {
 			continue
 		}
@@ -67,7 +67,8 @@ func runLegacyMCP(ctx context.Context, in io.Reader, out io.Writer, ldVersion st
 	return nil
 }
 
-func handleMCPLine(line []byte, ldVersion string) (mcpResponse, bool) {
+//nolint:goconst // legacy JSON-RPC payloads intentionally retain canonical wire literals.
+func handleMCPLine(line []byte, ldVersion string, mode jinn.ShellMode) (mcpResponse, bool) {
 	var msg mcpMessage
 	if err := json.Unmarshal(line, &msg); err != nil {
 		return mcpResponse{
@@ -98,7 +99,7 @@ func handleMCPLine(line []byte, ldVersion string) (mcpResponse, bool) {
 	case "tools/list":
 		return mcpResult(msg.ID, map[string]any{"tools": []any{mcpRouteToolDefinition()}}), true
 	case "tools/call":
-		result, err := handleMCPToolCall(msg.Params)
+		result, err := handleMCPToolCall(msg.Params, mode)
 		if err != nil {
 			return mcpProtocolError(msg.ID, -32602, err.Error(), nil), true
 		}
@@ -114,7 +115,8 @@ func handleMCPNotification(msg mcpMessage) {
 	_ = msg
 }
 
-func handleMCPToolCall(params json.RawMessage) (any, error) {
+//nolint:goconst // MCP content maps intentionally retain canonical response keys.
+func handleMCPToolCall(params json.RawMessage, mode jinn.ShellMode) (any, error) {
 	var call mcpToolCallParams
 	if len(params) == 0 {
 		return nil, errors.New("missing tools/call params")
@@ -122,7 +124,7 @@ func handleMCPToolCall(params json.RawMessage) (any, error) {
 	if err := json.Unmarshal(params, &call); err != nil {
 		return nil, fmt.Errorf("invalid tools/call params: %w", err)
 	}
-	if call.Name != "jinn_route" {
+	if call.Name != mcpRouteTool {
 		return nil, fmt.Errorf("unknown MCP tool: %s", call.Name)
 	}
 	if len(call.Arguments) == 0 || string(call.Arguments) == "null" {
@@ -135,7 +137,7 @@ func handleMCPToolCall(params json.RawMessage) (any, error) {
 	if strings.TrimSpace(req.Need) == "" {
 		return nil, errors.New("jinn_route need is required")
 	}
-	route, err := jinn.RouteTools(req)
+	route, err := jinn.RouteToolsForMode(req, mode)
 	if err != nil {
 		return nil, err
 	}
@@ -159,6 +161,7 @@ func mcpProtocolError(id json.RawMessage, code int, message string, data any) mc
 	return mcpResponse{JSONRPC: "2.0", ID: id, Error: &mcpError{Code: code, Message: message, Data: data}}
 }
 
+//nolint:goconst // JSON Schema map preserves canonical wire keys beside their values.
 func mcpRouteToolDefinition() map[string]any {
 	return map[string]any{
 		"name":        "jinn_route",

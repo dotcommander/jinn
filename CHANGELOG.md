@@ -9,6 +9,16 @@ and jinn adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- Disable shell execution by default and add explicit sandboxed and unsafe
+  modes; discovery now reports 18 or 19 tools accordingly.
+- Enforce strict, bounded single-request JSON and closed per-tool arguments.
+- Root file I/O in the workspace, require mutation preconditions, serialize
+  concurrent writers, and make undo snapshots fail closed and durable.
+- Return single-document structured collection results with exactness metadata,
+  and replace external `find_files` backends with a bounded native walker.
+- Stream `read_file` checksum and line construction without a whole-file split,
+  and bound `diff_files` with linear-space comparison and an operation budget.
+
 - Upgrade `jinn --mcp` to `github.com/voocel/mcp-sdk-go` and MCP 2026-07-28
   stateless stdio requests while retaining the single recommendation-only
   `jinn_route` surface that prevents tool-schema context bloat.

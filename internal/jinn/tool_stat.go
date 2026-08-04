@@ -2,26 +2,28 @@ package jinn
 
 import (
 	"bytes"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
+	"syscall"
 	"time"
 	"unicode/utf8"
 )
 
-// contentStats holds the encoding/line-ending/BOM detected from a file sample.
 type contentStats struct {
 	encoding   string
 	lineEnding string
 	bom        string
 }
 
-// detectContentStats inspects up to the first 8 KB of data to classify encoding,
-// line ending and BOM. Empty data yields the defaults (utf-8 / lf / none).
+//nolint:gocyclo // content encoding and line-ending classification is a bounded decision table.
 func detectContentStats(data []byte) contentStats {
-	cs := contentStats{encoding: "utf-8", lineEnding: "lf", bom: "none"}
+	stats := contentStats{encoding: "utf-8", lineEnding: "lf", bom: "none"}
 	if len(data) == 0 {
-		return cs
+		return stats
 	}
 	sample := data
 	if len(sample) > 8192 {
@@ -29,27 +31,29 @@ func detectContentStats(data []byte) contentStats {
 	}
 	switch {
 	case bytes.HasPrefix(sample, []byte{0xEF, 0xBB, 0xBF}):
-		cs.bom = "utf-8-bom"
+		stats.bom = "utf-8-bom"
 	case bytes.HasPrefix(sample, []byte{0xFF, 0xFE}):
-		cs.bom = "utf-16-le"
+		stats.bom = "utf-16-le"
 	case bytes.HasPrefix(sample, []byte{0xFE, 0xFF}):
-		cs.bom = "utf-16-be"
+		stats.bom = "utf-16-be"
 	}
-	crlfCount := bytes.Count(sample, []byte{'\r', '\n'})
-	lfCount := bytes.Count(sample, []byte{'\n'}) - crlfCount
-	if crlfCount > 0 && lfCount == 0 {
-		cs.lineEnding = "crlf"
-	} else if crlfCount > 0 && lfCount > 0 {
-		cs.lineEnding = "mixed"
+	crlf := bytes.Count(sample, []byte{'\r', '\n'})
+	lf := bytes.Count(sample, []byte{'\n'}) - crlf
+	cr := bytes.Count(sample, []byte{'\r'}) - crlf
+	switch {
+	case crlf > 0 && lf == 0 && cr == 0:
+		stats.lineEnding = "crlf"
+	case cr > 0 && crlf == 0 && lf == 0:
+		stats.lineEnding = "cr"
+	case (crlf > 0 && (lf > 0 || cr > 0)) || (lf > 0 && cr > 0):
+		stats.lineEnding = "mixed"
 	}
 	if !utf8.Valid(sample) {
-		cs.encoding = "binary"
+		stats.encoding = "binary"
 	}
-	return cs
+	return stats
 }
 
-// countDataLines returns the number of lines in data (a final non-newline-
-// terminated line still counts as a line). Empty data yields 0.
 func countDataLines(data []byte) int {
 	lines := strings.Count(string(data), "\n")
 	if len(data) > 0 && data[len(data)-1] != '\n' {
@@ -58,45 +62,66 @@ func countDataLines(data []byte) int {
 	return lines
 }
 
+//nolint:revive // sampling intentionally shares the stat response construction flow.
 func (e *Engine) statFile(args map[string]interface{}) (string, error) {
-	path, _ := args["path"].(string)
+	path := strArg(args, "path")
 	resolved, err := e.checkPath(path)
 	if err != nil {
 		return "", err
 	}
-
-	info, err := os.Stat(resolved)
+	info, err := e.rootedStat(resolved)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return "", &ErrWithSuggestion{
-				Err:        fmt.Errorf("file not found: %s", path),
-				Suggestion: "verify the path exists with list_dir or check for typos",
-				Code:       ErrCodeFileNotFound,
-			}
+			return "", &ErrWithSuggestion{Err: fmt.Errorf("file not found: %s", path), Suggestion: "verify the path exists with list_dir or check for typos", Code: ErrCodeFileNotFound}
 		}
 		return "", err
 	}
-
-	ftype := "file"
+	fileType := "file"
 	if info.IsDir() {
-		ftype = "directory"
+		fileType = "directory"
 	} else if !info.Mode().IsRegular() {
-		ftype = "special"
+		fileType = "special"
 	}
-
-	var data []byte
-	if info.Mode().IsRegular() && info.Size() <= maxFileSize {
-		if d, err := os.ReadFile(resolved); err == nil {
-			data = d
+	result := map[string]any{
+		"path": path, "type": fileType, "size": info.Size(),
+		"modified": info.ModTime().Format(time.RFC3339Nano),
+	}
+	summary := fmt.Sprintf("type: %s\nsize: %d\nmodified: %s", fileType, info.Size(), info.ModTime().Format(time.RFC3339Nano))
+	//nolint:nestif // regular-file sampling intentionally keeps all result fields in one ownership block.
+	if info.Mode().IsRegular() {
+		rel, relErr := e.rootRelative(resolved)
+		if relErr != nil {
+			return "", relErr
+		}
+		file, openErr := e.root.OpenFile(rel, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+		if openErr != nil {
+			result["sample_error"] = openErr.Error()
+		} else {
+			defer func() { _ = file.Close() }()
+			data := make([]byte, 8192)
+			n, readErr := file.Read(data)
+			if readErr != nil && !errors.Is(readErr, io.EOF) {
+				result["sample_error"] = readErr.Error()
+			} else {
+				data = data[:n]
+				stats := detectContentStats(data)
+				result["sample_bytes"] = n
+				result["sample_complete"] = int64(n) == info.Size()
+				result["sample_lines"] = countDataLines(data)
+				result["encoding"] = stats.encoding
+				result["line_ending"] = stats.lineEnding
+				result["bom"] = stats.bom
+				if int64(n) == info.Size() {
+					result["lines"] = countDataLines(data)
+				}
+				summary += fmt.Sprintf("\nlines: %d\nencoding: %s\nline_ending: %s\nbom: %s", countDataLines(data), stats.encoding, stats.lineEnding, stats.bom)
+			}
 		}
 	}
-	lines := countDataLines(data)
-	cs := detectContentStats(data)
-
-	result := fmt.Sprintf("path: %s\ntype: %s\nsize: %d bytes\nlines: %d\nmodified: %s",
-		path, ftype, info.Size(), lines, info.ModTime().Format(time.RFC3339))
-	if info.Mode().IsRegular() {
-		result += fmt.Sprintf("\nencoding: %s\nline_ending: %s\nbom: %s", cs.encoding, cs.lineEnding, cs.bom)
+	result["summary"] = summary
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		return "", fmt.Errorf("stat_file: marshal: %w", err)
 	}
-	return result, nil
+	return string(encoded), nil
 }

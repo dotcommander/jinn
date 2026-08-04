@@ -16,9 +16,12 @@ import (
 	"github.com/dotcommander/jinn/internal/jinn"
 )
 
-const inspectorMaxBody = 1 << 20
+const (
+	inspectorMaxBody = 1 << 20
+	loopbackIPv4     = "127.0.0.1"
+)
 
-func serveInspector(ctx context.Context, addr string, version string) error {
+func serveInspector(ctx context.Context, addr string, version string, mode jinn.ShellMode) error {
 	if err := validateInspectorAddr(addr); err != nil {
 		return fail(jinn.Response{
 			Error:      err.Error(),
@@ -32,7 +35,10 @@ func serveInspector(ctx context.Context, addr string, version string) error {
 		return fail(jinn.Response{Error: fmt.Sprintf("getwd: %s", err)})
 	}
 
-	engine := jinn.New(wd, version)
+	engine, err := jinn.NewWithConfig(wd, jinn.EngineConfig{Version: version, ShellMode: mode})
+	if err != nil {
+		return fail(jinn.Response{Error: err.Error(), ErrorCode: jinn.ErrCodeInvalidArgs})
+	}
 	defer func() { _ = engine.Close() }()
 
 	srv := &http.Server{
@@ -48,7 +54,7 @@ func serveInspector(ctx context.Context, addr string, version string) error {
 	defer stop()
 	go func() {
 		<-sigCtx.Done()
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
 		_ = srv.Shutdown(shutdownCtx)
 	}()
@@ -66,7 +72,7 @@ func validateInspectorAddr(addr string) error {
 	if err != nil {
 		return fmt.Errorf("invalid inspector address %q: expected host:port", addr)
 	}
-	if host != "127.0.0.1" && host != "localhost" && host != "::1" {
+	if host != loopbackIPv4 && host != "localhost" && host != "::1" {
 		return fmt.Errorf("inspector address must be loopback, got %q", host)
 	}
 	return nil
@@ -75,7 +81,9 @@ func validateInspectorAddr(addr string) error {
 func newInspectorHandler(engine *jinn.Engine, version string) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", inspectorIndex)
-	mux.HandleFunc("/api/schema", inspectorSchema)
+	mux.HandleFunc("/api/schema", func(w http.ResponseWriter, r *http.Request) {
+		inspectorSchema(w, r, engine.ShellMode())
+	})
 	mux.HandleFunc("/api/list_tools", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -95,10 +103,10 @@ func newInspectorHandler(engine *jinn.Engine, version string) http.Handler {
 			return
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, inspectorMaxBody)
-		defer r.Body.Close()
+		defer func() { _ = r.Body.Close() }()
 
-		var req jinn.Request
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		req, err := jinn.DecodeOneRequest(r.Body, inspectorMaxBody)
+		if err != nil {
 			writeInspectorJSON(w, http.StatusBadRequest, jinn.Response{
 				Error:     fmt.Sprintf("invalid JSON: %s", err),
 				ErrorCode: "invalid_json",
@@ -138,12 +146,12 @@ func inspectorIndex(w http.ResponseWriter, r *http.Request) {
 	_, _ = io.WriteString(w, inspectorHTML)
 }
 
-func inspectorSchema(w http.ResponseWriter, r *http.Request) {
+func inspectorSchema(w http.ResponseWriter, r *http.Request, mode jinn.ShellMode) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	schema, err := jinn.LeanSchema()
+	schema, err := jinn.LeanSchemaForMode(mode)
 	if err != nil {
 		writeInspectorError(w, http.StatusInternalServerError, err)
 		return
@@ -158,7 +166,7 @@ func inspectorSecurityHeaders(version string, next http.Handler) http.Handler {
 		if err != nil {
 			host = r.Host
 		}
-		if host != "127.0.0.1" && host != "localhost" && host != "::1" {
+		if host != loopbackIPv4 && host != "localhost" && host != "::1" {
 			http.Error(w, "inspector only accepts localhost requests", http.StatusForbidden)
 			return
 		}

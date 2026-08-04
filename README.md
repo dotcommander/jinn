@@ -3,7 +3,7 @@
 ```bash
 go install github.com/dotcommander/jinn/cmd/jinn@latest
 echo '{"tool":"read_file","args":{"path":"go.mod"}}' | jinn
-echo '{"tool":"run_shell","args":{"command":"go test ./..."}}' | jinn
+echo '{"tool":"run_shell","args":{"command":"go test ./..."}}' | jinn --shell-mode=sandboxed
 ```
 
 `jinn` is a single-binary tool executor for AI coding agents. It reads one JSON
@@ -18,8 +18,8 @@ subagent, hook, CI job, or harness integration.
   uses pure-Go SQLite.
 - **Workspace confinement:** paths stay inside the working directory.
 - **Safer mutation:** file writes use atomic replacement and undo snapshots.
-- **Shell guardrails:** `run_shell` classifies commands as `safe`, `caution`, or
-  `dangerous` before execution.
+- **Shell is opt-in:** the default `disabled` mode omits `run_shell`. Choose
+  `sandboxed` for OS confinement or `unsafe` only for explicit compatibility.
 
 ## Install
 
@@ -47,13 +47,13 @@ echo '{"tool":"read_file","args":{"path":"go.mod"}}' | jinn
 Run a command:
 
 ```bash
-echo '{"tool":"run_shell","args":{"command":"go test ./..."}}' | jinn
+echo '{"tool":"run_shell","args":{"command":"go test ./..."}}' | jinn --shell-mode=sandboxed
 ```
 
 Inspect a command without running it:
 
 ```bash
-echo '{"tool":"run_shell","args":{"command":"rm -rf build","dry_run":true}}' | jinn
+echo '{"tool":"run_shell","args":{"command":"rm -rf build","dry_run":true}}' | jinn --shell-mode=unsafe
 ```
 
 The response is always a JSON envelope:
@@ -111,7 +111,8 @@ Use MCP discovery mode:
 MCP tool, `jinn_route`. It recommends matching jinn tools for a task and can
 return lean schemas for only those tools. It does not execute filesystem or
 shell operations itself. The one-tool surface is intentional: it keeps model
-context bounded instead of injecting all 19 executor schemas at once.
+context bounded. Discovery exposes 18 tools by default and 19 with an explicit
+`sandboxed` or `unsafe` shell mode.
 
 Current MCP requests use `server/discover`, `tools/list`, and `tools/call` with
 `_meta.io.modelcontextprotocol/protocolVersion` set to `2026-07-28` plus
@@ -142,7 +143,7 @@ Recipes for Claude Code, Codex CLI, pi, and custom loops:
 
 ## Toolset
 
-`jinn` exposes 19 specialized tools for coding agents:
+`jinn` exposes 18 tools by default, or 19 with an enabled shell mode:
 
 | Tool | Description |
 | :--- | :--- |
@@ -158,7 +159,7 @@ Recipes for Claude Code, Codex CLI, pi, and custom loops:
 | `run_plan` | Execute a condition-gated plan tree of tool/shell operations in one deterministic engine walk. Read-only nodes by default; mutating nodes are risk-gated behind plan- and node-level `force`. |
 | `stat_file` | Get metadata (size, lines, mtime) without reading contents. |
 | `list_dir` | Recursive directory tree exploration (skips hidden files). Directories suffixed with `/` in output. |
-| `find_files` | Find files by glob pattern. Uses `fd` when available (respects `.gitignore`), falls back to POSIX `find`. |
+| `find_files` | Native bounded glob traversal. Basename patterns match anywhere; slash patterns match normalized relative paths; `**` spans segments. It does not interpret `.gitignore`. |
 | `diff_files` | Unified diff between two files with `is_identical` and `first_changed_line` metadata. |
 | `detect_project` | Auto-detect language, frameworks, and build/test/lint commands. |
 | `list_tools` | Programmatic tool capability metadata; can include the compact schema on request. |
@@ -172,12 +173,12 @@ Recipes for Claude Code, Codex CLI, pi, and custom loops:
 
 Security is not an opt-in feature; it is the core of the engine.
 
-1. **Path Confinement:** Every path is resolved via `EvalSymlinks` and checked against the working directory. Traversal attempts (e.g., `../../etc/passwd`) are hard-blocked.
+1. **Rooted File Access:** File operations use a workspace `os.Root`; traversal attempts and special-file reads are blocked. Recursive tools never follow directory symlinks.
 2. **Sensitive Blocklist:** Direct access to `.git`, `.ssh`, `.aws`, `.env`, and `.gnupg` is always denied.
-3. **TOCTOU Protection:** `jinn` records file `mtime` during `read_file`. If a file is modified externally before an agent calls `write_file` or `edit_file`, the update is rejected.
-4. **Environment Scrubbing:** `run_shell` runs with a minimal allowlist of environment variables (e.g., `PATH`, `LANG`, `TMPDIR`). API keys and tokens are not inherited by child commands.
-5. **Risk Classifier:** Every `run_shell` command is classified as `safe`, `caution`, or `dangerous`. Dangerous commands (e.g., `rm -rf`, `dd`, `sudo`) are blocked outright unless the caller passes `"force": true`.
-6. **Output Caps:** Stdout/stderr is capped at 1MB. Excess output spills to a temp file, and the agent receives a truncated tail.
+3. **Mutation Preconditions:** Existing targets require `if_checksum`; creation requires `if_absent:true`. Cross-process locks cover validation, durable snapshot, and atomic replacement.
+4. **Shell Modes:** Shell is disabled by default. Sandboxed mode denies network and user configuration; unsafe mode is explicitly unconfined.
+5. **Risk Classifier:** `force` overrides only the advisory dangerous-command block; it never enables shell execution or removes confinement.
+6. **Output Caps:** Shell capture uses 1 MiB memory and at most 16 MiB spill before the process group is killed with `resource_limit`.
 
 ---
 

@@ -46,35 +46,14 @@ func resolveChunk(lines []string, chunk updateChunk, lineIndex int, filePath str
 	return lineReplacement{found, len(pattern), newSlice}, found + len(pattern), nil
 }
 
-// applyReplacements applies replacements to lines in reverse order (to preserve
-// indices) and ensures a trailing empty element for the final newline.
-func applyReplacements(lines []string, replacements []lineReplacement) []string {
-	result := make([]string, len(lines))
-	copy(result, lines)
-	for i := len(replacements) - 1; i >= 0; i-- {
-		r := replacements[i]
-		tail := result[r.start+r.oldLen:]
-		result = append(result[:r.start], r.newSeg...)
-		result = append(result, tail...)
-	}
-
-	// Ensure trailing newline.
-	if len(result) == 0 || result[len(result)-1] != "" {
-		result = append(result, "")
-	}
-	return result
-}
-
 // deriveUpdatedContent applies update chunks to the current file content,
 // producing the new content. Returns the updated content with BOM preserved.
 func deriveUpdatedContent(filePath string, content string, chunks []updateChunk) (string, error) {
 	raw, bom := stripBom(content)
-	raw = normalizeToLF(raw)
-
-	lines := strings.Split(raw, "\n")
-	// Remove trailing empty element from final newline.
-	if len(lines) > 0 && lines[len(lines)-1] == "" && strings.HasSuffix(raw, "\n") {
-		lines = lines[:len(lines)-1]
+	records := splitLineRecords(raw)
+	lines := make([]string, len(records))
+	for i := range records {
+		lines[i] = records[i].text
 	}
 
 	var replacements []lineReplacement
@@ -89,8 +68,73 @@ func deriveUpdatedContent(filePath string, content string, chunks []updateChunk)
 		lineIndex = nextIndex
 	}
 
-	result := applyReplacements(lines, replacements)
-	return bom + strings.Join(result, "\n"), nil
+	defaultEnding := detectLineEnding(raw)
+	for i := len(replacements) - 1; i >= 0; i-- {
+		r := replacements[i]
+		ending := defaultEnding
+		lastEnding := ""
+		if r.start < len(records) && records[r.start].ending != "" {
+			ending = records[r.start].ending
+		}
+		if r.oldLen > 0 && r.start+r.oldLen-1 < len(records) {
+			lastEnding = records[r.start+r.oldLen-1].ending
+		}
+		newRecords := make([]lineRecord, len(r.newSeg))
+		for index, text := range r.newSeg {
+			newRecords[index] = lineRecord{text: text, ending: ending}
+		}
+		if len(newRecords) > 0 {
+			switch {
+			case lastEnding != "":
+				newRecords[len(newRecords)-1].ending = lastEnding
+			case r.start+r.oldLen < len(records):
+				newRecords[len(newRecords)-1].ending = ending
+			default:
+				newRecords[len(newRecords)-1].ending = "\n"
+			}
+		}
+		tail := append([]lineRecord(nil), records[r.start+r.oldLen:]...)
+		records = append(records[:r.start], newRecords...)
+		records = append(records, tail...)
+	}
+	var result strings.Builder
+	result.WriteString(bom)
+	for _, record := range records {
+		result.WriteString(record.text)
+		result.WriteString(record.ending)
+	}
+	return result.String(), nil
+}
+
+type lineRecord struct {
+	text   string
+	ending string
+}
+
+func splitLineRecords(raw string) []lineRecord {
+	records := make([]lineRecord, 0, strings.Count(raw, "\n")+1)
+	for start := 0; start < len(raw); {
+		end := start
+		for end < len(raw) && raw[end] != '\n' && raw[end] != '\r' {
+			end++
+		}
+		ending := ""
+		next := end
+		if end < len(raw) {
+			ending = raw[end : end+1]
+			next = end + 1
+			if raw[end] == '\r' && next < len(raw) && raw[next] == '\n' {
+				ending = "\r\n"
+				next++
+			}
+		}
+		records = append(records, lineRecord{text: raw[start:end], ending: ending})
+		start = next
+	}
+	if len(raw) == 0 {
+		return nil
+	}
+	return records
 }
 
 // seekSequence finds the index in lines where pattern matches sequentially,

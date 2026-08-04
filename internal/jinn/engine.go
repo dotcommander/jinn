@@ -12,7 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os/exec"
+	"os"
 	"path/filepath"
 	"runtime/debug"
 	"sync"
@@ -22,27 +22,61 @@ var errRegisteredToolNotDispatched = errors.New("registered tool has no dispatch
 
 // Engine is a sandboxed tool executor bound to a working directory.
 type Engine struct {
-	workDir       string
-	version       string // ldflags-injected version ("dev" when un-set)
-	tracker       *fileTracker
-	rgPath        string     // path to rg binary, empty if unavailable
-	fdPath        string     // path to fd binary, empty if unavailable
-	LSPTimeoutSec int        // per-query LSP timeout; 0 uses default (10s)
-	memMu         sync.Mutex // guards lazy memDB open + scope cache init
-	memDB         *sql.DB    // lazily opened on first memory tool call; nil until then
-	curScope      string     // cached auto-detected scope; "" until first currentProjectID call
+	workDir                      string
+	version                      string // ldflags-injected version ("dev" when un-set)
+	root                         *os.Root
+	shellMode                    ShellMode
+	sandboxBinary                string
+	requireMutationPreconditions bool
+	tracker                      *fileTracker
+	rgPath                       string             // path to rg binary, empty if unavailable
+	execPath                     []string           // launch-time, sanitized host PATH
+	LSPTimeoutSec                int                // per-query LSP timeout; 0 uses default (10s)
+	memMu                        sync.Mutex         // guards lazy memDB open + scope cache init
+	memDB                        *sql.DB            // lazily opened on first memory tool call; nil until then
+	memReadDB                    *sql.DB            // lazily opened read-only for recall/list; never creates or migrates
+	curScope                     string             // cached auto-detected scope; "" until first currentProjectID call
+	snapshotPreparedHook         func()             // test seam between durable history prepare and mutation commit
+	removeDurabilityHook         func(string) error // test seam for post-unlink parent durability stages
 }
 
 // New creates an Engine rooted at the given working directory.
 // The workDir is resolved via EvalSymlinks so that path boundary checks
 // work correctly on platforms where temp dirs are symlinks (e.g., macOS).
-func New(workDir string, version string) *Engine {
+func New(workDir, version string) *Engine {
+	config := EngineConfig{Version: version, ShellMode: ShellModeDisabled}
+	engine, err := NewWithConfig(workDir, config)
+	if err != nil {
+		panic(err)
+	}
+	return engine
+}
+
+// NewWithConfig creates an Engine with explicit process and mutation policy.
+func NewWithConfig(workDir string, config EngineConfig) (*Engine, error) {
 	if resolved, err := filepath.EvalSymlinks(workDir); err == nil {
 		workDir = resolved
 	}
-	rgPath, _ := exec.LookPath("rg")
-	fdPath, _ := exec.LookPath("fd")
-	return &Engine{workDir: workDir, version: version, tracker: newFileTracker(), rgPath: rgPath, fdPath: fdPath, LSPTimeoutSec: 10}
+	root, err := os.OpenRoot(workDir)
+	if err != nil {
+		return nil, fmt.Errorf("open workspace root: %w", err)
+	}
+	if config.ShellMode == "" {
+		config.ShellMode = ShellModeDisabled
+	}
+	sandboxBinary, err := validateShellMode(config.ShellMode)
+	if err != nil {
+		_ = root.Close()
+		return nil, err
+	}
+	execPath := sanitizeExecutablePath(os.Getenv("PATH"))
+	rgPath, _ := findExecutableInPath(execPath, "rg")
+	return &Engine{
+		workDir: workDir, version: config.Version, root: root,
+		shellMode: config.ShellMode, sandboxBinary: sandboxBinary,
+		requireMutationPreconditions: !config.UnsafeAllowMutationWithoutPreconditions,
+		tracker:                      newFileTracker(), rgPath: rgPath, execPath: execPath, LSPTimeoutSec: 10,
+	}, nil
 }
 
 // Close releases the engine's resources, closing the lazily-opened memory DB if
@@ -50,12 +84,22 @@ func New(workDir string, version string) *Engine {
 func (e *Engine) Close() error {
 	e.memMu.Lock()
 	defer e.memMu.Unlock()
+	var errs []error
 	if e.memDB != nil {
 		db := e.memDB
 		e.memDB = nil
-		return db.Close()
+		errs = append(errs, db.Close())
 	}
-	return nil
+	if e.memReadDB != nil {
+		db := e.memReadDB
+		e.memReadDB = nil
+		errs = append(errs, db.Close())
+	}
+	if e.root != nil {
+		errs = append(errs, e.root.Close())
+		e.root = nil
+	}
+	return errors.Join(errs...)
 }
 
 // ToolResult is the structured output of a tool handler.
@@ -80,8 +124,11 @@ func textResult(s string) *ToolResult {
 //
 // Tools that don't set meta return a nil map. Callers should treat nil as empty.
 func (e *Engine) Dispatch(ctx context.Context, tool string, args map[string]interface{}) (*ToolResult, map[string]any, error) {
-	if _, ok := lookupToolDescriptor(tool); !ok {
+	if _, ok := e.lookupToolDescriptor(tool); !ok {
 		return nil, nil, fmt.Errorf("unknown tool: %s", tool)
+	}
+	if err := validateToolArgs(tool, args); err != nil {
+		return nil, nil, err
 	}
 	// run_shell is the only tool returning meta; handle it directly.
 	if tool == "run_shell" {
@@ -113,8 +160,8 @@ func (e *Engine) dispatchListTools(args map[string]interface{}) (*ToolResult, ma
 	}
 	caps := ToolCapabilities{
 		JinnVersion: ResolveVersion(e.version),
-		Tools:       registeredToolNames(),
-		Features:    registeredToolFeatures(),
+		Tools:       e.registeredToolNames(),
+		Features:    e.registeredToolFeatures(),
 	}
 	capsJSON, err := json.Marshal(caps)
 	if err != nil {
@@ -124,11 +171,20 @@ func (e *Engine) dispatchListTools(args map[string]interface{}) (*ToolResult, ma
 	if !includeSchema {
 		return textResult(string(capsJSON)), nil, nil
 	}
-	schema, err := LeanSchema()
+	schema, err := LeanSchemaForMode(e.shellMode)
 	if err != nil {
 		return nil, nil, fmt.Errorf("lean schema: %w", err)
 	}
-	return textResult(string(capsJSON) + "\n\n" + schema), nil, nil
+	var schemaDoc any
+	if decodeErr := json.Unmarshal([]byte(schema), &schemaDoc); decodeErr != nil {
+		return nil, nil, fmt.Errorf("decode lean schema: %w", decodeErr)
+	}
+	caps.Schema = schemaDoc
+	capsJSON, err = json.Marshal(caps)
+	if err != nil {
+		return nil, nil, fmt.Errorf("marshal capabilities: %w", err)
+	}
+	return textResult(string(capsJSON)), nil, nil
 }
 
 // Handler return-shape rule (applies across all dispatch functions below):
@@ -176,7 +232,7 @@ func (e *Engine) dispatchSearchOps(ctx context.Context, args map[string]interfac
 		result, err := e.statFile(args)
 		return textResult(result), true, err
 	case "list_dir":
-		result, err := e.listDir(args)
+		result, err := e.listDirContext(ctx, args)
 		return textResult(result), true, err
 	case "find_files":
 		result, err := e.findFiles(ctx, args)

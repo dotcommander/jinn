@@ -1,9 +1,11 @@
 package jinn
 
 import (
+	"bytes"
 	_ "embed"
 	"encoding/json"
-	"fmt"
+	"errors"
+	"strings"
 )
 
 // Schema is the tool definitions in OpenAI function-calling format.
@@ -18,6 +20,7 @@ type ToolCapabilities struct {
 	JinnVersion string              `json:"jinn_version"`
 	Tools       []string            `json:"tools"`
 	Features    map[string][]string `json:"features"`
+	Schema      any                 `json:"schema,omitempty"`
 }
 
 // Request is the one-shot tool invocation envelope.
@@ -37,8 +40,8 @@ type ContentBlock struct {
 	MimeType string `json:"mimeType,omitempty"` // e.g. "image/png", for type="image"
 }
 
-// UnmarshalJSON implements json.Unmarshaler for Request, repairing the
-// common LLM misbehavior of double-encoding args as a JSON string.
+// UnmarshalJSON strictly decodes the request envelope. Compatibility coercion
+// is intentionally rejected at this trust boundary.
 func (r *Request) UnmarshalJSON(data []byte) error {
 	type aliasRequest struct {
 		Tool      string          `json:"tool"`
@@ -48,33 +51,26 @@ func (r *Request) UnmarshalJSON(data []byte) error {
 		RequestID string          `json:"request_id,omitempty"`
 	}
 	var a aliasRequest
-	if err := json.Unmarshal(data, &a); err != nil {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&a); err != nil {
 		return err
+	}
+	if strings.TrimSpace(a.Tool) == "" {
+		return errors.New("tool is required")
 	}
 	r.Tool = a.Tool
 	r.Client = a.Client
 	r.Compress = a.Compress
 	r.RequestID = a.RequestID
 
-	if len(a.Args) == 0 || string(a.Args) == "null" {
-		r.Args = nil
+	if len(a.Args) == 0 {
+		r.Args = map[string]interface{}{}
 		return nil
 	}
-
-	// Try direct map decode (normal case).
 	var m map[string]interface{}
-	if err := json.Unmarshal(a.Args, &m); err == nil {
-		r.Args = m
-		return nil
-	}
-
-	// Try double-encoded string: "{\"command\":\"ls\"}"
-	var s string
-	if err := json.Unmarshal(a.Args, &s); err != nil {
-		return fmt.Errorf("args must be a JSON object")
-	}
-	if err := json.Unmarshal([]byte(s), &m); err != nil {
-		return fmt.Errorf("args is a JSON-encoded string but does not contain a JSON object")
+	if err := json.Unmarshal(a.Args, &m); err != nil || m == nil {
+		return errors.New("args must be a JSON object")
 	}
 	r.Args = m
 	return nil

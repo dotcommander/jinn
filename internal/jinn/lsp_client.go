@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 // lspProc is the result of launching an LSP server: the pipes to drive it, a
@@ -27,9 +28,13 @@ type lspProc struct {
 type lspLauncher func(ctx context.Context, argv []string) (lspProc, error)
 
 func realLauncher(ctx context.Context, argv []string) (lspProc, error) {
+	return launchLSP(ctx, argv, subprocessEnv(nil))
+}
+
+func launchLSP(ctx context.Context, argv, env []string) (lspProc, error) {
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...) //nolint:gosec // G204: argv built internally from a fixed server table
 	cmd.Stderr = io.Discard                               // suppress LSP server stderr noise
-	cmd.Env = subprocessEnv(nil)
+	cmd.Env = env
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return lspProc{}, fmt.Errorf("lsp stdin pipe: %w", err)
@@ -52,18 +57,19 @@ func realLauncher(ctx context.Context, argv []string) (lspProc, error) {
 // lspClient drives one LSP session. All calls are synchronous and single-threaded;
 // the LSP handshake and query sequence does not require concurrent requests.
 type lspClient struct {
-	stdin     io.WriteCloser
-	stdoutRaw io.ReadCloser // underlying stdout closer; closed in stop() to unblock a blocked read
-	stdout    *bufio.Reader
-	kill      func() error
-	wait      func() error
-	nextID    atomic.Int64
-	launcher  lspLauncher // nil → use realLauncher
-	stopOnce  sync.Once
+	stdin           io.WriteCloser
+	stdoutRaw       io.ReadCloser // underlying stdout closer; closed in stop() to unblock a blocked read
+	stdout          *bufio.Reader
+	kill            func() error
+	wait            func() error
+	nextID          atomic.Int64
+	launcher        lspLauncher // nil → use realLauncher
+	stopOnce        sync.Once
+	pushDiagnostics map[string][]lspDiagnostic
 }
 
 func newLSPClient(launcher lspLauncher) *lspClient {
-	return &lspClient{launcher: launcher}
+	return &lspClient{launcher: launcher, pushDiagnostics: make(map[string][]lspDiagnostic)}
 }
 
 func (c *lspClient) start(ctx context.Context, argv []string) error {
@@ -147,22 +153,7 @@ func (c *lspClient) handshake(workDir string) error {
 // language server process.
 const maxLSPFileSize = 10 * 1024 * 1024 // 10 MB
 
-func (c *lspClient) didOpen(absPath, langID string) error {
-	fi, err := os.Stat(absPath)
-	if err != nil {
-		return fmt.Errorf("lsp didOpen stat: %w", err)
-	}
-	if fi.Size() > maxLSPFileSize {
-		return &ErrWithSuggestion{
-			Err:        fmt.Errorf("lsp didOpen: file too large (%d bytes, max %d)", fi.Size(), maxLSPFileSize),
-			Suggestion: "lsp_query works best on files under 10 MB",
-			Code:       ErrCodeFileTooLarge,
-		}
-	}
-	data, err := os.ReadFile(absPath)
-	if err != nil {
-		return fmt.Errorf("lsp didOpen read: %w", err)
-	}
+func (c *lspClient) didOpenText(absPath, langID string, data []byte) error {
 	type textDocItem struct {
 		URI        string `json:"uri"`
 		LanguageID string `json:"languageId"`
@@ -183,4 +174,18 @@ func (c *lspClient) didClose(absPath string) error {
 func (c *lspClient) shutdown() {
 	c.sendRequest("shutdown", nil)  //nolint:errcheck
 	c.sendNotification("exit", nil) //nolint:errcheck
+}
+
+func (c *lspClient) shutdownBounded() {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		c.shutdown()
+	}()
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		c.stop()
+		<-done
+	}
 }

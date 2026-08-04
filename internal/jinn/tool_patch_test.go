@@ -1,6 +1,7 @@
 package jinn
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -241,5 +242,56 @@ func TestApplyPatch_Engine_StaleFile(t *testing.T) {
 	}
 	if string(data) != original {
 		t.Errorf("file should be unchanged after stale rejection, got: %q", data)
+	}
+}
+
+func TestDeleteDurabilityFailureMarksSnapshotUncertain(t *testing.T) {
+	e, dir := testEngine(t)
+	writeTestFile(t, dir, "gone.txt", "before\n")
+	e.removeDurabilityHook = func(stage string) error {
+		if stage == "sync" {
+			return errors.New("injected sync failure")
+		}
+		return nil
+	}
+	_, err := e.applyPatch(args("patch", "*** Begin Patch\n*** Delete File: gone.txt\n*** End Patch"))
+	if err == nil || !strings.Contains(err.Error(), "injected sync failure") {
+		t.Fatalf("delete error = %v", err)
+	}
+	history, err := e.loadHistoryLocked()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(history.Entries) != 1 || history.Entries[0].State != historyStateUncertain {
+		t.Fatalf("history after uncertain delete = %+v", history.Entries)
+	}
+}
+
+func TestDeleteUsesOpenedParentHandleAfterParentReplacement(t *testing.T) {
+	e, dir := testEngine(t)
+	writeTestFile(t, dir, "parent/file.txt", "old\n")
+	parent := filepath.Join(dir, "parent")
+	oldParent := filepath.Join(dir, "parent-old")
+	e.removeDurabilityHook = func(stage string) error {
+		if stage != "open" {
+			return nil
+		}
+		if err := os.Rename(parent, oldParent); err != nil {
+			return err
+		}
+		if err := os.Mkdir(parent, 0o755); err != nil {
+			return err
+		}
+		return os.WriteFile(filepath.Join(parent, "file.txt"), []byte("replacement\n"), 0o644)
+	}
+	if _, err := e.applyPatch(args("patch", "*** Begin Patch\n*** Delete File: parent/file.txt\n*** End Patch")); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(parent, "file.txt"))
+	if err != nil || string(data) != "replacement\n" {
+		t.Fatalf("replacement parent mutated: %q %v", data, err)
+	}
+	if _, err := os.Stat(filepath.Join(oldParent, "file.txt")); !os.IsNotExist(err) {
+		t.Fatalf("opened parent child still exists: %v", err)
 	}
 }

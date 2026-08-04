@@ -3,37 +3,8 @@ package jinn
 import (
 	"errors"
 	"strings"
+	"unicode/utf8"
 )
-
-// editMatch carries the (possibly fuzzy-normalized) raw/oldText and whether the
-// match required fuzzy normalization.
-type editMatch struct {
-	raw     string
-	oldText string
-	fuzzy   bool
-}
-
-// findEditMatch locates oldText in raw, falling back to fuzzy normalization when
-// the exact match fails. It returns the (possibly normalized) raw/oldText and
-// whether a fuzzy match was used, or a match-count error.
-func findEditMatch(raw, oldText string) (editMatch, error) {
-	count := strings.Count(raw, oldText)
-	if count == 0 {
-		normContent := normalizeForFuzzyMatch(raw)
-		normOld := normalizeForFuzzyMatch(oldText)
-		if strings.Count(normContent, normOld) == 1 {
-			return editMatch{raw: normContent, oldText: normOld, fuzzy: true}, nil
-		}
-	}
-
-	if count == 0 {
-		return editMatch{}, errors.New("old_text not found in file")
-	}
-	if count > 1 {
-		return editMatch{}, multiMatchError(count, raw, oldText)
-	}
-	return editMatch{raw: raw, oldText: oldText}, nil
-}
 
 // matchLeadingIndent returns the leading whitespace of the line containing idx.
 func matchLeadingIndent(raw string, idx int) string {
@@ -85,27 +56,94 @@ func reindentNewText(newText, leading string) string {
 func applyEdit(content []byte, oldText, newText string, fuzzyIndent bool) (string, bool, matchInfo, error) {
 	var info matchInfo
 	raw, bom := stripBom(string(content))
-	ending := detectLineEnding(raw)
-	raw = normalizeToLF(raw)
-	oldText = normalizeToLF(oldText)
+	matchText := oldText
+	mapped := mapNormalizedText(raw, false)
+	matchText = normalizeToLF(matchText)
+	fuzzy := false
+	count := strings.Count(mapped.text, matchText)
+	if count == 0 {
+		mapped = mapNormalizedText(raw, true)
+		matchText = normalizeForFuzzyMatch(normalizeToLF(oldText))
+		count = strings.Count(mapped.text, matchText)
+		fuzzy = count > 0
+	}
+	if count == 0 {
+		return "", false, info, errors.New("old_text not found in file")
+	}
+	if count > 1 {
+		return "", false, info, multiMatchError(count, mapped.text, matchText)
+	}
+	idx := strings.Index(mapped.text, matchText)
+	startByte := mapped.boundaries[idx]
+	endByte := mapped.boundaries[idx+len(matchText)]
+	info.startLine = strings.Count(mapped.text[:idx], "\n") + 1
+	info.endLine = info.startLine + strings.Count(matchText, "\n")
+
 	newText = normalizeToLF(newText)
-
-	m, err := findEditMatch(raw, oldText)
-	if err != nil {
-		return "", false, info, err
+	lineStart := strings.LastIndex(mapped.text[:idx], "\n") + 1
+	if fuzzyIndent && strings.Trim(mapped.text[lineStart:idx], " \t") == "" {
+		newText = reindentNewText(newText, matchLeadingIndent(mapped.text, idx))
 	}
-	raw, oldText, fuzzy := m.raw, m.oldText, m.fuzzy
-
-	idx := strings.Index(raw, oldText)
-	info.startLine = strings.Count(raw[:idx], "\n") + 1
-	info.endLine = info.startLine + strings.Count(oldText, "\n")
-
-	// fuzzyIndent: detect indentation at the match site and apply it to newText.
-	if fuzzyIndent {
-		newText = reindentNewText(newText, matchLeadingIndent(raw, idx))
+	ending := detectLineEnding(raw[startByte:endByte])
+	if !strings.Contains(raw[startByte:endByte], "\n") && !strings.Contains(raw[startByte:endByte], "\r") {
+		ending = detectLineEnding(raw)
 	}
+	replacement := restoreLineEndings(newText, ending)
+	return bom + raw[:startByte] + replacement + raw[endByte:], fuzzy, info, nil
+}
 
-	return bom + restoreLineEndings(strings.Replace(raw, oldText, newText, 1), ending), fuzzy, info, nil
+type normalizedTextMap struct {
+	text       string
+	boundaries []int
+}
+
+//nolint:gocognit,gocyclo,revive // byte-boundary preservation and fuzzy normalization are one inseparable mapping pass.
+func mapNormalizedText(input string, fuzzy bool) normalizedTextMap {
+	var out strings.Builder
+	boundaries := []int{0}
+	appendMapped := func(text string, start, end int) {
+		out.WriteString(text)
+		for range len(text) {
+			boundaries = append(boundaries, end)
+		}
+		_ = start
+	}
+	for offset := 0; offset < len(input); {
+		lineEnd := offset
+		for lineEnd < len(input) && input[lineEnd] != '\n' && input[lineEnd] != '\r' {
+			lineEnd++
+		}
+		contentEnd := lineEnd
+		if fuzzy {
+			for contentEnd > offset && (input[contentEnd-1] == ' ' || input[contentEnd-1] == '\t') {
+				contentEnd--
+			}
+		}
+		for pos := offset; pos < contentEnd; {
+			r, size := utf8.DecodeRuneInString(input[pos:contentEnd])
+			mapped := input[pos : pos+size]
+			if fuzzy {
+				if ascii, ok := normalizeRune(r); ok {
+					mapped = string([]byte{ascii})
+				}
+			}
+			appendMapped(mapped, pos, pos+size)
+			pos += size
+		}
+		if fuzzy && contentEnd < lineEnd && len(boundaries) > 0 {
+			boundaries[len(boundaries)-1] = lineEnd
+		}
+		if lineEnd == len(input) {
+			break
+		}
+		newlineEnd := lineEnd + 1
+		if input[lineEnd] == '\r' && newlineEnd < len(input) && input[newlineEnd] == '\n' {
+			newlineEnd++
+		}
+		appendMapped("\n", lineEnd, newlineEnd)
+		offset = newlineEnd
+	}
+	return normalizedTextMap{text: out.String(), boundaries: boundaries}
 }
 
 func countLines(s string) int {

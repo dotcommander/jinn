@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"regexp"
 	"strings"
 )
@@ -78,10 +77,10 @@ func parseSRPatterns(filesArg interface{}) ([]string, error) {
 // collectSRPattern resolves a single pattern (path, directory, or glob) and appends
 // its matching, sandbox-safe, non-directory files to candidates (deduped via seen).
 func (e *Engine) collectSRPattern(ctx context.Context, pat string, seen map[string]bool, candidates *[]searchReplaceCandidate) error {
-	resolved, err := e.checkPath(pat)
+	resolved, err := e.checkPathForMutation(pat)
 	if err == nil {
 		// It's a real path — check if it's a directory.
-		info, statErr := os.Stat(resolved)
+		info, statErr := e.rootedStat(resolved)
 		switch {
 		case statErr == nil && !info.IsDir():
 			if !seen[resolved] {
@@ -123,11 +122,11 @@ func (e *Engine) collectSRPattern(ctx context.Context, pat string, seen map[stri
 // appendSRCandidate adds f to candidates if it resolves inside the sandbox, is a
 // regular (non-directory) file, and has not already been seen.
 func (e *Engine) appendSRCandidate(f string, seen map[string]bool, candidates *[]searchReplaceCandidate) {
-	resolved, err := e.checkPath(f)
+	resolved, err := e.checkPathForMutation(f)
 	if err != nil {
 		return // skip files outside sandbox
 	}
-	info, statErr := os.Stat(resolved)
+	info, statErr := e.rootedStat(resolved)
 	if statErr != nil || info.IsDir() {
 		return
 	}
@@ -220,47 +219,4 @@ func filterSRInclude(candidates []searchReplaceCandidate, args map[string]interf
 		}
 	}
 	return filtered, nil
-}
-
-// globMatch does a simple glob match where '*' matches any non-separator.
-func globMatch(pattern, name string) bool {
-	// Simple implementation: handle common cases like "*.go", "*.ts"
-	if pattern == "" {
-		return true
-	}
-	if pattern[0] == '*' && !strings.Contains(pattern[1:], "*") {
-		suffix := pattern[1:]
-		return strings.HasSuffix(name, suffix)
-	}
-	if strings.Contains(pattern, "*") {
-		// For complex globs, compile as regex.
-		regex := globToRegex(pattern)
-		re, err := regexp.Compile(regex)
-		if err != nil {
-			return false
-		}
-		return re.MatchString(name)
-	}
-	return name == pattern
-}
-
-// globToRegex converts a simple glob to a regex pattern.
-func globToRegex(glob string) string {
-	var b strings.Builder
-	b.WriteString("^")
-	for _, ch := range glob {
-		switch ch {
-		case '*':
-			b.WriteString("[^/]*")
-		case '?':
-			b.WriteString("[^/]")
-		case '\\', '.', '(', ')', '|', '+', '^', '$', '[', ']', '{', '}':
-			b.WriteByte('\\')
-			b.WriteRune(ch)
-		default:
-			b.WriteRune(ch)
-		}
-	}
-	b.WriteString("$")
-	return b.String()
 }

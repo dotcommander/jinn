@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"os/exec"
 	"regexp"
 	"time"
@@ -32,6 +31,7 @@ func (e *Engine) runGrep(ctx context.Context, cmd string, cmdArgs []string) (gre
 	defer cancel()
 	c := exec.CommandContext(cmdCtx, cmd, cmdArgs...) //nolint:gosec // G204: cmd is the resolved rg/grep binary; cmdArgs built internally
 	c.Dir = e.workDir
+	c.Env = e.subprocessEnv()
 	c.Stdout = outBuf
 	c.Stderr = errBuf
 	c.WaitDelay = 2 * time.Second
@@ -80,12 +80,21 @@ func (e *Engine) classifyZeroMatch(pattern, searchPath string, literal bool) str
 	if err != nil {
 		return "path_not_found"
 	}
-	info, err := os.Stat(resolved)
+	info, err := e.rootedStat(resolved)
 	if err != nil {
 		return "path_not_found"
 	}
 	if info.IsDir() {
-		entries, _ := os.ReadDir(resolved)
+		rel, relErr := e.rootRelative(resolved)
+		if relErr != nil {
+			return "path_not_found"
+		}
+		dir, openErr := e.root.Open(rel)
+		if openErr != nil {
+			return "path_not_found"
+		}
+		entries, _ := dir.Readdirnames(1)
+		_ = dir.Close()
 		if len(entries) == 0 {
 			return "path_is_empty_dir"
 		}

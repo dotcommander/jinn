@@ -1,6 +1,8 @@
 package jinn
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -233,7 +235,6 @@ func TestValidatePlanRejectsUnsafeShapes(t *testing.T) {
 		},
 	}
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			err := validatePlan(tt.plan)
@@ -261,5 +262,63 @@ func TestRewritePlanShellClassificationPreservesHint(t *testing.T) {
 	}
 	if !strings.Contains(got, "[hint: keep this]") {
 		t.Errorf("hint was dropped: %q", got)
+	}
+}
+
+func TestPlanLimitsAndTranscriptBudget(t *testing.T) {
+	plan := &PlanTree{Root: "n", MaxDepth: maxPlanDepth + 1, Nodes: []PlanNode{{ID: "n", Commands: []PlanOp{{Tool: "list_dir"}}}}}
+	if err := validatePlan(plan); err == nil {
+		t.Fatal("depth cap accepted")
+	}
+	plan.MaxDepth = 0
+	plan.Nodes[0].Commands = make([]PlanOp, maxPlanCommands+1)
+	if err := validatePlan(plan); err == nil {
+		t.Fatal("command cap accepted")
+	}
+	plan.Nodes[0].Commands = []PlanOp{{Tool: "list_dir"}}
+	plan.Nodes[0].Edges = make([]PlanEdge, maxPlanEdges+1)
+	if err := validatePlan(plan); err == nil {
+		t.Fatal("edge cap accepted")
+	}
+	plan.Nodes[0].Edges = nil
+	plan.Nodes = make([]PlanNode, maxPlanNodes+1)
+	plan.Nodes[0] = PlanNode{ID: "n", Commands: []PlanOp{{Tool: "list_dir"}}}
+	if err := validatePlan(plan); err == nil {
+		t.Fatal("node cap accepted")
+	}
+	result := PlanRunResult{Transcript: make([]PlanNodeResult, 16)}
+	for i := range result.Transcript {
+		result.Transcript[i].NodeID = strings.Repeat("\x00", 256)
+		for j := 0; j < maxPlanCommands; j++ {
+			result.Transcript[i].Ops = append(result.Transcript[i].Ops, boundPlanOpResult(PlanOpResult{Result: strings.Repeat("\x00", 1<<20), Error: strings.Repeat("\x00", 1<<20), Stdout: strings.Repeat("\x00", 1<<20), Stderr: strings.Repeat("\x00", 1<<20)}))
+		}
+	}
+	compactPlanTranscript(result.Transcript)
+	data, err := json.Marshal(result)
+	if err != nil || len(data) > maxPlanTranscript {
+		t.Fatalf("transcript=%d err=%v", len(data), err)
+	}
+	max := PlanRunResult{Transcript: make([]PlanNodeResult, 29), PathTaken: make([]string, 29), StoppedReason: StopResourceLimit}
+	for i := range max.Transcript {
+		max.Transcript[i].NodeID = strings.Repeat("\x00", 256)
+		max.PathTaken[i] = strings.Repeat("\x00", 256)
+		opCount := 1
+		if i < 15 {
+			opCount = maxPlanCommands
+		}
+		for j := 0; j < opCount; j++ {
+			max.Transcript[i].Ops = append(max.Transcript[i].Ops, boundPlanOpResultLimit(PlanOpResult{Result: strings.Repeat("\x00", 1024), Error: strings.Repeat("\x00", 1024), Stdout: strings.Repeat("\x00", 1024), Stderr: strings.Repeat("\x00", 1024)}, 1024))
+		}
+	}
+	max.Transcript, max.PathTaken = fitPlanTranscript(max.Transcript, max.PathTaken, 29, 254, 29)
+	max.StoppedReason = StopMutationBlocked
+	data, err = json.Marshal(max)
+	if err != nil || len(data) > maxPlanTranscript {
+		t.Fatalf("max serialized transcript=%d err=%v", len(data), err)
+	}
+	e, _ := testEngine(t)
+	plan = &PlanTree{Root: "n", Nodes: []PlanNode{{ID: "n", Commands: []PlanOp{{Tool: "list_dir"}}}}}
+	if _, err := e.runPlanTree(context.Background(), plan); err != nil {
+		t.Fatalf("valid bounded plan: %v", err)
 	}
 }

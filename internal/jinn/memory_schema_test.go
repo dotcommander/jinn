@@ -10,6 +10,22 @@ import (
 	"time"
 )
 
+func TestMemoryReadDoesNotCreateAndPinExpiryIsRejected(t *testing.T) {
+	base := t.TempDir()
+	t.Setenv("JINN_CONFIG_DIR", base)
+	e := New(t.TempDir(), "dev")
+	t.Cleanup(func() { _ = e.Close() })
+	if _, err := e.memoryTool(context.Background(), args("action", "list", "scope", "global")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(base, "jinn", "memory.db")); !os.IsNotExist(err) {
+		t.Fatalf("read-only list created database: %v", err)
+	}
+	if _, err := e.memoryTool(context.Background(), args("action", "save", "key", "bad", "value", "x", "scope", "global", "pin", true, "expires_in", "1h")); err == nil {
+		t.Fatal("pin plus expiry was accepted")
+	}
+}
+
 // TestMemorySchema_TablesExist boots the engine, triggers lazy DB open,
 // and asserts all 7 unified schema tables are present.
 func TestMemorySchema_TablesExist(t *testing.T) {

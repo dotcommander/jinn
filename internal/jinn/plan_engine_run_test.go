@@ -366,7 +366,6 @@ func TestRunPlanConditionSemantics(t *testing.T) {
 		},
 	}
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			got, err := e.evaluateCondition(tt.last, tt.cond)
@@ -406,5 +405,34 @@ func TestRunPlanParallelReads(t *testing.T) {
 		if !op.OK {
 			t.Fatalf("parallel read failed: %+v", op)
 		}
+	}
+}
+
+func TestRunPlanEvaluatesEdgesAgainstUntruncatedOutput(t *testing.T) {
+	e, _ := testEngine(t)
+	token := "tail-token-beyond-transcript-limit"
+	plan := &PlanTree{Root: "first", Nodes: []PlanNode{
+		{ID: "first", Commands: []PlanOp{{Shell: "printf '" + strings.Repeat("x", 2000) + token + "'"}}, Edges: []PlanEdge{{When: Condition{Kind: "match", Regex: token, Stream: "stdout"}, To: "done"}}},
+		{ID: "done", Commands: []PlanOp{{Tool: "list_dir", Args: args("path", ".")}}},
+	}}
+	result, err := e.runPlanTree(context.Background(), plan)
+	if err != nil || result.StoppedReason != StopLeaf || len(result.PathTaken) != 2 {
+		t.Fatalf("raw edge result=%+v err=%v", result, err)
+	}
+	if strings.Contains(result.Transcript[0].Ops[0].Stdout, token) {
+		t.Fatal("transcript retained unbounded raw output")
+	}
+}
+
+func TestRunPlanOperationBudgetUsesResourceLimit(t *testing.T) {
+	e, _ := testEngine(t)
+	commands := make([]PlanOp, maxPlanCommands)
+	for i := range commands {
+		commands[i] = PlanOp{Tool: "list_dir", Args: args("path", ".")}
+	}
+	plan := &PlanTree{Root: "loop", MaxDepth: maxPlanDepth, Nodes: []PlanNode{{ID: "loop", Commands: commands, Edges: []PlanEdge{{When: Condition{Kind: "always"}, To: "loop"}}}}}
+	result, err := e.runPlanTree(context.Background(), plan)
+	if err != nil || result.StoppedReason != StopResourceLimit {
+		t.Fatalf("budget result=%+v err=%v", result, err)
 	}
 }

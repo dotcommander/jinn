@@ -114,28 +114,13 @@ func TestSearchFilesCanceled(t *testing.T) {
 	}
 }
 
-// TestFindFilesTimeout verifies that a wedged fd/find subprocess surfaces
-// as ErrCodeTimeout, distinct from a normal no-match result.
+// TestFindFilesTimeout verifies that native traversal honors cancellation.
 func TestFindFilesTimeout(t *testing.T) {
-	// Not parallel: mutates process-global findTimeout.
-	if runtime.GOOS == "windows" {
-		t.Skip("shim assumes POSIX shell")
-	}
-
 	_, dir := testEngine(t)
-	shimDir := t.TempDir()
-	fdShim := shimSleepBinary(t, shimDir, "fd")
-
 	e := New(dir, "dev")
-	e.fdPath = fdShim // force the fd path with our slow shim
-
-	orig := findTimeout
-	findTimeout = 200 * time.Millisecond
-	t.Cleanup(func() { findTimeout = orig })
-
-	start := time.Now()
-	_, err := e.findFiles(context.Background(), args("pattern", "*.go"))
-	elapsed := time.Since(start)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := e.findFiles(ctx, args("pattern", "*.go"))
 
 	if err == nil {
 		t.Fatal("expected timeout error, got nil")
@@ -144,14 +129,11 @@ func TestFindFilesTimeout(t *testing.T) {
 	if !errors.As(err, &sug) {
 		t.Fatalf("expected *ErrWithSuggestion, got %T: %v", err, err)
 	}
-	if sug.Code != ErrCodeTimeout {
-		t.Fatalf("expected Code=%q, got %q (err=%v)", ErrCodeTimeout, sug.Code, err)
+	if sug.Code != ErrCodeCanceled {
+		t.Fatalf("expected Code=%q, got %q (err=%v)", ErrCodeCanceled, sug.Code, err)
 	}
-	if !strings.Contains(err.Error(), "fd") {
-		t.Fatalf("expected backend 'fd' in error, got: %v", err)
-	}
-	if elapsed > 5*time.Second {
-		t.Fatalf("findFiles did not honor timeout: elapsed=%s", elapsed)
+	if !strings.Contains(err.Error(), "canceled") {
+		t.Fatalf("expected cancellation error, got: %v", err)
 	}
 }
 
@@ -180,11 +162,7 @@ func TestFindFilesCanceled(t *testing.T) {
 	}
 
 	_, dir := testEngine(t)
-	shimDir := t.TempDir()
-	fdShim := shimSleepBinary(t, shimDir, "fd")
-
 	e := New(dir, "dev")
-	e.fdPath = fdShim
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

@@ -126,11 +126,11 @@ This is the deep integration: jinn as the entire tool layer, so your loop stays 
 - `jinn --schema` emits OpenAI-compatible function-calling definitions — feed them to any provider verbatim.
 - One subprocess per call means no daemon lifecycle, no connection state, no cleanup in your loop.
 - The envelope is uniform: on failure you get `error_code` plus a one-sentence `suggestion` — pipe the suggestion straight back to the model for self-repair instead of writing retry heuristics.
-- Path confinement, TOCTOU protection, atomic writes, and `undo` snapshots come free; your loop never needs to implement "don't let the model write to `.ssh`".
+- Rooted path confinement, checksum preconditions, cross-process locks, atomic writes, and `undo` snapshots come free; your loop never needs to implement "don't let the model write to `.ssh`".
 
 A minimal loop is just: model emits a tool call → serialize to jinn's request shape → spawn `jinn` → return the response to the model. Working subprocess wrappers for Python, TypeScript/Bun, Go, PHP, and shell live in [getting-started.md](getting-started.md#integration-patterns).
 
 ## What's Next
 
 - [Tool Reference](tool-reference.md) — every tool with full parameter tables and examples
-- [Security](security.md) — path confinement, TOCTOU protection, atomic writes, and the risk classifier
+- [Security](security.md) — rooted confinement, mutation preconditions, shell modes, and the risk classifier

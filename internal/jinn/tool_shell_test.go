@@ -365,6 +365,22 @@ func TestRunShell_KillsBackgroundProcesses(t *testing.T) {
 	}
 }
 
+func TestRunShell_TimeoutKillsBackgroundPipeHolder(t *testing.T) {
+	t.Parallel()
+	e, _ := testEngine(t)
+	start := time.Now()
+	result, _, err := e.runShell(context.Background(), args(
+		"command", "sleep 10 & echo done",
+		"timeout", float64(1),
+	))
+	if err != nil {
+		t.Fatalf("run_shell: %v", err)
+	}
+	if time.Since(start) > 4*time.Second || !strings.Contains(result, "[exit: 124]") {
+		t.Fatalf("background pipe holder escaped timeout: elapsed=%s result=%s", time.Since(start), result)
+	}
+}
+
 func TestRunShell_CancelKillsBackgroundProcesses(t *testing.T) {
 	t.Parallel()
 	e, _ := testEngine(t)
@@ -417,14 +433,55 @@ func TestSubprocessEnv_AllowsExplicitOverlayWithoutSecrets(t *testing.T) {
 
 	env := subprocessEnv(map[string]string{"GOCACHE": "/tmp/jinn-cache"})
 	joined := strings.Join(env, "\n")
-	if !strings.Contains(joined, "PATH=/bin") {
-		t.Fatalf("expected PATH allowlist entry, got %#v", env)
+	if !strings.Contains(joined, "PATH=/usr/bin:/bin:/usr/sbin:/sbin") {
+		t.Fatalf("expected sanitized launch-time PATH, got %#v", env)
 	}
 	if !strings.Contains(joined, "GOCACHE=/tmp/jinn-cache") {
 		t.Fatalf("expected explicit GOCACHE overlay, got %#v", env)
 	}
 	if strings.Contains(joined, "OPENAI_API_KEY") || strings.Contains(joined, "GITHUB_TOKEN") {
 		t.Fatalf("secret-bearing env leaked into subprocess env: %#v", env)
+	}
+}
+
+func TestEngineShellProcessEnvHonorsModeAndLaunchPath(t *testing.T) {
+	workDir := t.TempDir()
+	t.Setenv("PATH", "/bin:relative:/usr/bin:/bin")
+	t.Setenv("HOME", "/host/home")
+	t.Setenv("TMPDIR", "/host/tmp")
+	t.Setenv("USER", "tester")
+	t.Setenv("OPENAI_API_KEY", "secret")
+
+	e, err := NewWithConfig(workDir, EngineConfig{
+		Version: "test", ShellMode: ShellModeUnsafe,
+		UnsafeAllowMutationWithoutPreconditions: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = e.Close() })
+
+	unsafeEnv := strings.Join(e.shellProcessEnv("/synthetic/home", "/synthetic/tmp"), "\n")
+	for _, want := range []string{"PATH=/bin:/usr/bin", "HOME=/host/home", "TMPDIR=/host/tmp", "USER=tester"} {
+		if !strings.Contains(unsafeEnv, want) {
+			t.Errorf("unsafe environment missing %q: %s", want, unsafeEnv)
+		}
+	}
+	if strings.Contains(unsafeEnv, "OPENAI_API_KEY") {
+		t.Fatalf("unsafe environment leaked a secret: %s", unsafeEnv)
+	}
+
+	e.shellMode = ShellModeSandboxed
+	sandboxedEnv := strings.Join(e.shellProcessEnv("/synthetic/home", "/synthetic/tmp"), "\n")
+	for _, want := range []string{"PATH=/bin:/usr/bin", "HOME=/synthetic/home", "TMPDIR=/synthetic/tmp", "SHELL=/bin/bash"} {
+		if !strings.Contains(sandboxedEnv, want) {
+			t.Errorf("sandboxed environment missing %q: %s", want, sandboxedEnv)
+		}
+	}
+	for _, excluded := range []string{"HOME=/host/home", "TMPDIR=/host/tmp", "USER=", "OPENAI_API_KEY"} {
+		if strings.Contains(sandboxedEnv, excluded) {
+			t.Errorf("sandboxed environment contains %q: %s", excluded, sandboxedEnv)
+		}
 	}
 }
 

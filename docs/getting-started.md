@@ -34,7 +34,9 @@ This prints the full compact [OpenAI function-calling schema](https://platform.o
 
 ## Your First Tool Call
 
-jinn reads a single JSON object from stdin and writes a single JSON object to stdout. Read a file:
+jinn reads exactly one JSON object of at most 16 MiB from stdin and writes one
+JSON object to stdout. Duplicate keys, trailing values, unknown fields, invalid
+types, and unknown tool arguments are rejected. Read a file:
 
 ```bash
 echo '{"tool":"read_file","args":{"path":"go.mod"}}' | jinn
@@ -318,4 +320,4 @@ Supported actions: `definition`, `references`, `hover`, `symbols`, `diagnostics`
 
 - [Harness Integrations](harness-integrations.md) -- recipes for Claude Code, Codex CLI, and custom agent loops
 - [Tool Reference](tool-reference.md) -- every tool with full parameter tables and examples
-- [Security](security.md) -- path confinement, TOCTOU protection, atomic writes, and the risk classifier
+- [Security](security.md) -- rooted confinement, mutation preconditions, shell modes, and the risk classifier

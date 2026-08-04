@@ -3,6 +3,7 @@ package jinn
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -82,7 +83,7 @@ func planToolRisk(tool string, args map[string]any) (RiskLevel, error) {
 	if tool == "run_shell" {
 		command, _ := args["command"].(string)
 		if strings.TrimSpace(command) == "" {
-			return RiskSafe, fmt.Errorf("run_shell command is required")
+			return RiskSafe, errors.New("run_shell command is required")
 		}
 		risk, _ := ClassifyCommand(command)
 		return risk, nil
@@ -111,10 +112,17 @@ func planToolRisk(tool string, args map[string]any) (RiskLevel, error) {
 	return RiskSafe, nil
 }
 
+//nolint:gocognit,gocyclo,revive // validation follows the ordered graph invariants reported to callers.
 func validatePlan(plan *PlanTree) error {
+	if len(plan.Nodes) > maxPlanNodes {
+		return planInvalid("plan has %d nodes; maximum is %d", len(plan.Nodes), maxPlanNodes)
+	}
+	if plan.MaxDepth < 0 || plan.MaxDepth > maxPlanDepth {
+		return planInvalid("plan max_depth must be between 0 and %d", maxPlanDepth)
+	}
 	if len(plan.Nodes) == 0 {
 		return &ErrWithSuggestion{
-			Err:        fmt.Errorf("plan has no nodes"),
+			Err:        errors.New("plan has no nodes"),
 			Suggestion: "fix the plan structure and resubmit — validation runs before any node executes",
 			Code:       ErrCodePlanInvalid,
 		}
@@ -127,6 +135,15 @@ func validatePlan(plan *PlanTree) error {
 	// Check for duplicate node IDs and structurally valid operations.
 	seen := make(map[string]bool, len(plan.Nodes))
 	for _, n := range plan.Nodes {
+		if len(n.ID) > 256 {
+			return planInvalid("node id exceeds 256 bytes")
+		}
+		if len(n.Commands) > maxPlanCommands {
+			return planInvalid("node %s has too many commands (maximum %d)", n.ID, maxPlanCommands)
+		}
+		if len(n.Edges) > maxPlanEdges {
+			return planInvalid("node %s has too many edges (maximum %d)", n.ID, maxPlanEdges)
+		}
 		if n.ID == "" {
 			return planInvalid("node id is required")
 		}
@@ -190,6 +207,7 @@ func planInvalid(format string, args ...any) error {
 	}
 }
 
+//nolint:perfsprint // compact operation validation errors are stable user-facing contract text.
 func validatePlanOp(op PlanOp) error {
 	hasShell := strings.TrimSpace(op.Shell) != ""
 	hasTool := op.Tool != ""
@@ -229,6 +247,7 @@ func numericPlanValue(value any, integer bool) (float64, bool) {
 	return number, true
 }
 
+//nolint:funlen,gocognit,gocyclo,revive,perfsprint // condition variants map directly to their wire contract.
 func validateCondition(cond Condition) error {
 	switch cond.Kind {
 	case "always":
@@ -306,6 +325,7 @@ func validateCondition(cond Condition) error {
 	return nil
 }
 
+//nolint:nestif // nested plan outcomes intentionally remain coupled to their parent result.
 func planToolResult(tr *ToolResult, err error) PlanOpResult {
 	res := PlanOpResult{OK: err == nil}
 	if err != nil {
@@ -369,6 +389,8 @@ func planShellResult(text string, meta map[string]any, err error, command string
 		res.Classification = string(class)
 		res.Result = rewritePlanShellClassification(res.Result, res.Classification, reason)
 	}
+	res.Stdout, _ = meta["stdout"].(string)
+	res.Stderr, _ = meta["stderr"].(string)
 	if strings.TrimSpace(command) != "" {
 		risk, _ := ClassifyCommand(command)
 		res.Risk = risk.String()
@@ -450,7 +472,9 @@ func (e *Engine) runPlanOp(ctx context.Context, cwd string, op PlanOp) (PlanOpRe
 // destructive-command scanner — command_risk.go's tokenizer already covers
 // the false-positive matrix (e.g. redirects to /dev/null) more precisely
 // than a regex scan would.
-func (e *Engine) runMutatingOp(ctx context.Context, cwd string, node *PlanNode, planForce bool, opCtx *planExecutionContext, op PlanOp) (PlanOpResult, bool) {
+//
+//nolint:revive // execution inputs mirror the plan operation authorization boundary.
+func (e *Engine) runMutatingOp(ctx context.Context, cwd string, node *PlanNode, planForce bool, op PlanOp) (PlanOpResult, bool) {
 	var risk RiskLevel
 	switch {
 	case op.Shell != "":
@@ -465,7 +489,7 @@ func (e *Engine) runMutatingOp(ctx context.Context, cwd string, node *PlanNode, 
 		return blockedPlanOp("plan op must set exactly one of shell or tool")
 	}
 
-	if risk == RiskDangerous && !(planForce && node.Force) {
+	if risk == RiskDangerous && (!planForce || !node.Force) {
 		return blockedPlanOp("blocked: dangerous mutation requires plan.force and node.force")
 	}
 
@@ -519,6 +543,7 @@ func negateCondition(matched, negate bool) bool {
 	return matched
 }
 
+//nolint:funlen,gocognit,gocyclo,nilerr,revive // malformed result data is deliberately a non-matching condition.
 func (e *Engine) evaluateCondition(last PlanOpResult, cond Condition) (bool, error) {
 	var matched bool
 	switch cond.Kind {
@@ -527,7 +552,7 @@ func (e *Engine) evaluateCondition(last PlanOpResult, cond Condition) (bool, err
 	case "exitCode":
 		expected, ok := numericPlanValue(cond.Value, true)
 		if !ok {
-			return false, fmt.Errorf("invalid exitCode value")
+			return false, errors.New("invalid exitCode value")
 		}
 		matched = compareNumeric(float64(last.ExitCode), expected, cond.Op)
 	case "fileExists":
@@ -535,12 +560,13 @@ func (e *Engine) evaluateCondition(last PlanOpResult, cond Condition) (bool, err
 		if err != nil {
 			return false, err
 		}
-		_, err = os.Stat(path)
-		if err == nil {
+		_, err = e.rootedStat(path)
+		switch {
+		case err == nil:
 			matched = true
-		} else if os.IsNotExist(err) {
+		case os.IsNotExist(err):
 			matched = false
-		} else {
+		default:
 			return false, err
 		}
 	case "match":
@@ -548,23 +574,29 @@ func (e *Engine) evaluateCondition(last PlanOpResult, cond Condition) (bool, err
 		if err != nil {
 			return false, err
 		}
-		// jinn uses a single combined Result string (not separate stdout/stderr streams),
-		// so both "stdout" and "stderr" test against last.Result — a deliberate simplification.
-		matched = re.MatchString(last.Result)
+		stream := last.Stdout
+		if cond.Stream == "stderr" {
+			stream = last.Stderr
+		}
+		matched = re.MatchString(stream)
 	case "numeric":
+		raw := last.Stdout
+		if raw == "" {
+			raw = last.Result
+		}
 		var s string
 		if cond.Extract != "" {
 			re, err := regexp.Compile(cond.Extract)
 			if err != nil {
 				return false, err
 			}
-			m := re.FindStringSubmatch(last.Result)
+			m := re.FindStringSubmatch(raw)
 			if len(m) < 2 {
 				return false, nil
 			}
 			s = m[1]
 		} else {
-			s = strings.TrimSpace(last.Result)
+			s = strings.TrimSpace(raw)
 		}
 		val, err := strconv.ParseFloat(s, 64)
 		if err != nil {
@@ -572,12 +604,16 @@ func (e *Engine) evaluateCondition(last PlanOpResult, cond Condition) (bool, err
 		}
 		expected, ok := numericPlanValue(cond.Value, false)
 		if !ok {
-			return false, fmt.Errorf("invalid numeric value")
+			return false, errors.New("invalid numeric value")
 		}
 		matched = compareNumeric(val, expected, cond.Op)
 	case "jsonPath":
 		var v any
-		if err := json.Unmarshal([]byte(last.Result), &v); err != nil {
+		raw := last.Stdout
+		if raw == "" {
+			raw = last.Result
+		}
+		if err := json.Unmarshal([]byte(raw), &v); err != nil {
 			return false, nil
 		}
 		segments := strings.Split(cond.Path, ".")
@@ -674,16 +710,25 @@ func (e *Engine) scopedPlanEngine(cwd string) (*Engine, error) {
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return nil, fmt.Errorf("plan cwd is outside working directory: %s", cwd)
 	}
+	root, err := e.root.OpenRoot(rel)
+	if err != nil {
+		return nil, fmt.Errorf("open plan cwd root: %w", err)
+	}
 	return &Engine{
-		workDir:       resolved,
-		version:       e.version,
-		tracker:       e.tracker,
-		rgPath:        e.rgPath,
-		fdPath:        e.fdPath,
-		LSPTimeoutSec: e.LSPTimeoutSec,
+		workDir:                      resolved,
+		version:                      e.version,
+		root:                         root,
+		shellMode:                    e.shellMode,
+		sandboxBinary:                e.sandboxBinary,
+		requireMutationPreconditions: e.requireMutationPreconditions,
+		tracker:                      e.tracker,
+		rgPath:                       e.rgPath,
+		execPath:                     e.execPath,
+		LSPTimeoutSec:                e.LSPTimeoutSec,
 	}, nil
 }
 
+//nolint:funlen,gocognit,gocyclo,nestif,revive // execution ordering, cancellation, and first-match edges form one state machine.
 func (e *Engine) runPlanTree(ctx context.Context, plan *PlanTree) (*PlanRunResult, error) {
 	opCtx := planExecutionContextFor(ctx, plan)
 	if opCtx.depth > opCtx.maxDepth {
@@ -699,7 +744,7 @@ func (e *Engine) runPlanTree(ctx context.Context, plan *PlanTree) (*PlanRunResul
 		return nil, err
 	}
 	if planEngine != e {
-		defer planEngine.Close()
+		defer func() { _ = planEngine.Close() }()
 	}
 	maxDepth := plan.MaxDepth
 	if maxDepth == 0 {
@@ -714,6 +759,7 @@ func (e *Engine) runPlanTree(ctx context.Context, plan *PlanTree) (*PlanRunResul
 	var pathTaken []string
 	var transcript []PlanNodeResult
 	edgesEvaluated, edgesMatched := 0, 0
+	operationsExecuted := 0
 
 	for {
 		if err := ctx.Err(); err != nil {
@@ -723,16 +769,24 @@ func (e *Engine) runPlanTree(ctx context.Context, plan *PlanTree) (*PlanRunResul
 			return &PlanRunResult{Transcript: transcript, PathTaken: pathTaken, DepthReached: depth, StoppedReason: StopMaxDepth, EdgesEvaluated: edgesEvaluated, EdgesMatched: edgesMatched}, nil
 		}
 		node := byID[currentID]
+		if operationsExecuted+len(node.Commands) > maxPlanOperations {
+			return &PlanRunResult{Transcript: transcript, PathTaken: pathTaken, DepthReached: depth, StoppedReason: StopResourceLimit, EdgesEvaluated: edgesEvaluated, EdgesMatched: edgesMatched}, nil
+		}
+		operationsExecuted += len(node.Commands)
 		pathTaken = append(pathTaken, currentID)
 
 		nodeResult := PlanNodeResult{NodeID: currentID, Depth: depth}
 		var lastOpResult PlanOpResult
 		blocked := false
 
-		runOp := func(op PlanOp) (PlanOpResult, bool) { return planEngine.runPlanOp(ctx, planEngine.workDir, op) }
+		runOp := func(op PlanOp) (PlanOpResult, bool) {
+			result, isBlocked := planEngine.runPlanOp(ctx, planEngine.workDir, op)
+			return result, isBlocked
+		}
 		if node.Mutates {
 			runOp = func(op PlanOp) (PlanOpResult, bool) {
-				return planEngine.runMutatingOp(ctx, planEngine.workDir, node, plan.Force && opCtx.dangerousAuthorized, opCtx, op)
+				result, isBlocked := planEngine.runMutatingOp(ctx, planEngine.workDir, node, plan.Force && opCtx.dangerousAuthorized, op)
+				return result, isBlocked
 			}
 		}
 
@@ -749,7 +803,7 @@ func (e *Engine) runPlanTree(ctx context.Context, plan *PlanTree) (*PlanRunResul
 			}
 			wg.Wait()
 			for i, b := range blockedFlags {
-				nodeResult.Ops = append(nodeResult.Ops, ops[i])
+				nodeResult.Ops = append(nodeResult.Ops, boundPlanOpResult(ops[i]))
 				lastOpResult = ops[i]
 				if b {
 					blocked = true
@@ -758,8 +812,11 @@ func (e *Engine) runPlanTree(ctx context.Context, plan *PlanTree) (*PlanRunResul
 			}
 		} else {
 			for _, op := range node.Commands {
+				if ctx.Err() != nil {
+					return &PlanRunResult{Transcript: transcript, PathTaken: pathTaken, DepthReached: depth, StoppedReason: StopAborted, EdgesEvaluated: edgesEvaluated, EdgesMatched: edgesMatched}, nil
+				}
 				opRes, isBlocked := runOp(op)
-				nodeResult.Ops = append(nodeResult.Ops, opRes)
+				nodeResult.Ops = append(nodeResult.Ops, boundPlanOpResult(opRes))
 				lastOpResult = opRes
 				if isBlocked {
 					blocked = true
@@ -769,12 +826,19 @@ func (e *Engine) runPlanTree(ctx context.Context, plan *PlanTree) (*PlanRunResul
 		}
 
 		transcript = append(transcript, nodeResult)
+		if !planTranscriptWithinBudget(transcript, pathTaken, depth, edgesEvaluated, edgesMatched) {
+			transcript, pathTaken = fitPlanTranscript(transcript, pathTaken, depth, edgesEvaluated, edgesMatched)
+			return &PlanRunResult{Transcript: transcript, PathTaken: pathTaken, DepthReached: depth, StoppedReason: StopResourceLimit, EdgesEvaluated: edgesEvaluated, EdgesMatched: edgesMatched}, nil
+		}
 		if blocked {
 			return &PlanRunResult{Transcript: transcript, PathTaken: pathTaken, DepthReached: depth, StoppedReason: StopMutationBlocked, EdgesEvaluated: edgesEvaluated, EdgesMatched: edgesMatched}, nil
 		}
 
 		matched := false
 		for _, edge := range node.Edges {
+			if ctx.Err() != nil {
+				return &PlanRunResult{Transcript: transcript, PathTaken: pathTaken, DepthReached: depth, StoppedReason: StopAborted, EdgesEvaluated: edgesEvaluated, EdgesMatched: edgesMatched}, nil
+			}
 			edgesEvaluated++
 			ok, err := planEngine.evaluateCondition(lastOpResult, edge.When)
 			if err != nil {
@@ -796,6 +860,57 @@ func (e *Engine) runPlanTree(ctx context.Context, plan *PlanTree) (*PlanRunResul
 			return &PlanRunResult{Transcript: transcript, PathTaken: pathTaken, DepthReached: depth, StoppedReason: reason, EdgesEvaluated: edgesEvaluated, EdgesMatched: edgesMatched}, nil
 		}
 	}
+}
+
+// boundPlanOpResult caps every serialized string field, not only Result, so
+// adversarial stdout/stderr/error payloads cannot grow plan_run metadata past
+// the documented 200 KiB response budget.
+func boundPlanOpResult(result PlanOpResult) PlanOpResult {
+	return boundPlanOpResultLimit(result, 1024)
+}
+
+func boundPlanOpResultLimit(result PlanOpResult, fieldLimit int) PlanOpResult {
+	trim := func(value string) string {
+		if len(value) <= fieldLimit {
+			return value
+		}
+		return value[:fieldLimit] + "…"
+	}
+	result.Result = trim(result.Result)
+	result.Error = trim(result.Error)
+	result.Stdout = trim(result.Stdout)
+	result.Stderr = trim(result.Stderr)
+	return result
+}
+
+func compactPlanTranscript(transcript []PlanNodeResult) {
+	for i := range transcript {
+		for j := range transcript[i].Ops {
+			transcript[i].Ops[j] = boundPlanOpResultLimit(transcript[i].Ops[j], 16)
+		}
+	}
+}
+
+func fitPlanTranscript(transcript []PlanNodeResult, pathTaken []string, depth, evaluated, matched int) ([]PlanNodeResult, []string) {
+	compactPlanTranscript(transcript)
+	for !planTranscriptWithinBudget(transcript, pathTaken, depth, evaluated, matched) {
+		switch {
+		case len(transcript) > 0:
+			transcript = transcript[1:]
+		case len(pathTaken) > 0:
+			pathTaken = pathTaken[1:]
+		default:
+			return nil, nil
+		}
+	}
+	return transcript, pathTaken
+}
+
+func planTranscriptWithinBudget(transcript []PlanNodeResult, pathTaken []string, depth, evaluated, matched int) bool {
+	// Budget with the longest stop-reason value so a later terminal decision
+	// cannot make an already-fitted result exceed the serialized cap.
+	data, err := json.Marshal(PlanRunResult{Transcript: transcript, PathTaken: pathTaken, DepthReached: depth, StoppedReason: StopMutationBlocked, EdgesEvaluated: evaluated, EdgesMatched: matched})
+	return err == nil && len(data) <= maxPlanTranscript
 }
 
 func shapePlanTranscript(nodes []PlanNodeResult) []PlanNodeResult {

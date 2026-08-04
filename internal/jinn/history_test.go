@@ -42,8 +42,8 @@ func TestLoadHistory_EmptyOnFirstLoad(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadHistory: %v", err)
 	}
-	if hf.Version != 1 {
-		t.Errorf("version: got %d, want 1", hf.Version)
+	if hf.Version != 2 {
+		t.Errorf("version: got %d, want 2", hf.Version)
 	}
 	if len(hf.Entries) != 0 {
 		t.Errorf("entries: got %d, want 0", len(hf.Entries))
@@ -71,8 +71,11 @@ func TestRecordSnapshot_BasicRoundtrip(t *testing.T) {
 	if ent.DisplayPath != "test.txt" {
 		t.Errorf("display_path: got %q, want test.txt", ent.DisplayPath)
 	}
-	if ent.AbsPath != absPath {
-		t.Errorf("abs_path: got %q, want %q", ent.AbsPath, absPath)
+	if ent.Target != "test.txt" {
+		t.Errorf("target: got %q, want test.txt", ent.Target)
+	}
+	if ent.AbsPath != "" {
+		t.Errorf("abs_path must not be persisted, got %q", ent.AbsPath)
 	}
 	if ent.Created {
 		t.Error("created should be false for existing file")
@@ -197,7 +200,7 @@ func TestAtomicWriteBytes_CreatesAndVerifies(t *testing.T) {
 	path := filepath.Join(dir, "blob.dat")
 	data := []byte("test blob content")
 
-	if err := atomicWriteBytes(path, data, 0o600); err != nil {
+	if err := atomicWriteBytes(path, data); err != nil {
 		t.Fatalf("atomicWriteBytes: %v", err)
 	}
 

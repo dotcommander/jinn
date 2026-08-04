@@ -1,6 +1,9 @@
 # Tool Reference
 
-jinn exposes 19 tools through a JSON-over-stdin/stdout protocol. You call them by piping a request object:
+jinn exposes 18 tools by default, or 19 when started with
+`--shell-mode=sandboxed` or `--shell-mode=unsafe`. The protocol accepts exactly
+one JSON object of at most 16 MiB and rejects duplicate keys, trailing values,
+unknown fields, invalid types, and unknown tool arguments.
 
 ```bash
 echo '{"tool":"read_file","args":{"path":"main.go"}}' | jinn
@@ -31,7 +34,7 @@ The full response type includes optional fields that carry structured metadata:
 
 ## File Operations
 
-These tools read, write, and edit files. All file paths are confined to the working directory. See [Security](security.md) for details on path confinement and TOCTOU protection.
+These tools read, write, and edit files. All file paths are confined to the working directory. See [Security](security.md) for rooted access, mutation preconditions, and locking.
 
 ### read_file
 
@@ -62,7 +65,7 @@ echo '{"tool":"read_file","args":{"path":"main.go"}}' | jinn
 - **Image files** are detected by content rather than extension — a `.png` renamed without an extension is still identified as an image. Detected images return a base64-encoded content block with the correct MIME type (`image/png`, `image/jpeg`, etc.). SVG files return `image/svg+xml`. Pass the result directly to a vision model.
 - Binary files (null byte in first 512 bytes) return `[binary file: N bytes — use stat_file for metadata or skip content reads]` as a success result (not an error).
 - When output is truncated, jinn appends: `[Showing lines X-Y of Z. Use start_line=N to continue. Remainder saved to <path>.]`. The remainder file lets you pick up exactly where the window ended.
-- jinn records the file's modification time for TOCTOU protection. See [Security: TOCTOU](security.md#toctou-protection).
+- `include_checksum:true` returns the SHA-256 required by secure mutation calls. See [Security: Mutation Preconditions](security.md#mutation-preconditions-and-locking).
 
 Read lines 10 through 20:
 
@@ -135,7 +138,7 @@ echo '{"tool":"multi_read","args":{"files":[{"path":"main.go"},{"path":"nonexist
 Write content to a file atomically.
 
 ```bash
-echo '{"tool":"write_file","args":{"path":"hello.txt","content":"Hello, world.\n"}}' | jinn
+echo '{"tool":"write_file","args":{"path":"hello.txt","content":"Hello, world.\n","if_absent":true}}' | jinn
 ```
 
 **Parameters:**
@@ -145,14 +148,15 @@ echo '{"tool":"write_file","args":{"path":"hello.txt","content":"Hello, world.\n
 | `path` | string | Yes | -- | File path relative to working directory |
 | `content` | string | Yes | -- | Content to write |
 | `dry_run` | bool | No | `false` | Preview the write without modifying the file |
-| `if_checksum` | string | No | -- | SHA-256 from a previous read (`meta.sha256`). Mismatch rejects the write with `error_code: "stale_file"` |
+| `if_checksum` | string | Conditional | -- | Required to replace an existing file. SHA-256 from a previous read (`meta.sha256`); mismatch rejects the write with `error_code: "stale_file"` |
+| `if_absent` | bool | Conditional | -- | Must be `true` to create a new file |
 
 **Notes:**
 
 - Writes are atomic: jinn writes to a hidden temp file, syncs to disk, then renames it into place. See [Security: Atomic Writes](security.md#atomic-writes).
 - Parent directories are created automatically.
 - If the file already exists, jinn preserves its permissions.
-- If you previously read the file, jinn checks that it hasn't changed since. See [Security: TOCTOU](security.md#toctou-protection).
+- Existing targets require the checksum from a prior read. See [Security: Mutation Preconditions](security.md#mutation-preconditions-and-locking).
 - Pass `if_checksum` (from `read_file` with `include_checksum: true`) to reject the write when the file changed since your read — the in-process check above cannot cross jinn invocations; `if_checksum` can.
 - `dry_run` on an existing file returns a unified diff. On a new file, it returns `[dry-run] would create path (N bytes)`.
 
@@ -167,7 +171,7 @@ echo '{"tool":"write_file","args":{"path":"hello.txt","content":"new content\n",
 Replace an exact text match in a file.
 
 ```bash
-echo '{"tool":"edit_file","args":{"path":"main.go","old_text":"fmt.Println","new_text":"log.Println"}}' | jinn
+echo '{"tool":"edit_file","args":{"path":"main.go","old_text":"fmt.Println","new_text":"log.Println","if_checksum":"<sha256-from-read_file>"}}' | jinn
 ```
 
 **Parameters:**
@@ -195,7 +199,7 @@ echo '{"tool":"edit_file","args":{"path":"main.go","old_text":"fmt.Println","new
 Edit with context lines:
 
 ```bash
-echo '{"tool":"edit_file","args":{"path":"main.go","old_text":"old","new_text":"new","show_context":2}}' | jinn
+echo '{"tool":"edit_file","args":{"path":"main.go","old_text":"old","new_text":"new","show_context":2,"if_checksum":"<sha256-from-read_file>"}}' | jinn
 ```
 
 Preview an edit:
@@ -209,7 +213,7 @@ echo '{"tool":"edit_file","args":{"path":"config.yaml","old_text":"port: 8080","
 Apply multiple edits across files. jinn validates all edits before writing, then writes each changed file atomically.
 
 ```bash
-echo '{"tool":"multi_edit","args":{"edits":[{"path":"a.go","old_text":"foo","new_text":"bar"},{"path":"b.go","old_text":"baz","new_text":"qux"}]}}' | jinn
+echo '{"tool":"multi_edit","args":{"edits":[{"path":"a.go","old_text":"foo","new_text":"bar","if_checksum":"<a-sha256>"},{"path":"b.go","old_text":"baz","new_text":"qux","if_checksum":"<b-sha256>"}]}}' | jinn
 ```
 
 **Parameters:**
@@ -231,7 +235,7 @@ Each edit object:
 
 **Notes:**
 
-- **Validate first.** jinn validates every edit (path security, TOCTOU, match uniqueness) before applying any. If any edit fails validation, zero edits are applied.
+- **Validate first.** jinn validates every edit (rooted path, checksum, and match uniqueness) before applying any. If any edit fails validation, zero edits are applied.
 - **Cross-call guard.** Put `if_checksum` on each edit derived from an earlier read. jinn also rechecks preflight bytes immediately before every write.
 - **Per-file atomic writes.** Each changed file is written via temp+rename. If a write fails after validation, earlier successful file writes are not rolled back; the error enumerates them with undo ids (`partial apply — N of M files already written: ... (undo id=...)`) so you can restore or retry the remainder.
 - `old_text` cannot be empty in any edit entry. An empty value returns an error immediately, before any edits are applied.
@@ -245,7 +249,7 @@ Each edit object:
 Apply a Codex-style patch payload.
 
 ```bash
-echo '{"tool":"apply_patch","args":{"patch":"*** Begin Patch\n*** Update File: main.go\n@@\n-old\n+new\n*** End Patch"}}' | jinn
+echo '{"tool":"apply_patch","args":{"patch":"*** Begin Patch\n*** Update File: main.go\n@@\n-old\n+new\n*** End Patch","if_checksums":{"main.go":"<sha256-from-read_file>"}}}' | jinn
 ```
 
 **Parameters:**
@@ -308,7 +312,7 @@ List snapshots, then restore one:
 
 ```bash
 echo '{"tool":"undo","args":{"action":"list"}}' | jinn
-echo '{"tool":"undo","args":{"action":"restore","id":"a1b2c3"}}' | jinn
+echo '{"tool":"undo","args":{"action":"restore","id":"a1b2c3","if_checksum":"<current-target-sha256>"}}' | jinn
 ```
 
 ### diff_files
@@ -397,9 +401,10 @@ echo '{"tool":"find_files","args":{"pattern":"*.go","path":"internal"}}' | jinn
 
 **Notes:**
 
-- Uses `fd` when available and falls back to POSIX `find`.
-- Returns JSON with `files`, `truncated`, `total_count`, `limit_used`, and `backend`.
-- Excludes `.git`, `node_modules`, `vendor`, `__pycache__`, `.cache`, `dist`, and `build`.
+- Uses a native bounded walker; `.gitignore` is not interpreted.
+- Patterns without `/` match basenames. Slash patterns match normalized relative paths; `*` stays within one segment and `**` spans segments.
+- Returns one JSON document with `files`, `truncated`, `total_count`, `total_count_exact`, `limit_used`, `backend`, and an optional `hint`.
+- Excludes hidden paths, `.git`, `.ssh`, `.aws`, `.gnupg`, `.env` variants, `node_modules`, `vendor`, `__pycache__`, `.cache`, `dist`, and `build` at every depth.
 
 ### search_replace
 
@@ -469,14 +474,15 @@ echo '{"tool":"list_dir","args":{"path":".","depth":2}}' | jinn
 | `path` | string | No | `"."` | Directory to list |
 | `depth` | int | No | `3` | Maximum recursion depth (clamped to 1--10) |
 | `max_entries` | int | No | `500` | Maximum number of entries to return (cap: 10000). When exceeded, response includes `truncated: true` and `total_count`. |
-| `changed_since` | number | No | `0` | Unix epoch seconds. Only list entries modified after this timestamp. |
+| `changed_since` | number | No | `0` | Unix epoch seconds, including fractions. Only list entries modified strictly after it. |
+| `changed_after` | string | No | -- | RFC3339Nano timestamp. Only list entries modified strictly after it. |
 
 **Notes:**
 
 - Hidden files and directories (names starting with `.`) are excluded.
 - Output is sorted alphabetically.
 - Directory entries are suffixed with `/` to distinguish them from files.
-- Returns a JSON object: `{"entries": [...], "truncated": false, "total_count": N}`.
+- Returns one JSON object with `entries`, `truncated`, `total_count`, and `total_count_exact`; an early traversal stop makes the total inexact.
 
 ---
 
@@ -484,7 +490,8 @@ echo '{"tool":"list_dir","args":{"path":".","depth":2}}' | jinn
 
 ### run_shell
 
-Run a bash command with a timeout.
+Run a bash command with a timeout. This tool exists only when an explicit shell
+mode is selected on the jinn command line.
 
 ```bash
 echo '{"tool":"run_shell","args":{"command":"go test ./..."}}' | jinn
@@ -501,13 +508,13 @@ echo '{"tool":"run_shell","args":{"command":"go test ./..."}}' | jinn
 
 **Notes:**
 
-- The command runs via `bash -c`. jinn creates a new process group (`Setpgid: true`) and uses a `SIGKILL` timer targeting the entire group (`kill(-pgid, SIGKILL)`) to enforce the deadline. This ensures all background processes spawned by the command are also killed — no external `timeout` binary is required.
+- `--shell-mode=sandboxed` uses the host OS sandbox with network disabled, synthetic `HOME`/`TMPDIR`, and fails at startup if confinement is unavailable. `--shell-mode=unsafe` is unconfined and restores only the allowlisted host environment. Both use a fixed workspace cwd, a sanitized snapshot of absolute existing directories from the launch-time host `PATH`, and process-group cleanup.
 - Exit code 124 means the command was killed by the timeout.
 - Output format: `[exit: N]\n<output>\n[classification: <class> — <reason>]`.
 - Every response includes `risk` and `classification` fields in the envelope.
 - Dangerous commands (e.g., `rm -rf`, `dd`, `sudo`) are blocked and return `ok: false` with a `suggestion` unless `force: true` is passed.
 - The shell environment is scrubbed to a fixed allowlist. See [Security: Shell Environment](security.md#shell-environment-scrubbing).
-- Output that exceeds 1 MB spills to a temp file. Long-running output is truncated. See [Security: Output Bounds](security.md#output-bounds).
+- Output over 1 MiB spills to a temp file and is capped at 16 MiB total; excess output kills the process group with `resource_limit`. See [Security: Output Bounds](security.md#output-bounds).
 
 Run with a longer timeout:
 
@@ -739,7 +746,8 @@ echo '{"tool":"memory","args":{"action":"save","key":"project.notes","value":"au
 - Keys are scoped by `(scope, scope_id)`. With no `scope`, jinn uses `project` and auto-detects the nearest `.git` ancestor of its working directory, falling back to the working directory itself.
 - `scope: "project"` accepts an optional `scope_id` path. `scope: "task"` and `scope: "agent"` require a caller-supplied `scope_id`. `scope: "global"` cannot have a `scope_id`.
 - The DB directory is created with mode `0700`. Writes use WAL journaling with a 5s busy timeout for cross-process safety.
-- A legacy `memory.json` from older jinn versions is imported once into the `"global"` scope on first run, then renamed to `memory.json.migrated`.
+- Legacy `memory.json` files are not imported automatically.
+- Read-only `recall` and `list` do not create or migrate a database. Expired non-pinned rows are hidden immediately, and new saves reject `pin:true` combined with expiry.
 - `recall` on a missing key returns `ok: false` with `suggestion: "use action=\"list\" to see available keys"`.
 - `gc` removes expired, unpinned memories and old idempotency rows. Pass `scope` to restrict memory cleanup to one scope bucket.
 

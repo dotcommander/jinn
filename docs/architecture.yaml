@@ -61,7 +61,7 @@ phases:
       - fork:
           gate: "tool name"
           branches:
-            - { condition: "run_shell", label: "runShell", subtitle: "bash -c · env allow-list · 300s max · risk classify", wide: true }
+            - { condition: "run_shell", label: "runShell", subtitle: "opt-in sandbox or unsafe · 300s max · risk classify", wide: true }
             - { condition: "run_plan", label: "runPlan", subtitle: "condition-gated plan tree · mutation authorization stays invocation-specific", wide: true }
             - { condition: "read_file", label: "readFile", subtitle: "50 MB guard · MIME detect · windowed lines · truncate strategy" }
             - { condition: "multi_read", label: "multiRead", subtitle: "batch ≤20 files · per-file errors", wide: true }
@@ -74,7 +74,7 @@ phases:
             - { condition: "search_replace", label: "searchReplace", subtitle: "regex multi-file replace · ≤50 files", wide: true }
             - { condition: "stat_file", label: "statFile", subtitle: "type + size + lines + mtime" }
             - { condition: "list_dir", label: "listDir", subtitle: "find → sort · hidden excluded" }
-            - { condition: "find_files", label: "findFiles", subtitle: "fd → find · glob pattern" }
+            - { condition: "find_files", label: "findFiles", subtitle: "native bounded walker · glob pattern" }
             - { condition: "list_tools", label: "listTools", subtitle: "registry-backed capability metadata" }
             - { condition: "detect_project", label: "detectProject", subtitle: "language · framework · build/test/lint" }
             - { condition: "memory", label: "memoryTool", subtitle: "save · recall · list · forget · per-project scope" }
@@ -129,7 +129,7 @@ phases:
       - { label: "compress", subtitle: "strategy chain · run_shell auto · others opt-in", wide: true }
       - { label: "command-aware", subtitle: "column trim · git log condense (compress_shell)" }
       - { label: "collapseRepeated", subtitle: "3+ identical lines → collapsed" }
-      - { label: "boundedWriter", subtitle: "1 MB hard cap · spill to tempfile", wide: true }
+      - { label: "boundedWriter", subtitle: "1 MiB tail · 16 MiB spill cap", wide: true }
       - fork:
           gate: "truncation mode"
           branches:
@@ -161,13 +161,13 @@ phases:
 stores:
   - name: "fileTracker.times"
     writers:
-      - { stage: "readFile", access: "w", note: "record mtime on read for TOCTOU" }
+      - { stage: "readFile", access: "w", note: "return SHA-256 mutation precondition" }
       - { stage: "writeFile", access: "r/w", note: "checkStale before write · update after rename" }
       - { stage: "editFile", access: "r/w", note: "checkStale before edit · update after rename" }
       - { stage: "multiEdit", access: "r/w", note: "checkStale all in validate phase" }
   - name: "jinn-shell-*.log"
     writers:
-      - { stage: "runShell", access: "w", note: "overflow spill when stdout exceeds 1 MB" }
+      - { stage: "runShell", access: "w", note: "bounded spill; kill group above 16 MiB" }
   - name: ".jinn-* (atomic temp)"
     writers:
       - { stage: "writeFile", access: "w", note: "write → chmod → sync → rename to target" }

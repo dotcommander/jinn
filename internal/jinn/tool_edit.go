@@ -155,7 +155,7 @@ func (e *Engine) loadEditTarget(path, oldText string) (resolved string, data []b
 		}
 	}
 
-	resolved, err = e.checkPath(path)
+	resolved, err = e.checkPathForMutation(path)
 	if err != nil {
 		return "", nil, err
 	}
@@ -163,7 +163,7 @@ func (e *Engine) loadEditTarget(path, oldText string) (resolved string, data []b
 		return "", nil, staleErr
 	}
 
-	data, err = os.ReadFile(resolved)
+	data, _, err = e.readRegularFile(resolved, maxFileSize)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return "", nil, &ErrWithSuggestion{
@@ -184,6 +184,21 @@ func (e *Engine) editFile(args map[string]interface{}) (*ToolResult, error) {
 	fuzzyIndent, _ := args["fuzzy_indent"].(bool)
 	showContext := intArg(args, "show_context", 0)
 
+	resolved, err := e.checkPathForMutation(path)
+	if err != nil {
+		return nil, err
+	}
+	var result *ToolResult
+	err = e.withTargetLocks([]string{resolved}, func() error {
+		var editErr error
+		result, editErr = e.editFileLocked(args, path, oldText, newText, fuzzyIndent, showContext)
+		return editErr
+	})
+	return result, err
+}
+
+//nolint:revive // arguments mirror the public edit request and its lock-owned preflight state.
+func (e *Engine) editFileLocked(args map[string]interface{}, path, oldText, newText string, fuzzyIndent bool, showContext int) (*ToolResult, error) {
 	resolved, data, err := e.loadEditTarget(path, oldText)
 	if err != nil {
 		return nil, err
@@ -192,8 +207,8 @@ func (e *Engine) editFile(args map[string]interface{}) (*ToolResult, error) {
 	// verifyIfChecksum in tool_write.go). Belt-and-suspenders over old_text
 	// matching: catches a stale old_text that still matches while the
 	// surrounding content changed.
-	if err := verifyIfChecksum(args, path, data, true); err != nil {
-		return nil, err
+	if checksumErr := verifyIfChecksum(args, path, data, true); checksumErr != nil {
+		return nil, checksumErr
 	}
 
 	updated, fuzzy, info, err := applyEdit(data, oldText, newText, fuzzyIndent)
@@ -220,12 +235,15 @@ func (e *Engine) editFile(args map[string]interface{}) (*ToolResult, error) {
 			Meta: map[string]any{"edit": details},
 		}, nil
 	}
+	if e.requireMutationPreconditions && strArg(args, "if_checksum") == "" {
+		return nil, &ErrWithSuggestion{Err: fmt.Errorf("if_checksum is required to edit existing file %s", path), Suggestion: "read the file with include_checksum=true and retry with that digest", Code: ErrCodeInvalidArgs}
+	}
 
 	if _, writeErr := e.snapshotAndWrite(resolved, path, "edit_file", data, updated); writeErr != nil {
 		return nil, writeErr
 	}
 
-	result := editResultText(editResultParams{
+	result := e.editResultText(editResultParams{
 		resolved: resolved, path: path, oldText: oldText, newText: newText,
 		info: info, fuzzy: fuzzy, showContext: showContext,
 	})
@@ -248,7 +266,7 @@ type editResultParams struct {
 
 // editResultText builds the human-readable summary for a live edit, optionally
 // appending a re-read context snippet when showContext > 0.
-func editResultText(p editResultParams) string {
+func (e *Engine) editResultText(p editResultParams) string {
 	oldLines := strings.Count(p.oldText, "\n") + 1
 	newLines := strings.Count(p.newText, "\n") + 1
 	result := fmt.Sprintf("edited %s: lines %d-%d (%d lines) replaced with %d lines", p.path, p.info.startLine, p.info.endLine, oldLines, newLines)
@@ -256,7 +274,7 @@ func editResultText(p editResultParams) string {
 		result += " (fuzzy match: normalized whitespace/quotes)"
 	}
 	if p.showContext > 0 {
-		if data, err := os.ReadFile(p.resolved); err == nil {
+		if data, _, err := e.readRegularFile(p.resolved, maxFileSize); err == nil {
 			result += fmt.Sprintf("\n--- context ---\n%s", formatEditContext(data, p.info, newLines, p.showContext))
 		}
 	}

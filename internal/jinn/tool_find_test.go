@@ -35,6 +35,25 @@ func TestFindFiles_BasicGlob(t *testing.T) {
 	}
 }
 
+func TestFindFilesNativePrunesSensitiveAndOptionLikePatterns(t *testing.T) {
+	t.Parallel()
+	e, dir := testEngine(t)
+	writeTestFile(t, dir, "--exec-harmless", "x")
+	writeTestFile(t, dir, filepath.Join("nested", ".ssh", "secret.txt"), "secret")
+	result, err := e.findFiles(context.Background(), args("pattern", "--exec*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed := parseFindResult(t, result)
+	if len(parsed.Files) != 1 || parsed.Files[0] != "--exec-harmless" || parsed.Backend != "native" {
+		t.Fatalf("unexpected native result: %+v", parsed)
+	}
+	result, err = e.findFiles(context.Background(), args("pattern", "*.txt"))
+	if err != nil || strings.Contains(result, "secret.txt") {
+		t.Fatalf("sensitive nested path leaked: %v %s", err, result)
+	}
+}
+
 func TestFindFiles_NoMatch(t *testing.T) {
 	t.Parallel()
 	e, dir := testEngine(t)
@@ -103,8 +122,8 @@ func TestFindFiles_Truncation(t *testing.T) {
 	if !res.Truncated {
 		t.Error("expected truncation")
 	}
-	if res.TotalCount != 20 {
-		t.Errorf("TotalCount = %d, want 20", res.TotalCount)
+	if res.TotalCount != 6 {
+		t.Errorf("TotalCount = %d, want limit+1 sentinel", res.TotalCount)
 	}
 	if len(res.Files) != 5 {
 		t.Errorf("len(Files) = %d, want 5", len(res.Files))
@@ -124,8 +143,8 @@ func TestFindFiles_Backend(t *testing.T) {
 	}
 
 	res := parseFindResult(t, result)
-	if res.Backend != "fd" && res.Backend != "find" {
-		t.Errorf("Backend = %q, want 'fd' or 'find'", res.Backend)
+	if res.Backend != "native" {
+		t.Errorf("Backend = %q, want native", res.Backend)
 	}
 }
 

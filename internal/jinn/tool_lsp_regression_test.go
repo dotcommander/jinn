@@ -26,7 +26,8 @@ func TestLspServerForExt_NewExtensions(t *testing.T) {
 	for _, ext := range newExts {
 		t.Run(ext, func(t *testing.T) {
 			t.Parallel()
-			_, err := lspServerForExt(ext)
+			e, _ := testEngine(t)
+			_, err := e.lspServerForExt(ext)
 			if err == nil {
 				return // binary present — passes
 			}

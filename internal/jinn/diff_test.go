@@ -1,9 +1,28 @@
 package jinn
 
 import (
+	"errors"
+	"strconv"
 	"strings"
 	"testing"
 )
+
+func TestDiffFilesStopsAtOperationBudget(t *testing.T) {
+	t.Parallel()
+	e, dir := testEngine(t)
+	var left, right strings.Builder
+	for i := range 3000 {
+		left.WriteString("left-" + strconv.Itoa(i) + "\n")
+		right.WriteString("right-" + strconv.Itoa(i) + "\n")
+	}
+	writeTestFile(t, dir, "left.txt", left.String())
+	writeTestFile(t, dir, "right.txt", right.String())
+	_, err := e.diffFiles(args("path_a", "left.txt", "path_b", "right.txt"))
+	var suggested *ErrWithSuggestion
+	if err == nil || !errors.As(err, &suggested) || suggested.Code != ErrCodeResourceLimit {
+		t.Fatalf("diff budget error = %v", err)
+	}
+}
 
 func TestUnifiedDiff_Identical(t *testing.T) {
 	t.Parallel()

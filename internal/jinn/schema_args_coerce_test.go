@@ -1,10 +1,29 @@
 package jinn
 
 import (
+	"bytes"
 	"encoding/json"
 	"strings"
 	"testing"
 )
+
+func TestDecodeOneRequestStrictBoundary(t *testing.T) {
+	t.Parallel()
+	for _, input := range []string{
+		`{"tool":"list_tools","args":{}} {}`,
+		`{"tool":"list_tools","args":{},"args":{}}`,
+		`{"tool":"list_tools","args":null}`,
+		`{"tool":"list_tools","args":"{}"}`,
+		`{"tool":"list_tools","extra":true}`,
+	} {
+		if _, err := DecodeOneRequest(strings.NewReader(input), 16<<20); err == nil {
+			t.Errorf("DecodeOneRequest(%q) succeeded", input)
+		}
+	}
+	if _, err := DecodeOneRequest(bytes.NewReader(make([]byte, 17)), 16); err == nil {
+		t.Fatal("oversized request succeeded")
+	}
+}
 
 func TestRequestArgsCoerce(t *testing.T) {
 	t.Parallel()
@@ -21,19 +40,19 @@ func TestRequestArgsCoerce(t *testing.T) {
 			wantArgs:  map[string]interface{}{"command": "ls"},
 		},
 		{
-			name:      "double-encoded string args -> same map as object form",
-			jsonInput: `{"tool":"run_shell","args":"{\"command\":\"ls\",\"timeout\":5}"}`,
-			wantArgs:  map[string]interface{}{"command": "ls", "timeout": float64(5)},
+			name:        "double-encoded string args rejected",
+			jsonInput:   `{"tool":"run_shell","args":"{\"command\":\"ls\",\"timeout\":5}"}`,
+			wantErrCont: "must be a JSON object",
 		},
 		{
 			name:        "double-encoded garbage string -> error",
 			jsonInput:   `{"tool":"run_shell","args":"not json"}`,
-			wantErrCont: "JSON-encoded string",
+			wantErrCont: "must be a JSON object",
 		},
 		{
 			name:        "double-encoded array string -> error",
 			jsonInput:   `{"tool":"run_shell","args":"[1,2]"}`,
-			wantErrCont: "JSON-encoded string",
+			wantErrCont: "must be a JSON object",
 		},
 		{
 			name:        "array args -> error",
@@ -41,19 +60,18 @@ func TestRequestArgsCoerce(t *testing.T) {
 			wantErrCont: "must be a JSON object",
 		},
 		{
-			name:      "args omitted -> nil Args",
+			name:      "args omitted -> empty Args",
 			jsonInput: `{"tool":"run_shell"}`,
-			wantArgs:  nil,
+			wantArgs:  map[string]interface{}{},
 		},
 		{
-			name:      "args null -> nil Args",
-			jsonInput: `{"tool":"run_shell","args":null}`,
-			wantArgs:  nil,
+			name:        "args null rejected",
+			jsonInput:   `{"tool":"run_shell","args":null}`,
+			wantErrCont: "must be a JSON object",
 		},
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			var req Request
@@ -145,7 +163,7 @@ func TestRunPlanSchemaRequiresOneNonEmptyCommand(t *testing.T) {
 		t.Fatalf("commands.items.properties.tool.enum = %v, want %d known tools", knownTools, len(toolCatalog))
 	}
 	planNodes := findRunPlanNodesSchema(t, tools)
-	if got, ok := planNodes["minItems"].(float64); !ok || got != 1 {
+	if got, minItemsOK := planNodes["minItems"].(float64); !minItemsOK || got != 1 {
 		t.Fatalf("plan.nodes.minItems = %v, want 1", planNodes["minItems"])
 	}
 	when := planNodes["items"].(map[string]any)["properties"].(map[string]any)["edges"].(map[string]any)["items"].(map[string]any)["properties"].(map[string]any)["when"].(map[string]any)

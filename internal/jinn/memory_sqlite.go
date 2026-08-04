@@ -77,6 +77,39 @@ func (e *Engine) memDBConn(ctx context.Context) (*sql.DB, error) {
 	return db, nil
 }
 
+func (e *Engine) memDBReadConn(ctx context.Context) (*sql.DB, error) {
+	e.memMu.Lock()
+	defer e.memMu.Unlock()
+	if e.memDB != nil {
+		return e.memDB, nil
+	}
+	if e.memReadDB != nil {
+		return e.memReadDB, nil
+	}
+	path, err := memoryDBPath()
+	if err != nil {
+		return nil, err
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, errors.New("memory database is not a regular file")
+	}
+	db, err := sql.Open("sqlite", "file:"+path+"?mode=ro&_pragma=query_only(1)&_pragma=busy_timeout(5000)")
+	if err != nil {
+		return nil, fmt.Errorf("memory: open read-only: %w", err)
+	}
+	db.SetMaxOpenConns(1)
+	if err := db.PingContext(ctx); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("memory: open read-only: %w", err)
+	}
+	e.memReadDB = db
+	return db, nil
+}
+
 // memoryUpsert carries the column values for a memory-table upsert.
 type memoryUpsert struct {
 	scope     string
@@ -121,13 +154,16 @@ func memoryUpsertTx(ctx context.Context, tx *sql.Tx, m memoryUpsert) error {
 // memoryRecallScoped fetches the value for (scope, scope_id, key). The bool is
 // false when no row exists; err is non-nil only on a real query failure.
 func (e *Engine) memoryRecallScoped(ctx context.Context, scope, scopeID, key string) (string, bool, error) {
-	db, err := e.memDBConn(ctx)
+	db, err := e.memDBReadConn(ctx)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return "", false, nil
+		}
 		return "", false, err
 	}
 	var v string
 	err = db.QueryRowContext(ctx,
-		"SELECT value FROM memory WHERE scope=? AND scope_id=? AND key=?",
+		"SELECT value FROM memory WHERE scope=? AND scope_id=? AND key=? AND (pinned=1 OR expires_at IS NULL OR expires_at > datetime('now'))",
 		scope, scopeID, key,
 	).Scan(&v)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -142,12 +178,15 @@ func (e *Engine) memoryRecallScoped(ctx context.Context, scope, scopeID, key str
 // memoryListScoped returns the keys in a scope+scope_id, sorted.
 // Slice is non-nil so it serializes as [] rather than null.
 func (e *Engine) memoryListScoped(ctx context.Context, scope, scopeID string) ([]string, error) {
-	db, err := e.memDBConn(ctx)
+	db, err := e.memDBReadConn(ctx)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return []string{}, nil
+		}
 		return nil, err
 	}
 	rows, err := db.QueryContext(ctx,
-		"SELECT key FROM memory WHERE scope=? AND scope_id=? ORDER BY key",
+		"SELECT key FROM memory WHERE scope=? AND scope_id=? AND (pinned=1 OR expires_at IS NULL OR expires_at > datetime('now')) ORDER BY key",
 		scope, scopeID,
 	)
 	if err != nil {
@@ -178,12 +217,15 @@ type memoryEntry struct {
 
 // memoryListScopedWithValues returns all entries in a scope+scope_id with values.
 func (e *Engine) memoryListScopedWithValues(ctx context.Context, scope, scopeID string) ([]memoryEntry, error) {
-	db, err := e.memDBConn(ctx)
+	db, err := e.memDBReadConn(ctx)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return []memoryEntry{}, nil
+		}
 		return nil, err
 	}
 	rows, err := db.QueryContext(ctx,
-		"SELECT key, value, value_type, kind, pinned, updated_at FROM memory WHERE scope=? AND scope_id=? ORDER BY key",
+		"SELECT key, value, value_type, kind, pinned, updated_at FROM memory WHERE scope=? AND scope_id=? AND (pinned=1 OR expires_at IS NULL OR expires_at > datetime('now')) ORDER BY key",
 		scope, scopeID,
 	)
 	if err != nil {
@@ -206,7 +248,7 @@ func (e *Engine) memoryListScopedWithValues(ctx context.Context, scope, scopeID 
 
 // memoryGCTx deletes expired, non-pinned memory rows within an existing transaction.
 // When scope is non-empty only that scope is swept; otherwise all scopes are swept.
-func (e *Engine) memoryGCTx(ctx context.Context, tx *sql.Tx, scope string) (int, error) {
+func (e *Engine) memoryGCTx(ctx context.Context, tx *sql.Tx, scope, scopeID string) (int, error) {
 	var (
 		res sql.Result
 		err error
@@ -216,8 +258,8 @@ func (e *Engine) memoryGCTx(ctx context.Context, tx *sql.Tx, scope string) (int,
 			`DELETE FROM memory WHERE pinned=0 AND expires_at IS NOT NULL AND expires_at <= datetime('now')`)
 	} else {
 		res, err = tx.ExecContext(ctx,
-			`DELETE FROM memory WHERE pinned=0 AND expires_at IS NOT NULL AND expires_at <= datetime('now') AND scope=?`,
-			scope)
+			`DELETE FROM memory WHERE pinned=0 AND expires_at IS NOT NULL AND expires_at <= datetime('now') AND scope=? AND scope_id=?`,
+			scope, scopeID)
 	}
 	if err != nil {
 		return 0, fmt.Errorf("memory: gc: %w", err)

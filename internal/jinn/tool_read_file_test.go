@@ -4,9 +4,22 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 )
+
+func TestReadFileRejectsFIFOWithoutBlocking(t *testing.T) {
+	t.Parallel()
+	e, dir := testEngine(t)
+	if err := syscall.Mkfifo(filepath.Join(dir, "pipe"), 0o600); err != nil {
+		t.Skipf("mkfifo unavailable: %v", err)
+	}
+	if _, err := e.readFile(args("path", "pipe")); err == nil || !strings.Contains(err.Error(), "regular file") {
+		t.Fatalf("FIFO read error = %v", err)
+	}
+}
 
 func TestReadFile_IncludeChecksumAddsMeta(t *testing.T) {
 	t.Parallel()

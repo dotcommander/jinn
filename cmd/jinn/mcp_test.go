@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/dotcommander/jinn/internal/jinn"
 )
 
 func TestMCPInitialize(t *testing.T) {
@@ -45,7 +47,7 @@ func TestMCPToolsListOnlyRouteTool(t *testing.T) {
 
 func TestMCPToolsCallRouteDoesNotExecute(t *testing.T) {
 	t.Parallel()
-	resp := handleMCPTestLine(t, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"jinn_route","arguments":{"need":"run tests"}}}`)
+	resp := handleMCPTestLine(t, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"jinn_route","arguments":{"need":"read source file"}}}`)
 	result := resp["result"].(map[string]any)
 	if result["isError"] != false {
 		t.Fatalf("isError = %v", result["isError"])
@@ -61,7 +63,7 @@ func TestMCPToolsCallRouteDoesNotExecute(t *testing.T) {
 	if err := json.Unmarshal([]byte(text), &route); err != nil {
 		t.Fatalf("route text is not JSON: %v\n%s", err, text)
 	}
-	if len(route.Matches) == 0 || route.Matches[0].Name != "run_shell" || route.Matches[0].Risk != "shell" {
+	if len(route.Matches) == 0 || route.Matches[0].Name != "read_file" || route.Matches[0].Risk != "read_only" {
 		t.Fatalf("unexpected route: %#v", route.Matches)
 	}
 	if len(text) > 4000 {
@@ -130,7 +132,7 @@ func TestMCPUnknownMethodAndTool(t *testing.T) {
 func TestMCPNotificationsProduceNoResponse(t *testing.T) {
 	t.Parallel()
 	var out bytes.Buffer
-	err := runMCP(t.Context(), strings.NewReader(`{"jsonrpc":"2.0","method":"notifications/initialized"}`+"\n"), &out, "test")
+	err := runMCP(t.Context(), strings.NewReader(`{"jsonrpc":"2.0","method":"notifications/initialized"}`+"\n"), &out, "test", jinn.ShellModeDisabled)
 	if err != nil {
 		t.Fatalf("runMCP: %v", err)
 	}
@@ -148,7 +150,7 @@ func TestMCPRunLoopMultipleMessages(t *testing.T) {
 		"",
 	}, "\n")
 	var out bytes.Buffer
-	if err := runMCP(t.Context(), strings.NewReader(input), &out, "test"); err != nil {
+	if err := runMCP(t.Context(), strings.NewReader(input), &out, "test", jinn.ShellModeDisabled); err != nil {
 		t.Fatalf("runMCP: %v", err)
 	}
 	scanner := bufio.NewScanner(&out)
@@ -166,7 +168,7 @@ func TestMCPRunLoopMultipleMessages(t *testing.T) {
 
 func handleMCPTestLine(t *testing.T, line string) map[string]any {
 	t.Helper()
-	resp, ok := handleMCPLine([]byte(line), "test")
+	resp, ok := handleMCPLine([]byte(line), "test", jinn.ShellModeDisabled)
 	if !ok {
 		t.Fatal("expected response")
 	}

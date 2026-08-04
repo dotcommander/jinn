@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dotcommander/jinn/internal/jinn"
 	"github.com/voocel/mcp-sdk-go/protocol"
 )
 
@@ -121,7 +122,7 @@ func handleCurrentMCPTestLine(t *testing.T, line string) map[string]any {
 		t.Fatalf("decode request: %v", err)
 	}
 	var responses []*protocol.Message
-	newMCPServer("test").Handle(context.Background(), &msg, func(response *protocol.Message) error {
+	newMCPServer("test", jinn.ShellModeDisabled).Handle(context.Background(), &msg, func(response *protocol.Message) error {
 		responses = append(responses, response)
 		return nil
 	})
@@ -143,13 +144,13 @@ func TestMCPCurrentRunLoopUsesSDKForCurrentInput(t *testing.T) {
 	t.Parallel()
 	inputReader, inputWriter := io.Pipe()
 	outputReader, outputWriter := io.Pipe()
-	defer inputReader.Close()
-	defer outputReader.Close()
+	defer func() { _ = inputReader.Close() }()
+	defer func() { _ = outputReader.Close() }()
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	runErr := make(chan error, 1)
 	go func() {
-		runErr <- runMCP(ctx, inputReader, outputWriter, "test")
+		runErr <- runMCP(ctx, inputReader, outputWriter, "test", jinn.ShellModeDisabled)
 	}()
 	line := `{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{` + currentMCPMeta + `}}` + "\n"
 	if _, err := io.WriteString(inputWriter, line); err != nil {
