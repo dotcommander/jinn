@@ -227,7 +227,8 @@ Each line in `requests.jsonl` is a complete JSON request object. jinn processes 
 |------|-------------|
 | `--schema` | Print all tool definitions as JSON and exit |
 | `--inspect [addr]` | Start the local browser inspector UI. Defaults to `127.0.0.1:8787` |
-| `--mcp` | Start the MCP 2026-07-28 stdio broker with one recommendation-only tool, `jinn_route` |
+| `--mcp` | Start the MCP 2026-07-28 stdio broker in the route-only discovery profile |
+| `--mcp-profile=discover\|read-only` | Select the MCP profile. `read-only` adds the guarded `jinn_call` executor and requires `--mcp` |
 | `--version` | Print the version and exit |
 | `--help`, `-h` | Print usage information and exit |
 
@@ -238,11 +239,33 @@ stdin/stdout. The current protocol is 2026-07-28 and uses stateless requests,
 not an `initialize` handshake. Each request carries the protocol version and
 client capabilities under `_meta`.
 
-The broker exposes one MCP tool, `jinn_route`. The tool is recommendation-only:
-it does not execute `read_file`, `run_shell`, or any other jinn tool. It maps a
-natural-language need to the most relevant existing jinn tools, risk/mutation
-notes, and optional lean schemas for only the matched tools. Keeping one tool in
-the MCP surface avoids prompt bloat from listing all 19 executor schemas.
+The default broker exposes one MCP tool, `jinn_route`. The tool is
+recommendation-only: it does not execute `read_file`, `run_shell`, or any other
+jinn tool. It maps a natural-language need to the most relevant existing jinn
+tools, risk/mutation notes, and optional lean schemas for only the matched
+tools. Keeping one tool in the default MCP surface avoids prompt bloat from
+listing all 19 executor schemas.
+
+For agents that need bounded inspection without granting mutation or shell
+access, use the opt-in read-only profile:
+
+```json
+{
+  "mcpServers": {
+    "jinn-read-only": {
+      "command": "jinn",
+      "args": ["--mcp-profile=read-only", "--mcp"]
+    }
+  }
+}
+```
+
+This profile exposes `jinn_route` and `jinn_call`. `jinn_call` dispatches only
+the canonical read-only tool allowlist, while file/state mutation, shell
+execution, `memory`, and `undo` are rejected before dispatch. It also forces
+shell execution off. The profile uses the current stateless 2026-07-28 request
+metadata; older initialize-based clients remain on the route-only compatibility
+path.
 
 For migration safety, a first older `initialize` request is detected and served
 by the legacy compatibility path. Current clients should use the 2026-07-28

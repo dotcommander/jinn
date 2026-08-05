@@ -70,6 +70,19 @@ func registeredToolNames() []string {
 	return names
 }
 
+// ReadOnlyToolNames returns the canonical tool allowlist for callers that need
+// to expose a strictly read-only execution surface. The returned slice is a
+// defensive copy and follows the stable catalog order.
+func ReadOnlyToolNames() []string {
+	names := make([]string, 0, len(toolCatalog))
+	for _, descriptor := range toolCatalog {
+		if descriptor.routeRisk == toolRouteRiskReadOnly {
+			names = append(names, descriptor.name)
+		}
+	}
+	return names
+}
+
 func (e *Engine) registeredToolNames() []string {
 	names := make([]string, 0, len(toolCatalog))
 	for _, descriptor := range toolCatalog {

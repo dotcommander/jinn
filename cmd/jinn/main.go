@@ -16,16 +16,17 @@ import (
 
 var version = "dev"
 
-const helpText = `Usage: jinn [--shell-mode=disabled|sandboxed|unsafe] [--schema | --inspect [addr] | --mcp | --version | --help]
+const helpText = `Usage: jinn [--shell-mode=disabled|sandboxed|unsafe] [--mcp-profile=discover|read-only] [--schema | --inspect [addr] | --mcp | --version | --help]
 
 Sandboxed tool executor for AI coding agents.
 Reads a JSON tool request from stdin, writes a JSON response to stdout.
 
 Flags:
 	--shell-mode  Shell execution policy: disabled, sandboxed, or unsafe (default: disabled)
-  --schema   Print tool definitions (OpenAI function-calling format)
-  --inspect  Start a local browser inspector UI (default: 127.0.0.1:8787)
-  --mcp      Start MCP 2026-07-28 stdio broker with one jinn_route tool
+	  --schema   Print tool definitions (OpenAI function-calling format)
+	  --inspect  Start a local browser inspector UI (default: 127.0.0.1:8787)
+	  --mcp      Start MCP 2026-07-28 stdio broker (default profile: jinn_route only)
+	  --mcp-profile  MCP surface: discover or read-only (default: discover)
   --version  Print version
   --help     Print this help
 
@@ -83,12 +84,12 @@ func writeResponse(resp jinn.Response) error {
 }
 
 func run(ctx context.Context) error {
-	mode, positional, err := parseShellModeArgs(os.Args[1:])
+	mode, profile, positional, err := parseCLIArgs(os.Args[1:])
 	if err != nil {
 		return fail(jinn.Response{Error: err.Error(), ErrorCode: jinn.ErrCodeInvalidArgs})
 	}
 	if len(positional) > 0 {
-		handled, flagErr := handleFlag(ctx, positional[0], positional[1:], mode)
+		handled, flagErr := handleFlagWithProfile(ctx, positional[0], positional[1:], mode, profile)
 		if handled || flagErr != nil {
 			return flagErr
 		}
@@ -129,6 +130,10 @@ func run(ctx context.Context) error {
 }
 
 func handleFlag(ctx context.Context, flag string, args []string, mode jinn.ShellMode) (bool, error) {
+	return handleFlagWithProfile(ctx, flag, args, mode, mcpProfileDiscover)
+}
+
+func handleFlagWithProfile(ctx context.Context, flag string, args []string, mode jinn.ShellMode, profile mcpProfile) (bool, error) {
 	switch flag {
 	case "--schema":
 		schema, err := jinn.LeanSchemaForMode(mode)
@@ -150,14 +155,20 @@ func handleFlag(ctx context.Context, flag string, args []string, mode jinn.Shell
 		}
 		return true, serveInspector(ctx, addr, version, mode)
 	case "--mcp":
-		return true, runMCP(ctx, os.Stdin, os.Stdout, version, mode)
+		return true, runMCPWithProfile(ctx, os.Stdin, os.Stdout, version, mode, profile)
 	default:
 		return false, nil
 	}
 }
 
 func parseShellModeArgs(arguments []string) (jinn.ShellMode, []string, error) {
+	mode, _, positional, err := parseCLIArgs(arguments)
+	return mode, positional, err
+}
+
+func parseCLIArgs(arguments []string) (jinn.ShellMode, mcpProfile, []string, error) {
 	mode := jinn.ShellModeDisabled
+	profile := mcpProfileDiscover
 	positional := make([]string, 0, len(arguments))
 	for i := 0; i < len(arguments); i++ {
 		arg := arguments[i]
@@ -167,21 +178,40 @@ func parseShellModeArgs(arguments []string) (jinn.ShellMode, []string, error) {
 			value = strings.TrimPrefix(arg, "--shell-mode=")
 		case arg == "--shell-mode":
 			if i+1 >= len(arguments) {
-				return "", nil, errors.New("--shell-mode requires a value")
+				return "", "", nil, errors.New("--shell-mode requires a value")
 			}
 			i++
 			value = arguments[i]
+		case strings.HasPrefix(arg, "--mcp-profile="):
+			profileValue := strings.TrimPrefix(arg, "--mcp-profile=")
+			parsed, err := parseMCPProfile(profileValue)
+			if err != nil {
+				return "", "", nil, err
+			}
+			profile = parsed
+			continue
+		case arg == "--mcp-profile":
+			if i+1 >= len(arguments) {
+				return "", "", nil, errors.New("--mcp-profile requires a value")
+			}
+			i++
+			parsed, err := parseMCPProfile(arguments[i])
+			if err != nil {
+				return "", "", nil, err
+			}
+			profile = parsed
+			continue
 		default:
 			positional = append(positional, arg)
 			continue
 		}
 		parsed, err := jinn.ParseShellMode(value)
 		if err != nil {
-			return "", nil, err
+			return "", "", nil, err
 		}
 		mode = parsed
 	}
-	return mode, positional, nil
+	return mode, profile, positional, nil
 }
 
 func readRequest() (jinn.Request, error) {

@@ -114,10 +114,18 @@ shell operations itself. The one-tool surface is intentional: it keeps model
 context bounded. Discovery exposes 18 tools by default and 19 with an explicit
 `sandboxed` or `unsafe` shell mode.
 
+For an opt-in execution surface that is still safe for review and discovery
+work, start `jinn --mcp-profile=read-only --mcp`. It keeps `jinn_route` and adds
+`jinn_call`, whose schema enum is generated from the canonical read-only tool
+allowlist. File/state mutation, shell execution, `memory`, and `undo` are not
+available, and the profile forces shell execution off regardless of the
+`--shell-mode` flag. The default `--mcp` profile remains route-only.
+
 Current MCP requests use `server/discover`, `tools/list`, and `tools/call` with
 `_meta.io.modelcontextprotocol/protocolVersion` set to `2026-07-28` plus
 `_meta.io.modelcontextprotocol/clientCapabilities`. Existing clients that send
-the older `initialize` handshake are routed through a compatibility path.
+the older `initialize` handshake are routed through a compatibility path; that
+legacy path remains route-only.
 The deterministic black-box checks are documented in
 [docs/mcp-smoke-test.md](docs/mcp-smoke-test.md).
 

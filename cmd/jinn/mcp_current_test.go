@@ -4,14 +4,32 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/dotcommander/jinn/internal/jinn"
 	"github.com/voocel/mcp-sdk-go/protocol"
+	"github.com/voocel/mcp-sdk-go/server"
 )
 
 const currentMCPMeta = `"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}`
+
+func TestMCPProfileParsing(t *testing.T) {
+	t.Parallel()
+	mode, profile, positional, err := parseCLIArgs([]string{"--mcp-profile", "read-only", "--mcp"})
+	if err != nil {
+		t.Fatalf("parseCLIArgs: %v", err)
+	}
+	if mode != jinn.ShellModeDisabled || profile != mcpProfileReadOnly || len(positional) != 1 || positional[0] != "--mcp" {
+		t.Fatalf("parsed args = mode:%q profile:%q positional:%#v", mode, profile, positional)
+	}
+	if _, err := parseMCPProfile("unsafe"); err == nil {
+		t.Fatal("parseMCPProfile accepted an unsupported profile")
+	}
+}
 
 func TestMCPCurrentDiscoverAdvertises2026(t *testing.T) {
 	t.Parallel()
@@ -56,6 +74,103 @@ func TestMCPCurrentToolsListKeepsOneToolAndUsesJSONSchema202012(t *testing.T) {
 	items := matches["items"].(map[string]any)
 	if items["$ref"] != "#/$defs/route_match" {
 		t.Fatalf("matches items ref = %v", items["$ref"])
+	}
+}
+
+func TestMCPReadOnlyProfileAddsCallToolWithReadOnlyAllowlist(t *testing.T) {
+	t.Parallel()
+	workspace := t.TempDir()
+	engine, err := jinn.NewWithConfig(workspace, jinn.EngineConfig{Version: "test", ShellMode: jinn.ShellModeDisabled})
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer func() { _ = engine.Close() }()
+
+	resp := handleMCPServerTestLine(t, newMCPServerWithProfile("test", jinn.ShellModeDisabled, mcpProfileReadOnly, engine), `{"jsonrpc":"2.0","id":"tools","method":"tools/list","params":{`+currentMCPMeta+`}}`)
+	result := resp["result"].(map[string]any)
+	tools := result["tools"].([]any)
+	if len(tools) != 2 {
+		t.Fatalf("tool count = %d, want 2: %#v", len(tools), tools)
+	}
+	seen := make(map[string]bool, len(tools))
+	for _, rawTool := range tools {
+		tool := rawTool.(map[string]any)
+		name := tool["name"].(string)
+		seen[name] = true
+		if name != mcpRouteTool && name != mcpCallTool {
+			t.Fatalf("unexpected profile tool: %q", name)
+		}
+		if name == mcpCallTool {
+			inputSchema := tool["inputSchema"].(map[string]any)
+			properties := inputSchema["properties"].(map[string]any)
+			enum := properties["tool"].(map[string]any)["enum"].([]any)
+			for _, value := range enum {
+				if value == "write_file" || value == "run_shell" || value == "memory" {
+					t.Fatalf("mutating tool leaked into read-only enum: %v", value)
+				}
+			}
+		}
+	}
+	if !seen[mcpRouteTool] || !seen[mcpCallTool] {
+		t.Fatalf("profile tools = %#v", seen)
+	}
+}
+
+func TestMCPReadOnlyProfileCallExecutesReadOnlyToolAndRejectsMutation(t *testing.T) {
+	t.Parallel()
+	workspace := t.TempDir()
+	if err := os.WriteFile(filepath.Join(workspace, "hello.txt"), []byte("hello from MCP\n"), 0o600); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	engine, err := jinn.NewWithConfig(workspace, jinn.EngineConfig{Version: "test", ShellMode: jinn.ShellModeDisabled})
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer func() { _ = engine.Close() }()
+	srv := newMCPServerWithProfile("test", jinn.ShellModeDisabled, mcpProfileReadOnly, engine)
+
+	readResp := handleMCPServerTestLine(t, srv, `{"jsonrpc":"2.0","id":"read","method":"tools/call","params":{`+currentMCPMeta+`,"name":"jinn_call","arguments":{"tool":"read_file","arguments":{"path":"hello.txt"},"compress":false}}}`)
+	readResult := readResp["result"].(map[string]any)
+	if readResult["isError"] == true {
+		t.Fatalf("read-only call returned tool error: %#v", readResult)
+	}
+	structured := readResult["structuredContent"].(map[string]any)
+	if structured["tool"] != "read_file" || !strings.Contains(structured["result"].(string), "hello from MCP") {
+		t.Fatalf("unexpected read-only result: %#v", structured)
+	}
+
+	writeResp := handleMCPServerTestLine(t, srv, `{"jsonrpc":"2.0","id":"write","method":"tools/call","params":{`+currentMCPMeta+`,"name":"jinn_call","arguments":{"tool":"write_file","arguments":{"path":"blocked.txt","content":"nope"}}}}`)
+	writeResult := writeResp["result"].(map[string]any)
+	if writeResult["isError"] != true {
+		t.Fatalf("mutating call was not rejected: %#v", writeResult)
+	}
+	text := writeResult["content"].([]any)[0].(map[string]any)["text"].(string)
+	if !strings.Contains(text, "unavailable in the read-only profile") {
+		t.Fatalf("unexpected mutation rejection: %q", text)
+	}
+}
+
+func TestMCPReadOnlyProfileForcesRouteAndShellPolicy(t *testing.T) {
+	t.Parallel()
+	workspace := t.TempDir()
+	engine, err := jinn.NewWithConfig(workspace, jinn.EngineConfig{Version: "test", ShellMode: jinn.ShellModeUnsafe})
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer func() { _ = engine.Close() }()
+
+	srv := newMCPServerWithProfile("test", jinn.ShellModeUnsafe, mcpProfileReadOnly, engine)
+	resp := handleMCPServerTestLine(t, srv, `{"jsonrpc":"2.0","id":"route","method":"tools/call","params":{`+currentMCPMeta+`,"name":"jinn_route","arguments":{"need":"write files and run shell commands","include_mutating":true}}}`)
+	result := resp["result"].(map[string]any)
+	if result["isError"] == true {
+		t.Fatalf("read-only route returned tool error: %#v", result)
+	}
+	structured := result["structuredContent"].(map[string]any)
+	for _, rawMatch := range structured["matches"].([]any) {
+		match := rawMatch.(map[string]any)
+		if match["mutating"] == true || match["name"] == "run_shell" {
+			t.Fatalf("read-only route leaked unsafe match: %#v", match)
+		}
 	}
 }
 
@@ -117,12 +232,17 @@ func TestMCPCurrentRejectsMissingMeta(t *testing.T) {
 
 func handleCurrentMCPTestLine(t *testing.T, line string) map[string]any {
 	t.Helper()
+	return handleMCPServerTestLine(t, newMCPServer("test", jinn.ShellModeDisabled), line)
+}
+
+func handleMCPServerTestLine(t *testing.T, srv *server.Server, line string) map[string]any {
+	t.Helper()
 	var msg protocol.Message
 	if err := json.Unmarshal([]byte(line), &msg); err != nil {
 		t.Fatalf("decode request: %v", err)
 	}
 	var responses []*protocol.Message
-	newMCPServer("test", jinn.ShellModeDisabled).Handle(context.Background(), &msg, func(response *protocol.Message) error {
+	srv.Handle(context.Background(), &msg, func(response *protocol.Message) error {
 		responses = append(responses, response)
 		return nil
 	})

@@ -585,11 +585,11 @@ Use `include_schema: true` only when the calling agent needs to discover schemas
 
 ### MCP `jinn_route`
 
-`jinn --mcp` intentionally exposes only one MCP tool, `jinn_route`, to avoid
-prompt bloat from listing every jinn tool directly. It uses the official Go SDK
-for MCP 2026-07-28. Requests are stateless and carry the protocol version and
-client capabilities in `_meta`. `jinn_route` recommends existing jinn tools
-for a coding-agent task and never executes them.
+The default `jinn --mcp` profile intentionally exposes only one MCP tool,
+`jinn_route`, to avoid prompt bloat from listing every jinn tool directly. It
+uses the official Go SDK for MCP 2026-07-28. Requests are stateless and carry
+the protocol version and client capabilities in `_meta`. `jinn_route` recommends
+existing jinn tools for a coding-agent task and never executes them.
 
 ```jsonl
 {"jsonrpc":"2.0","id":1,"method":"server/discover","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}
@@ -676,6 +676,40 @@ The request above returns (second match abbreviated):
   useful while an agent is in a plan or review phase.
 - `include_schema: true` attaches a lean schema (parameter descriptions
   stripped) to each returned match only.
+
+### MCP read-only profile and `jinn_call`
+
+Start the opt-in read-only profile with:
+
+```bash
+jinn --mcp-profile=read-only --mcp
+```
+
+The profile keeps `jinn_route` and adds `jinn_call`, a generic executor whose
+`tool` enum is generated from the canonical read-only tool registry. It forces
+shell execution off and rejects mutation-capable tools, `memory`, and `undo`
+before dispatch. The default `jinn --mcp` profile remains route-only, so adding
+this profile does not change existing MCP clients.
+
+**`jinn_call` parameters:**
+
+| Name | Type | Required | Default | Description |
+|------|------|----------|---------|-------------|
+| `tool` | string | Yes | -- | One of the advertised read-only jinn tools |
+| `arguments` | object | No | `{}` | Arguments for the selected tool |
+| `compress` | boolean | No | `true` | Apply deterministic context compression to text output |
+
+Example call:
+
+```jsonl
+{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}},"name":"jinn_call","arguments":{"tool":"read_file","arguments":{"path":"README.md"},"compress":false}}}
+```
+
+The result has structured `structuredContent` with the selected `tool`, text
+`result`, optional jinn `content` blocks, and merged `meta`. A mutation attempt
+is a tool error with `isError: true`; it does not reach the engine dispatcher.
+The read-only profile requires current stateless request metadata. Legacy
+initialize-based clients remain on the route-only compatibility path.
 
 ### detect_project
 

@@ -26,6 +26,12 @@ and jinn adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `$ref` output reuse, plus structured tool results.
 - Keep a compatibility path for existing initialize-based MCP clients during
   migration.
+- Add an opt-in `--mcp-profile=read-only` surface with `jinn_call` for the
+  canonical read-only tool allowlist; mutation-capable tools and shell
+  execution are rejected before dispatch while the default profile stays
+  route-only.
+- Extend the real MCP stdio smoke test to cover discovery, legacy compatibility,
+  and the read-only executor profile.
 
 ## [0.11.4] - 2026-07-16
 

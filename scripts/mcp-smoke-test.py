@@ -8,7 +8,7 @@ import json
 import select
 import subprocess
 import sys
-from typing import Any
+from typing import Any, Optional
 
 
 PROTOCOL_VERSION = "2026-07-28"
@@ -24,9 +24,13 @@ def fail(message: str) -> None:
     raise RuntimeError(message)
 
 
-def start(binary: str) -> subprocess.Popen[str]:
+def start(binary: str, profile: Optional[str] = None) -> subprocess.Popen[str]:
+    command = [binary]
+    if profile is not None:
+        command.extend(["--mcp-profile", profile])
+    command.append("--mcp")
     return subprocess.Popen(
-        [binary, "--mcp"],
+        command,
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -176,6 +180,87 @@ def legacy_smoke(binary: str) -> None:
         finish(proc, "legacy MCP smoke")
 
 
+def readonly_smoke(binary: str) -> None:
+    proc = start(binary, "read-only")
+    try:
+        discover = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "server/discover",
+            "params": META,
+        }
+        response = receive_after_send(proc, discover, "read-only server/discover")
+        result = response.get("result")
+        if not isinstance(result, dict) or result.get("supportedVersions") != [PROTOCOL_VERSION]:
+            fail(f"unexpected read-only discover result: {result!r}")
+
+        tools_list = {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/list",
+            "params": META,
+        }
+        response = receive_after_send(proc, tools_list, "read-only tools/list")
+        tools = response.get("result", {}).get("tools", [])
+        names = {tool.get("name") for tool in tools}
+        if names != {"jinn_route", "jinn_call"}:
+            fail(f"unexpected read-only tools: {tools!r}")
+        call_tool = next(tool for tool in tools if tool.get("name") == "jinn_call")
+        enum = call_tool.get("inputSchema", {}).get("properties", {}).get("tool", {}).get("enum", [])
+        if not isinstance(enum, list) or not enum:
+            fail(f"read-only jinn_call enum missing: {call_tool!r}")
+        if {"write_file", "run_shell", "memory"}.intersection(enum):
+            fail(f"mutating tool leaked into read-only enum: {enum!r}")
+
+        read_call = {
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {
+                **META,
+                "name": "jinn_call",
+                "arguments": {
+                    "tool": "read_file",
+                    "arguments": {"path": "README.md"},
+                    "compress": False,
+                },
+            },
+        }
+        response = receive_after_send(proc, read_call, "read-only jinn_call read_file")
+        result = response.get("result")
+        if not isinstance(result, dict) or result.get("isError"):
+            fail(f"read-only read_file call failed: {result!r}")
+        structured = result.get("structuredContent")
+        if not isinstance(structured, dict) or structured.get("tool") != "read_file":
+            fail(f"read-only structured result missing: {result!r}")
+        if "# jinn" not in structured.get("result", ""):
+            fail(f"read-only result did not read README.md: {structured!r}")
+
+        write_call = {
+            "jsonrpc": "2.0",
+            "id": 4,
+            "method": "tools/call",
+            "params": {
+                **META,
+                "name": "jinn_call",
+                "arguments": {
+                    "tool": "write_file",
+                    "arguments": {"path": "mcp-smoke-blocked.txt", "content": "nope"},
+                },
+            },
+        }
+        response = receive_after_send(proc, write_call, "read-only jinn_call write_file")
+        result = response.get("result")
+        if not isinstance(result, dict) or result.get("isError") is not True:
+            fail(f"read-only mutation was not rejected: {result!r}")
+        content = result.get("content", [])
+        text = content[0].get("text", "") if content and isinstance(content[0], dict) else ""
+        if "unavailable in the read-only profile" not in text:
+            fail(f"unexpected read-only mutation rejection: {text!r}")
+    finally:
+        finish(proc, "read-only MCP smoke")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--binary", default="jinn", help="path to the Jinn binary")
@@ -183,11 +268,13 @@ def main() -> int:
     try:
         current_smoke(args.binary)
         legacy_smoke(args.binary)
+        readonly_smoke(args.binary)
     except RuntimeError as exc:
         print(f"mcp_smoke_failed: {exc}", file=sys.stderr)
         return 1
     print("mcp_current_stdio_smoke=passed")
     print("mcp_legacy_compatibility_smoke=passed")
+    print("mcp_readonly_stdio_smoke=passed")
     return 0
 
 

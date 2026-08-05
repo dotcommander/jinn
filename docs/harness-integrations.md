@@ -101,6 +101,12 @@ path. Add to `.mcp.json`:
 }
 ```
 
+For a bounded read-only inspection surface, use a separate server entry with
+`"args": ["--mcp-profile=read-only", "--mcp"]`. That profile adds `jinn_call`
+for the canonical read-only tool allowlist and rejects mutation, shell,
+`memory`, and `undo` before dispatch. The default entry above remains
+route-only.
+
 ## Codex CLI
 
 Two natural fits:
