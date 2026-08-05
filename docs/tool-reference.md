@@ -711,6 +711,57 @@ is a tool error with `isError: true`; it does not reach the engine dispatcher.
 The read-only profile requires current stateless request metadata. Legacy
 initialize-based clients remain on the route-only compatibility path.
 
+### MCP Streamable HTTP
+
+Start the opt-in HTTP transport with the route-only profile:
+
+```bash
+jinn --mcp-http
+```
+
+It listens on `127.0.0.1:8788` and serves only `POST /mcp`. The read-only
+profile uses the same profile and allowlist as stdio:
+
+```bash
+jinn --mcp-profile=read-only --mcp-http 127.0.0.1:8788
+```
+
+Each request is stateless and must include these headers. The body is one
+MCP 2026-07-28 JSON-RPC request or notification:
+
+| Header | Required | Value |
+|--------|----------|-------|
+| `Content-Type` | Yes | `application/json` |
+| `MCP-Protocol-Version` | Yes | `2026-07-28`, matching the body `_meta` |
+| `Mcp-Method` | Yes | The JSON-RPC method, such as `server/discover` |
+| `Mcp-Name` | `tools/call` only | The body `params.name` value |
+| `Authorization` | When a token is configured | `Bearer $TOKEN` |
+
+Example discovery request:
+
+```bash
+curl -sS http://127.0.0.1:8788/mcp \
+  -H 'Content-Type: application/json' \
+  -H 'MCP-Protocol-Version: 2026-07-28' \
+  -H 'Mcp-Method: server/discover' \
+  --data '{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}'
+```
+
+Loopback binds do not need a token unless `JINN_MCP_HTTP_TOKEN` is set. Any
+non-loopback address requires both `JINN_MCP_HTTP_TOKEN` and
+`JINN_MCP_HTTP_ORIGINS` at startup. The origin variable is a comma-separated
+list of exact HTTP(S) origins. Missing or invalid bearer auth returns HTTP 401
+with `WWW-Authenticate: Bearer`; an unlisted browser origin returns HTTP 403.
+The SDK's insecure allow-any-origin option is never enabled, and tokens are
+not accepted through CLI arguments.
+
+HTTP has the same five-second header, fifteen-second read, and sixty-second
+write/idle timeouts as the local inspector. SIGINT and SIGTERM perform bounded
+graceful shutdown. It intentionally does not implement the stdio legacy
+`initialize` compatibility path. See
+[mcp-smoke-test.md](mcp-smoke-test.md#streamable-http-smoke-test) for a
+real endpoint check.
+
 ### detect_project
 
 Detect language, framework, and build commands from project config files.

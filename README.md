@@ -129,6 +129,35 @@ legacy path remains route-only.
 The deterministic black-box checks are documented in
 [docs/mcp-smoke-test.md](docs/mcp-smoke-test.md).
 
+For clients that require Streamable HTTP, start the separate opt-in broker:
+
+```bash
+jinn --mcp-http
+# POST http://127.0.0.1:8788/mcp
+```
+
+The HTTP endpoint is stateless, uses the same route-only profile by default,
+and accepts the MCP 2026-07-28 request headers. Use
+`jinn --mcp-profile=read-only --mcp-http` for the bounded `jinn_route` plus
+`jinn_call` surface. Requests need `Content-Type: application/json`,
+`MCP-Protocol-Version: 2026-07-28`, and a matching `Mcp-Method` header. A
+`tools/call` request also needs `Mcp-Name` matching its tool name.
+
+Loopback is the default and does not require authentication. To bind beyond
+loopback, set both environment-only controls before starting the process:
+
+```bash
+JINN_MCP_HTTP_TOKEN="$TOKEN" \
+JINN_MCP_HTTP_ORIGINS="https://agent.example.com" \
+jinn --mcp-profile=read-only --mcp-http 0.0.0.0:8788
+```
+
+The token is sent as `Authorization: Bearer $TOKEN`. Origins are exact
+HTTP(S) origins, and the insecure allow-any-origin mode is never enabled.
+HTTP does not add the stdio legacy `initialize` compatibility path. Use the
+[HTTP smoke test](docs/mcp-smoke-test.md#streamable-http-smoke-test) to verify
+the real endpoint.
+
 ## When to use jinn with another harness
 
 Claude Code, Codex, pi, and similar tools already have native read/edit/shell

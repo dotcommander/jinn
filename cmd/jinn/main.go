@@ -16,17 +16,19 @@ import (
 
 var version = "dev"
 
-const helpText = `Usage: jinn [--shell-mode=disabled|sandboxed|unsafe] [--mcp-profile=discover|read-only] [--schema | --inspect [addr] | --mcp | --version | --help]
+const helpText = `Usage: jinn [--shell-mode=disabled|sandboxed|unsafe] [--mcp-profile=discover|read-only] [--schema | --inspect [addr] | --mcp [--mcp-profile] | --mcp-http [addr] [--mcp-profile] | --version | --help]
 
 Sandboxed tool executor for AI coding agents.
 Reads a JSON tool request from stdin, writes a JSON response to stdout.
 
 Flags:
 	--shell-mode  Shell execution policy: disabled, sandboxed, or unsafe (default: disabled)
-	  --schema   Print tool definitions (OpenAI function-calling format)
-	  --inspect  Start a local browser inspector UI (default: 127.0.0.1:8787)
-	  --mcp      Start MCP 2026-07-28 stdio broker (default profile: jinn_route only)
-	  --mcp-profile  MCP surface: discover or read-only (default: discover)
+	--schema      Print tool definitions (OpenAI function-calling format)
+	--inspect     Start a local browser inspector UI (default: 127.0.0.1:8787)
+	--mcp        Start MCP 2026-07-28 stdio broker (default profile: jinn_route only)
+	--mcp-http   Start MCP 2026-07-28 Streamable HTTP at /mcp (default: 127.0.0.1:8788)
+	--mcp-profile MCP surface: discover or read-only (default: discover)
+	HTTP auth    Set JINN_MCP_HTTP_TOKEN and JINN_MCP_HTTP_ORIGINS for non-loopback binds
   --version  Print version
   --help     Print this help
 
@@ -156,6 +158,12 @@ func handleFlagWithProfile(ctx context.Context, flag string, args []string, mode
 		return true, serveInspector(ctx, addr, version, mode)
 	case "--mcp":
 		return true, runMCPWithProfile(ctx, os.Stdin, os.Stdout, version, mode, profile)
+	case "--mcp-http":
+		addr := mcpHTTPDefaultAddr
+		if len(args) > 0 && args[0] != "" {
+			addr = args[0]
+		}
+		return true, serveMCPHTTP(ctx, addr, version, mode, profile)
 	default:
 		return false, nil
 	}

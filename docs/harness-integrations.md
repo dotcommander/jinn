@@ -107,6 +107,35 @@ for the canonical read-only tool allowlist and rejects mutation, shell,
 `memory`, and `undo` before dispatch. The default entry above remains
 route-only.
 
+### MCP Streamable HTTP
+
+Use the opt-in HTTP broker when the harness expects a URL rather than a stdio
+command:
+
+```bash
+jinn --mcp-http
+# http://127.0.0.1:8788/mcp
+```
+
+The default HTTP profile is route-only. Add
+`--mcp-profile=read-only` for guarded read-only execution. Send one JSON-RPC
+request per POST with `Content-Type: application/json`,
+`MCP-Protocol-Version: 2026-07-28`, and `Mcp-Method`; `tools/call` also needs a
+matching `Mcp-Name`. HTTP is stateless and does not use the stdio legacy
+`initialize` compatibility path.
+
+The default bind is loopback. For a non-loopback bind, configure both controls
+through the environment, not command-line arguments:
+
+```bash
+JINN_MCP_HTTP_TOKEN="$TOKEN" \
+JINN_MCP_HTTP_ORIGINS="https://agent.example.com" \
+jinn --mcp-profile=read-only --mcp-http 0.0.0.0:8788
+```
+
+The client sends `Authorization: Bearer $TOKEN`. Origins are exact HTTP(S)
+origins, and invalid or missing auth returns HTTP 401 before MCP dispatch.
+
 ## Codex CLI
 
 Two natural fits:

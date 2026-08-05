@@ -156,7 +156,8 @@ func newMCPServer(ldVersion string, mode jinn.ShellMode) *server.Server {
 	return newMCPServerWithProfile(ldVersion, mode, mcpProfileDiscover, nil)
 }
 
-// the opt-in executor policy close together for auditability.
+// Keep the default route-only registration and the opt-in executor policy
+// together for auditability.
 //
 //nolint:gocognit // profile-specific registration keeps the default surface and
 func newMCPServerWithProfile(ldVersion string, mode jinn.ShellMode, profile mcpProfile, engine *jinn.Engine) *server.Server {

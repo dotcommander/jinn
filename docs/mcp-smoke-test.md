@@ -1,6 +1,6 @@
 # Jinn MCP smoke test
 
-This smoke test exercises the real `jinn --mcp` binary over a long-lived
+The stdio smoke test exercises the real `jinn --mcp` binary over a long-lived
 stdin/stdout pipe. It does not use a network, a project mutation, or an API key.
 
 ## Run
@@ -26,3 +26,37 @@ The script checks three paths:
 The current SDK stdio transport treats EOF as client shutdown and cancels
 in-flight requests. A real MCP client must keep stdin open until it has read the
 responses it requested.
+
+## Streamable HTTP smoke test
+
+The HTTP smoke test starts a real subprocess on a temporary loopback port. It
+does not expose a remote listener, write project files, or print a token. It
+checks route-only discovery, read-only execution, required MCP headers, bearer
+auth, exact origin rejection, the `/mcp` path boundary, clean SIGTERM shutdown,
+empty stdout, and the single expected startup line on stderr.
+
+```bash
+go build -o "${TMPDIR:-/tmp}/jinn-mcp-http-smoke" ./cmd/jinn
+python3 scripts/mcp-http-smoke-test.py \
+  --binary "${TMPDIR:-/tmp}/jinn-mcp-http-smoke"
+```
+
+The HTTP command defaults to `127.0.0.1:8788` when no address is supplied:
+
+```bash
+jinn --mcp-http
+jinn --mcp-profile=read-only --mcp-http 127.0.0.1:8788
+```
+
+For a non-loopback bind, set both environment-only controls. The token is sent
+as a bearer header, and the origin list must contain exact HTTP(S) origins:
+
+```bash
+JINN_MCP_HTTP_TOKEN="$TOKEN" \
+JINN_MCP_HTTP_ORIGINS="https://agent.example.com" \
+jinn --mcp-profile=read-only --mcp-http 0.0.0.0:8788
+```
+
+HTTP is stateless and does not use the stdio legacy `initialize` compatibility
+path. The pinned SDK owns JSON body, protocol header, method, and origin
+validation after the authorization boundary.

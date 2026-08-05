@@ -32,6 +32,12 @@ and jinn adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   route-only.
 - Extend the real MCP stdio smoke test to cover discovery, legacy compatibility,
   and the read-only executor profile.
+- Add an opt-in stateless MCP Streamable HTTP broker at `POST /mcp`, defaulting
+  to loopback `127.0.0.1:8788` and reusing the route-only and read-only profiles.
+  Non-loopback binds require environment-only bearer auth and exact origin
+  controls; stdio behavior and legacy compatibility remain unchanged.
+- Add a real HTTP subprocess smoke test covering required headers, auth, origin
+  rejection, profile boundaries, and graceful shutdown.
 
 ## [0.11.4] - 2026-07-16
 
