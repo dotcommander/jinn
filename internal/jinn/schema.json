@@ -310,7 +310,7 @@
         "properties": {
           "path": {"type": "string", "description": "directory to list (default: .)"},
           "depth": {"type": "integer", "description": "max depth (default: 3)"},
-          "max_entries": {"type": "integer", "description": "Maximum number of entries to return (default: 500, cap: 10000). When exceeded, response includes truncated=true and total_count.", "default": 500},
+          "max_entries": {"type": "integer", "description": "Maximum number of entries to return (default: 500, minimum: 1, cap: 10000). When exceeded, response includes truncated=true and total_count.", "minimum": 1, "default": 500},
           "changed_since": {"type": "number", "description": "Unix epoch seconds. Only list entries modified after this timestamp. 0 or absent = no filter.", "default": 0}
           ,"changed_after": {"type": "string", "description": "RFC3339Nano timestamp. Only entries modified strictly after this instant are included."}
         }
@@ -327,7 +327,7 @@
         "properties": {
           "pattern": {"type": "string", "description": "Glob pattern to match files, e.g. '*.go', '**/*.json', or 'src/**/*_test.go'"},
           "path": {"type": "string", "description": "Directory to search in (default: current directory)"},
-          "limit": {"type": "integer", "description": "Maximum number of results (default: 1000)", "default": 1000}
+          "limit": {"type": "integer", "description": "Maximum number of results (default: 1000, minimum: 1)", "minimum": 1, "default": 1000}
         },
         "required": ["pattern"]
       }

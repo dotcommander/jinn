@@ -13,8 +13,8 @@ func validateToolArgs(tool string, args map[string]interface{}) error {
 	if args == nil {
 		args = map[string]interface{}{}
 	}
-	if err := validateSuppliedPositiveNumbers(args); err != nil {
-		return &ErrWithSuggestion{Err: fmt.Errorf("%s: %w", tool, err), Suggestion: "omit optional numeric fields to use their defaults, or provide a positive value", Code: ErrCodeInvalidArgs}
+	if err := validateSuppliedNonNegativeNumbers(args); err != nil {
+		return &ErrWithSuggestion{Err: fmt.Errorf("%s: %w", tool, err), Suggestion: "omit optional numeric fields to use their defaults, or provide a non-negative value where supported", Code: ErrCodeInvalidArgs}
 	}
 	tools, err := parseSchemaTools()
 	if err != nil {
@@ -36,20 +36,21 @@ func validateToolArgs(tool string, args map[string]interface{}) error {
 	return fmt.Errorf("unknown tool: %s", tool)
 }
 
-// Numeric defaults are represented by omitted fields. A supplied zero or
-// negative value must not silently become that default through intArg.
-func validateSuppliedPositiveNumbers(args map[string]interface{}) error {
-	positive := map[string]bool{
+// Numeric defaults are represented by omitted fields. Supplied negative values
+// remain invalid, while zero is allowed where the schema or tool semantics
+// define it as a default or empty limit.
+func validateSuppliedNonNegativeNumbers(args map[string]interface{}) error {
+	numeric := map[string]bool{
 		"timeout": true, "max_matches": true, "max_entries": true,
 		"limit": true, "max_results": true, "depth": true,
 		"max_depth": true, "context_lines": true,
 	}
 	for key, value := range args {
-		if !positive[key] {
+		if !numeric[key] {
 			continue
 		}
-		if number, ok := value.(float64); ok && number <= 0 {
-			return fmt.Errorf("args.%s must be positive when supplied", key)
+		if number, ok := value.(float64); ok && number < 0 {
+			return fmt.Errorf("args.%s must be non-negative when supplied", key)
 		}
 	}
 	return nil

@@ -203,6 +203,39 @@ func TestMCPCurrentRouteReturnsStructuredContent(t *testing.T) {
 	}
 }
 
+func TestMCPCurrentRouteRejectsSchemaViolations(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		args     string
+		contains string
+	}{
+		{name: "unknown outer field", args: `"need":"read files","unexpected":true`, contains: "unknown field"},
+		{name: "zero max tools", args: `"need":"read files","max_tools":0`, contains: "max_tools"},
+		{name: "max tools above schema maximum", args: `"need":"read files","max_tools":9`, contains: "max_tools"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			resp := handleCurrentMCPTestLine(t, `{"jsonrpc":"2.0","id":"route","method":"tools/call","params":{`+currentMCPMeta+`,"name":"jinn_route","arguments":{`+tt.args+`}}}`)
+			assertMCPToolErrorContains(t, resp, tt.contains)
+		})
+	}
+}
+
+func TestMCPReadOnlyCallRejectsUnknownOuterArgument(t *testing.T) {
+	t.Parallel()
+	workspace := t.TempDir()
+	engine, err := jinn.NewWithConfig(workspace, jinn.EngineConfig{Version: "test", ShellMode: jinn.ShellModeDisabled})
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer func() { _ = engine.Close() }()
+
+	resp := handleMCPServerTestLine(t, newMCPServerWithProfile("test", jinn.ShellModeDisabled, mcpProfileReadOnly, engine), `{"jsonrpc":"2.0","id":"call","method":"tools/call","params":{`+currentMCPMeta+`,"name":"jinn_call","arguments":{"tool":"read_file","unexpected":true}}}`)
+	assertMCPToolErrorContains(t, resp, "unknown field")
+}
+
 func TestMCPCurrentRejectsLegacyInitializeAtSDKLayer(t *testing.T) {
 	t.Parallel()
 	resp := handleCurrentMCPTestLine(t, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}`)
@@ -258,6 +291,25 @@ func handleMCPServerTestLine(t *testing.T, srv *server.Server, line string) map[
 		t.Fatalf("decode response: %v", err)
 	}
 	return decoded
+}
+
+func assertMCPToolErrorContains(t *testing.T, resp map[string]any, want string) {
+	t.Helper()
+	result, ok := resp["result"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing tool result: %#v", resp)
+	}
+	if result["isError"] != true {
+		t.Fatalf("expected tool error: %#v", result)
+	}
+	content, ok := result["content"].([]any)
+	if !ok || len(content) == 0 {
+		t.Fatalf("missing tool error content: %#v", result)
+	}
+	text, _ := content[0].(map[string]any)["text"].(string)
+	if !strings.Contains(text, want) {
+		t.Fatalf("error text %q does not contain %q", text, want)
+	}
 }
 
 func TestMCPCurrentRunLoopUsesSDKForCurrentInput(t *testing.T) {

@@ -215,9 +215,22 @@ func mcpInstructions(profile mcpProfile) string {
 
 type mcpRouteArguments struct {
 	Need            string `json:"need"`
-	MaxTools        int    `json:"max_tools,omitempty"`
+	MaxTools        *int   `json:"max_tools,omitempty"`
 	IncludeSchema   bool   `json:"include_schema,omitempty"`
 	IncludeMutating *bool  `json:"include_mutating,omitempty"`
+}
+
+func decodeMCPArguments(label string, rawArgs map[string]any, target any) error {
+	raw, err := json.Marshal(rawArgs)
+	if err != nil {
+		return fmt.Errorf("%s arguments must be a JSON object: %w", label, err)
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return fmt.Errorf("%s arguments must be an object: %w", label, err)
+	}
+	return nil
 }
 
 func mcpRouteHandlerForMode(mode jinn.ShellMode) func(context.Context, *server.CallRequest) (protocol.ToolResponse, error) {
@@ -230,15 +243,18 @@ func mcpRouteHandlerForProfile(mode jinn.ShellMode, profile mcpProfile) func(con
 			return protocol.NewToolResultError("jinn_route arguments are required"), nil
 		}
 		var args mcpRouteArguments
-		raw, err := json.Marshal(req.Params.Arguments)
-		if err != nil {
-			return protocol.NewToolResultError(fmt.Sprintf("jinn_route arguments must be a JSON object: %v", err)), nil
-		}
-		if unmarshalErr := json.Unmarshal(raw, &args); unmarshalErr != nil {
-			return protocol.NewToolResultError(fmt.Sprintf("jinn_route arguments must be an object: %v", unmarshalErr)), nil
+		if err := decodeMCPArguments("jinn_route", req.Params.Arguments, &args); err != nil {
+			return protocol.NewToolResultError(err.Error()), nil
 		}
 		if strings.TrimSpace(args.Need) == "" {
 			return protocol.NewToolResultError("jinn_route: 'need' is required"), nil
+		}
+		maxTools := 0
+		if args.MaxTools != nil {
+			if *args.MaxTools < 1 || *args.MaxTools > jinn.RouteMaxTools {
+				return protocol.NewToolResultError(fmt.Sprintf("jinn_route: 'max_tools' must be between 1 and %d", jinn.RouteMaxTools)), nil
+			}
+			maxTools = *args.MaxTools
 		}
 		includeMutating := args.IncludeMutating
 		if profile == mcpProfileReadOnly {
@@ -247,7 +263,7 @@ func mcpRouteHandlerForProfile(mode jinn.ShellMode, profile mcpProfile) func(con
 		}
 		route, err := jinn.RouteToolsForMode(jinn.RouteRequest{
 			Need:            args.Need,
-			MaxTools:        args.MaxTools,
+			MaxTools:        maxTools,
 			IncludeSchema:   args.IncludeSchema,
 			IncludeMutating: includeMutating,
 		}, mode)
@@ -281,12 +297,8 @@ func mcpCallHandler(engine *jinn.Engine) func(context.Context, *server.CallReque
 			return protocol.NewToolResultError("jinn_call arguments are required"), nil
 		}
 		var args mcpCallArguments
-		raw, err := json.Marshal(req.Params.Arguments)
-		if err != nil {
-			return protocol.NewToolResultError(fmt.Sprintf("jinn_call arguments must be a JSON object: %v", err)), nil
-		}
-		if unmarshalErr := json.Unmarshal(raw, &args); unmarshalErr != nil {
-			return protocol.NewToolResultError(fmt.Sprintf("jinn_call arguments must be an object: %v", unmarshalErr)), nil
+		if err := decodeMCPArguments("jinn_call", req.Params.Arguments, &args); err != nil {
+			return protocol.NewToolResultError(err.Error()), nil
 		}
 		args.Tool = strings.TrimSpace(args.Tool)
 		if args.Tool == "" {
