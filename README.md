@@ -139,8 +139,9 @@ jinn --mcp-http
 The HTTP endpoint is stateless, uses the same route-only profile by default,
 and accepts the MCP 2026-07-28 request headers. Use
 `jinn --mcp-profile=read-only --mcp-http` for the bounded `jinn_route` plus
-`jinn_call` surface. Requests need `Content-Type: application/json`,
-`MCP-Protocol-Version: 2026-07-28`, and a matching `Mcp-Method` header. A
+`jinn_call` surface. Requests need `Accept: application/json, text/event-stream`,
+`Content-Type: application/json`, `MCP-Protocol-Version: 2026-07-28`, and a
+matching `Mcp-Method` header. A
 `tools/call` request also needs `Mcp-Name` matching its tool name.
 
 Loopback is the default and does not require authentication. To bind beyond
@@ -154,6 +155,8 @@ jinn --mcp-profile=read-only --mcp-http 0.0.0.0:8788
 
 The token is sent as `Authorization: Bearer $TOKEN`. Origins are exact
 HTTP(S) origins, and the insecure allow-any-origin mode is never enabled.
+Use a non-loopback bind only on a trusted network or behind a TLS-terminating
+proxy or tunnel: bearer tokens authenticate requests but do not encrypt them.
 HTTP does not add the stdio legacy `initialize` compatibility path. Use the
 [HTTP smoke test](docs/mcp-smoke-test.md#streamable-http-smoke-test) to verify
 the real endpoint.

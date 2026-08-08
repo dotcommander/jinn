@@ -283,8 +283,9 @@ jinn --mcp-http
 The default HTTP profile exposes only `jinn_route`. Add
 `--mcp-profile=read-only` to expose the same guarded `jinn_call` profile
 described above. HTTP requests are stateless and use one JSON-RPC request per
-POST. They must include `Content-Type: application/json`,
-`MCP-Protocol-Version: 2026-07-28`, and `Mcp-Method`; `tools/call` also needs
+POST. They must include `Accept: application/json, text/event-stream`,
+`Content-Type: application/json`, `MCP-Protocol-Version: 2026-07-28`, and
+`Mcp-Method`; `tools/call` also needs
 `Mcp-Name`.
 
 Loopback binds work without environment controls. Any non-loopback bind is
@@ -298,13 +299,18 @@ JINN_MCP_HTTP_ORIGINS="https://agent.example.com" \
 jinn --mcp-profile=read-only --mcp-http 0.0.0.0:8788
 ```
 
+Use a non-loopback bind only on a trusted network or behind a TLS-terminating
+proxy or tunnel: bearer tokens authenticate requests but do not encrypt them.
+
 HTTP deliberately does not accept the stdio legacy `initialize` handshake.
 See [mcp-smoke-test.md](mcp-smoke-test.md#streamable-http-smoke-test) for a
 real subprocess check of the endpoint, headers, auth, origin, and shutdown
 contracts.
 
-For migration safety, a first older `initialize` request is detected and served
-by the legacy compatibility path. Current clients should use the 2026-07-28
+For migration safety, the default stdio profile detects a first older
+`initialize` request and serves the legacy compatibility path. The read-only
+profile deliberately leaves legacy traffic to the current SDK, which rejects it
+before any route or tool dispatch. Current clients should use the 2026-07-28
 request shape shown in [tool-reference.md](tool-reference.md#mcp-jinn_route).
 
 Example client config:

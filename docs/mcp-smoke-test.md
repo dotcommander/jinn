@@ -21,7 +21,8 @@ The script checks three paths:
 - Compatibility with the older initialize-based handshake.
 - The opt-in `read-only` profile, including its two-tool surface, generated
   read-only allowlist, successful `read_file` execution, and rejected
-  `write_file` execution.
+  `write_file` execution. Its legacy `initialize` request is rejected by the
+  current SDK before any route or tool dispatch.
 
 The current SDK stdio transport treats EOF as client shutdown and cancels
 in-flight requests. A real MCP client must keep stdin open until it has read the
@@ -32,7 +33,9 @@ responses it requested.
 The HTTP smoke test starts a real subprocess on a temporary loopback port. It
 does not expose a remote listener, write project files, or print a token. It
 checks route-only discovery, read-only execution, required MCP headers, bearer
-auth, exact origin rejection, the `/mcp` path boundary, clean SIGTERM shutdown,
+auth, exact origin allow/reject behavior (including unconfigured localhost), the
+MCP `Accept: application/json, text/event-stream` request header, the `/mcp`
+path boundary, clean SIGTERM shutdown,
 empty stdout, and the single expected startup line on stderr.
 
 ```bash

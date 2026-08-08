@@ -555,6 +555,7 @@ The `plan` object:
 **Notes:**
 
 - Each command sets exactly one of a non-empty `shell` or a known `tool`. Unknown tools, empty nodes, and malformed conditions are rejected before the walk starts.
+- One shared budget permits at most 256 operations across the outer plan and all nested `run_plan` calls. Exhausting it stops the walk with `stopped_reason: "resource_limit"`.
 - Read-only by default: a node without `mutates: true` allows only `safe` shell commands and read-only tools. This includes `memory` actions `recall`/`list` and `undo` actions `list`/`preview`; their mutating actions remain blocked. A `mutates: true` node runs `caution` operations automatically; `dangerous` ones require both `plan.force` and the node's `force`, including nested `tool: "run_shell"` and `tool: "run_plan"` commands. Nested plans inherit the parent's remaining depth and dangerous-mutation authority. A nested `force` argument cannot bypass those gates.
 - A node cannot combine `parallel: true` with `mutates: true`; split mutating operations into serial nodes.
 - Edges are evaluated against the last op's result; a failed or blocked tool reports a nonzero `exit_code`. Condition kinds are `exitCode`, `fileExists`, `jsonPath`, `numeric`, `match`, and `always`; `negate` applies uniformly, and JSON equality preserves value types.
@@ -689,7 +690,9 @@ The profile keeps `jinn_route` and adds `jinn_call`, a generic executor whose
 `tool` enum is generated from the canonical read-only tool registry. It forces
 shell execution off and rejects mutation-capable tools, `memory`, and `undo`
 before dispatch. The default `jinn --mcp` profile remains route-only, so adding
-this profile does not change existing MCP clients.
+this profile does not change existing MCP clients. Its `jinn_route` schema
+defaults `include_mutating` to false and runtime always excludes mutating
+recommendations.
 
 **`jinn_call` parameters:**
 
@@ -708,8 +711,10 @@ Example call:
 The result has structured `structuredContent` with the selected `tool`, text
 `result`, optional jinn `content` blocks, and merged `meta`. A mutation attempt
 is a tool error with `isError: true`; it does not reach the engine dispatcher.
-The read-only profile requires current stateless request metadata. Legacy
-initialize-based clients remain on the route-only compatibility path.
+The read-only profile requires current stateless request metadata. Its legacy
+initialize-based traffic is handled by the current SDK and rejected before route
+or tool dispatch; only the default profile retains the route-only compatibility
+path.
 
 ### MCP Streamable HTTP
 
@@ -731,6 +736,7 @@ MCP 2026-07-28 JSON-RPC request or notification:
 
 | Header | Required | Value |
 |--------|----------|-------|
+| `Accept` | Yes | `application/json, text/event-stream` |
 | `Content-Type` | Yes | `application/json` |
 | `MCP-Protocol-Version` | Yes | `2026-07-28`, matching the body `_meta` |
 | `Mcp-Method` | Yes | The JSON-RPC method, such as `server/discover` |
@@ -741,6 +747,7 @@ Example discovery request:
 
 ```bash
 curl -sS http://127.0.0.1:8788/mcp \
+  -H 'Accept: application/json, text/event-stream' \
   -H 'Content-Type: application/json' \
   -H 'MCP-Protocol-Version: 2026-07-28' \
   -H 'Mcp-Method: server/discover' \
@@ -750,13 +757,19 @@ curl -sS http://127.0.0.1:8788/mcp \
 Loopback binds do not need a token unless `JINN_MCP_HTTP_TOKEN` is set. Any
 non-loopback address requires both `JINN_MCP_HTTP_TOKEN` and
 `JINN_MCP_HTTP_ORIGINS` at startup. The origin variable is a comma-separated
-list of exact HTTP(S) origins. Missing or invalid bearer auth returns HTTP 401
-with `WWW-Authenticate: Bearer`; an unlisted browser origin returns HTTP 403.
-The SDK's insecure allow-any-origin option is never enabled, and tokens are
-not accepted through CLI arguments.
+list of exact HTTP(S) origins. When origins are configured, every supplied
+`Origin` header, including `localhost`, must exactly match that list; a request
+without `Origin` remains available to non-browser MCP clients. Missing or
+invalid bearer auth returns HTTP 401 with `WWW-Authenticate: Bearer`; an
+unlisted browser origin returns HTTP 403. The SDK's insecure allow-any-origin
+option is never enabled, and tokens are not accepted through CLI arguments.
 
-HTTP has the same five-second header, fifteen-second read, and sixty-second
-write/idle timeouts as the local inspector. SIGINT and SIGTERM perform bounded
+Use a non-loopback bind only on a trusted network or behind a TLS-terminating
+proxy or tunnel: bearer tokens authenticate requests but do not encrypt them.
+
+HTTP has an explicit 1 MiB header limit, the same five-second header,
+fifteen-second read, and sixty-second write/idle timeouts as the local inspector.
+SIGINT and SIGTERM perform bounded
 graceful shutdown. It intentionally does not implement the stdio legacy
 `initialize` compatibility path. See
 [mcp-smoke-test.md](mcp-smoke-test.md#streamable-http-smoke-test) for a

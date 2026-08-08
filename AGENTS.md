@@ -405,6 +405,10 @@ Each `PlanNode` has:
 
 Each `PlanOp` sets exactly one of `shell` (a shell command string) or `tool` + `args` (a tool name and its arguments map).
 
+One shared budget permits at most 256 operations across the outer plan and all
+nested `run_plan` calls. Exhausting it stops the walk with
+`stopped_reason: "resource_limit"`.
+
 ### Mutation gating
 
 Nodes without `mutates: true` (Phase 1) are read-only: only `safe`-risk shell commands and read-only tools are permitted. The fixed file/search allowlist is (`read_file`, `multi_read`, `list_dir`, `search_files`, `find_files`, `stat_file`, `lsp_query`), with `memory` actions `recall`/`list` and `undo` actions `list`/`preview` also allowed. Any non-safe shell or mutating action is blocked.
@@ -439,7 +443,7 @@ The response carries the plan run result in `meta.plan_run`:
 | `transcript` | Array of `PlanNodeResult` — per-node results: `node_id`, `depth`, `ops` (each with `ok`, `result`, `error`, `classification`, `risk`, `exit_code`) |
 | `path_taken` | Ordered list of node IDs visited |
 | `depth_reached` | Depth at which the run stopped |
-| `stopped_reason` | One of: `leaf`, `no_edge_match`, `max_depth`, `mutation_blocked`, `aborted`, `error` |
+| `stopped_reason` | One of: `leaf`, `no_edge_match`, `max_depth`, `mutation_blocked`, `aborted`, `resource_limit`, `error` |
 | `edges_evaluated` | Total number of edge conditions tested |
 | `edges_matched` | Total number of conditions that matched |
 

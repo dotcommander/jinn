@@ -119,8 +119,9 @@ jinn --mcp-http
 
 The default HTTP profile is route-only. Add
 `--mcp-profile=read-only` for guarded read-only execution. Send one JSON-RPC
-request per POST with `Content-Type: application/json`,
-`MCP-Protocol-Version: 2026-07-28`, and `Mcp-Method`; `tools/call` also needs a
+request per POST with `Accept: application/json, text/event-stream`,
+`Content-Type: application/json`, `MCP-Protocol-Version: 2026-07-28`, and
+`Mcp-Method`; `tools/call` also needs a
 matching `Mcp-Name`. HTTP is stateless and does not use the stdio legacy
 `initialize` compatibility path.
 
@@ -135,6 +136,8 @@ jinn --mcp-profile=read-only --mcp-http 0.0.0.0:8788
 
 The client sends `Authorization: Bearer $TOKEN`. Origins are exact HTTP(S)
 origins, and invalid or missing auth returns HTTP 401 before MCP dispatch.
+Use a non-loopback bind only on a trusted network or behind a TLS-terminating
+proxy or tunnel: bearer tokens authenticate requests but do not encrypt them.
 
 ## Codex CLI
 
