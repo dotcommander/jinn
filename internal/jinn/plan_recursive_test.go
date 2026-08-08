@@ -2,6 +2,7 @@ package jinn
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -203,6 +204,170 @@ func TestNestedRunPlanHonorsParentMaxDepth(t *testing.T) {
 	}
 	if op := result.Transcript[0].Ops[0]; op.OK || op.ExitCode == 0 {
 		t.Fatalf("nested depth result = %+v, want failed nonzero result", op)
+	}
+}
+
+func TestNestedRunPlanInheritsParentGraphDepth(t *testing.T) {
+	t.Parallel()
+	e, dir := testEngine(t)
+	target := filepath.Join(dir, "must-not-exist.txt")
+	child := map[string]any{
+		"root": "child-root",
+		"nodes": []any{
+			map[string]any{
+				"id":       "child-root",
+				"commands": []any{map[string]any{"tool": "list_dir", "args": map[string]any{"path": "."}}},
+				"edges":    []any{map[string]any{"when": map[string]any{"kind": "always"}, "to": "child-over-limit"}},
+			},
+			map[string]any{
+				"id":       "child-over-limit",
+				"mutates":  true,
+				"commands": []any{map[string]any{"tool": "write_file", "args": map[string]any{"path": target, "content": "must not execute"}}},
+			},
+		},
+	}
+	plan := &PlanTree{Root: "root", MaxDepth: 2, Nodes: []PlanNode{
+		{
+			ID:       "root",
+			Commands: []PlanOp{{Tool: "list_dir", Args: args("path", ".")}},
+			Edges:    []PlanEdge{{When: Condition{Kind: "always"}, To: "nested"}},
+		},
+		{
+			ID:       "nested",
+			Mutates:  true,
+			Commands: []PlanOp{{Tool: "run_plan", Args: map[string]any{"plan": child}}},
+		},
+	}}
+	result, err := e.runPlanTree(context.Background(), plan)
+	if err != nil {
+		t.Fatalf("runPlanTree(): %v", err)
+	}
+	op := result.Transcript[1].Ops[0]
+	var childResult PlanRunResult
+	if err := json.Unmarshal([]byte(op.Result), &childResult); err != nil {
+		t.Fatalf("decode nested plan result: %v\n%s", err, op.Result)
+	}
+	if op.OK || childResult.StoppedReason != StopMaxDepth || childResult.DepthReached != 3 {
+		t.Fatalf("nested depth result = parent:%+v child:%+v, want failed max-depth at 3", op, childResult)
+	}
+	if len(childResult.Transcript) != 1 || childResult.Transcript[0].Depth != 2 {
+		t.Fatalf("nested transcript depth = %+v, want child root at absolute depth 2", childResult.Transcript)
+	}
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Fatalf("nested graph depth allowed over-limit operation: %v", err)
+	}
+}
+
+func TestNestedRunPlanInheritedDepthBoundaries(t *testing.T) {
+	t.Parallel()
+	t.Run("omitted child limit inherits outer depth beyond default", func(t *testing.T) {
+		t.Parallel()
+		e, _ := testEngine(t)
+		const childNodes = 10
+		nodes := make([]any, childNodes)
+		for i := range nodes {
+			node := map[string]any{
+				"id":       fmt.Sprintf("child-%d", i),
+				"commands": []any{map[string]any{"tool": "list_dir", "args": map[string]any{"path": "."}}},
+			}
+			if i+1 < len(nodes) {
+				node["edges"] = []any{map[string]any{"when": map[string]any{"kind": "always"}, "to": fmt.Sprintf("child-%d", i+1)}}
+			}
+			nodes[i] = node
+		}
+		child := map[string]any{"root": "child-0", "nodes": nodes}
+		plan := &PlanTree{Root: "outer", MaxDepth: 16, Nodes: []PlanNode{{
+			ID:       "outer",
+			Mutates:  true,
+			Commands: []PlanOp{{Tool: "run_plan", Args: map[string]any{"plan": child}}},
+		}}}
+		result, err := e.runPlanTree(context.Background(), plan)
+		if err != nil {
+			t.Fatalf("runPlanTree(): %v", err)
+		}
+		if result.StoppedReason != StopLeaf || !result.Transcript[0].Ops[0].OK {
+			t.Fatalf("omitted child limit result = %+v, want nested leaf after %d child nodes", result, childNodes)
+		}
+	})
+	t.Run("explicit child limit lowers inherited ceiling", func(t *testing.T) {
+		t.Parallel()
+		e, _ := testEngine(t)
+		child := map[string]any{
+			"root":      "child-0",
+			"max_depth": float64(1),
+			"nodes": []any{
+				map[string]any{"id": "child-0", "commands": []any{map[string]any{"tool": "list_dir", "args": map[string]any{"path": "."}}}, "edges": []any{map[string]any{"when": map[string]any{"kind": "always"}, "to": "child-1"}}},
+				map[string]any{"id": "child-1", "commands": []any{map[string]any{"tool": "list_dir", "args": map[string]any{"path": "."}}}, "edges": []any{map[string]any{"when": map[string]any{"kind": "always"}, "to": "child-2"}}},
+				map[string]any{"id": "child-2", "commands": []any{map[string]any{"tool": "list_dir", "args": map[string]any{"path": "."}}}},
+			},
+		}
+		plan := &PlanTree{Root: "outer", MaxDepth: 16, Nodes: []PlanNode{{
+			ID:       "outer",
+			Mutates:  true,
+			Commands: []PlanOp{{Tool: "run_plan", Args: map[string]any{"plan": child}}},
+		}}}
+		result, err := e.runPlanTree(context.Background(), plan)
+		if err != nil {
+			t.Fatalf("runPlanTree(): %v", err)
+		}
+		var childResult PlanRunResult
+		if err := json.Unmarshal([]byte(result.Transcript[0].Ops[0].Result), &childResult); err != nil {
+			t.Fatalf("decode nested plan result: %v", err)
+		}
+		if result.Transcript[0].Ops[0].OK || childResult.StoppedReason != StopMaxDepth || childResult.DepthReached != 3 || len(childResult.Transcript) != 2 {
+			t.Fatalf("explicit child limit result = parent:%+v child:%+v, want two child nodes then max-depth at 3", result, childResult)
+		}
+	})
+	t.Run("child root may execute at inherited ceiling", func(t *testing.T) {
+		t.Parallel()
+		e, _ := testEngine(t)
+		child := map[string]any{"root": "child", "nodes": []any{map[string]any{"id": "child", "commands": []any{map[string]any{"tool": "list_dir", "args": map[string]any{"path": "."}}}}}}
+		plan := &PlanTree{Root: "root", MaxDepth: 2, Nodes: []PlanNode{
+			{ID: "root", Commands: []PlanOp{{Tool: "list_dir", Args: args("path", ".")}}, Edges: []PlanEdge{{When: Condition{Kind: "always"}, To: "nested"}}},
+			{ID: "nested", Mutates: true, Commands: []PlanOp{{Tool: "run_plan", Args: map[string]any{"plan": child}}}},
+		}}
+		result, err := e.runPlanTree(context.Background(), plan)
+		if err != nil {
+			t.Fatalf("runPlanTree(): %v", err)
+		}
+		var childResult PlanRunResult
+		if err := json.Unmarshal([]byte(result.Transcript[1].Ops[0].Result), &childResult); err != nil {
+			t.Fatalf("decode nested plan result: %v", err)
+		}
+		if !result.Transcript[1].Ops[0].OK || childResult.StoppedReason != StopLeaf || childResult.DepthReached != 2 || len(childResult.Transcript) != 1 || childResult.Transcript[0].Depth != 2 {
+			t.Fatalf("inherited depth boundary result = parent:%+v child:%+v, want child leaf at depth 2", result, childResult)
+		}
+	})
+}
+
+func TestPlanLimitsApplyAcrossNestedRunPlans(t *testing.T) {
+	t.Parallel()
+	e, _ := testEngine(t)
+	commands := make([]any, maxPlanCommands)
+	for i := range commands {
+		commands[i] = map[string]any{"tool": "list_dir", "args": map[string]any{"path": "."}}
+	}
+	child := map[string]any{
+		"root":      "loop",
+		"max_depth": float64(maxPlanDepth),
+		"nodes": []any{map[string]any{
+			"id":       "loop",
+			"commands": commands,
+			"edges":    []any{map[string]any{"when": map[string]any{"kind": "always"}, "to": "loop"}},
+		}},
+	}
+	plan := &PlanTree{Root: "outer", MaxDepth: maxPlanDepth, Nodes: []PlanNode{{
+		ID:       "outer",
+		Mutates:  true,
+		Commands: []PlanOp{{Tool: "run_plan", Args: map[string]any{"plan": child}}},
+	}}}
+	result, err := e.runPlanTree(context.Background(), plan)
+	if err != nil {
+		t.Fatalf("runPlanTree(): %v", err)
+	}
+	op := result.Transcript[0].Ops[0]
+	if op.OK || !strings.Contains(op.Error, string(StopResourceLimit)) {
+		t.Fatalf("nested operation budget result = %+v, want resource-limit failure", op)
 	}
 }
 

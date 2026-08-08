@@ -27,23 +27,36 @@ var planPhase1ToolAllowlist = map[string]bool{
 type planExecutionContextKey struct{}
 type planNestedAuthorizationKey struct{}
 
+type planOperationBudget struct {
+	mu       sync.Mutex
+	reserved int
+}
+
 // planExecutionContext is carried through nested run_plan dispatches. The
 // outermost plan establishes the depth budget and dangerous-mutation
-// authority. Nested plans may consume that budget and authority, but cannot
-// reset or elevate either one.
+// authority. depth is the absolute graph depth of this plan tree's root.
+// Nested plans may consume that budget and authority, but cannot reset or
+// elevate either one.
 type planExecutionContext struct {
 	depth               int
 	maxDepth            int
 	dangerousAuthorized bool
+	budget              *planOperationBudget
 }
 
 func planExecutionContextFor(ctx context.Context, plan *PlanTree) *planExecutionContext {
 	if parent, ok := ctx.Value(planExecutionContextKey{}).(*planExecutionContext); ok {
 		authorized, _ := ctx.Value(planNestedAuthorizationKey{}).(bool)
+		depth := parent.depth + 1
+		maxDepth := parent.maxDepth
+		if plan.MaxDepth > 0 {
+			maxDepth = min(maxDepth, depth+plan.MaxDepth)
+		}
 		return &planExecutionContext{
-			depth:               parent.depth + 1,
-			maxDepth:            parent.maxDepth,
+			depth:               depth,
+			maxDepth:            maxDepth,
 			dangerousAuthorized: authorized,
+			budget:              parent.budget,
 		}
 	}
 
@@ -54,6 +67,7 @@ func planExecutionContextFor(ctx context.Context, plan *PlanTree) *planExecution
 	return &planExecutionContext{
 		maxDepth:            maxDepth,
 		dangerousAuthorized: true,
+		budget:              &planOperationBudget{},
 	}
 }
 
@@ -70,6 +84,19 @@ func planPhase1ToolAllowed(op PlanOp) bool {
 	default:
 		return false
 	}
+}
+
+// reservePlanOperations enforces one operation budget for an outer plan and
+// all nested plans. A nested run_plan may consume the remaining budget, but
+// cannot reset it by starting another tree.
+func reservePlanOperations(opCtx *planExecutionContext, count int) bool {
+	opCtx.budget.mu.Lock()
+	defer opCtx.budget.mu.Unlock()
+	if count > maxPlanOperations-opCtx.budget.reserved {
+		return false
+	}
+	opCtx.budget.reserved += count
+	return true
 }
 
 // planToolRisk classifies a known mutating-node tool op for the Phase 2 risk
@@ -378,19 +405,35 @@ func planRunSucceeded(result *PlanRunResult) bool {
 }
 
 func planShellResult(text string, meta map[string]any, err error, command string) PlanOpResult {
-	res := PlanOpResult{OK: err == nil, Result: text}
+	res := PlanOpResult{Result: text}
+	res.Stdout, _ = meta["stdout"].(string)
+	res.Stderr, _ = meta["stderr"].(string)
 	if err != nil {
 		res.Error = err.Error()
-		res.ExitCode = 1
 	}
+	classification := string(ClassSuccess)
 	if v, ok := meta["exit_code"].(int); ok {
 		res.ExitCode = v
 		class, reason := classifyExitCode(extractArgv0(command), v)
-		res.Classification = string(class)
+		classification = string(class)
+		switch reported, _ := meta["classification"].(string); reported {
+		case "timeout", "signal", "resource_limit":
+			classification = reported
+			reason = "command terminated before normal completion"
+		}
+		res.Classification = classification
 		res.Result = rewritePlanShellClassification(res.Result, res.Classification, reason)
+	} else if reported, _ := meta["classification"].(string); reported != "" {
+		classification = reported
+		res.Classification = reported
 	}
-	res.Stdout, _ = meta["stdout"].(string)
-	res.Stderr, _ = meta["stderr"].(string)
+	if err != nil || (classification != string(ClassSuccess) && classification != string(ClassExpectedNonzero)) {
+		if res.ExitCode == 0 {
+			res.ExitCode = 1
+		}
+	} else {
+		res.OK = true
+	}
 	if strings.TrimSpace(command) != "" {
 		risk, _ := ClassifyCommand(command)
 		res.Risk = risk.String()
@@ -732,10 +775,7 @@ func (e *Engine) scopedPlanEngine(cwd string) (*Engine, error) {
 func (e *Engine) runPlanTree(ctx context.Context, plan *PlanTree) (*PlanRunResult, error) {
 	opCtx := planExecutionContextFor(ctx, plan)
 	if opCtx.depth > opCtx.maxDepth {
-		return &PlanRunResult{
-			DepthReached:  opCtx.depth,
-			StoppedReason: StopMaxDepth,
-		}, nil
+		return newPlanRunResult(nil, nil, opCtx.depth, StopMaxDepth, 0, 0, 0, 0), nil
 	}
 	ctx = context.WithValue(ctx, planExecutionContextKey{}, opCtx)
 
@@ -746,10 +786,6 @@ func (e *Engine) runPlanTree(ctx context.Context, plan *PlanTree) (*PlanRunResul
 	if planEngine != e {
 		defer func() { _ = planEngine.Close() }()
 	}
-	maxDepth := plan.MaxDepth
-	if maxDepth == 0 {
-		maxDepth = DefaultMaxDepth
-	}
 	byID := make(map[string]*PlanNode, len(plan.Nodes))
 	for i := range plan.Nodes {
 		byID[plan.Nodes[i].ID] = &plan.Nodes[i]
@@ -759,33 +795,39 @@ func (e *Engine) runPlanTree(ctx context.Context, plan *PlanTree) (*PlanRunResul
 	var pathTaken []string
 	var transcript []PlanNodeResult
 	edgesEvaluated, edgesMatched := 0, 0
-	operationsExecuted := 0
+	executedNodes, executedOperations := 0, 0
 
 	for {
 		if err := ctx.Err(); err != nil {
-			return &PlanRunResult{Transcript: transcript, PathTaken: pathTaken, DepthReached: depth, StoppedReason: StopAborted, EdgesEvaluated: edgesEvaluated, EdgesMatched: edgesMatched}, nil
+			return newPlanRunResult(transcript, pathTaken, opCtx.depth+depth, StopAborted, edgesEvaluated, edgesMatched, executedNodes, executedOperations), nil
 		}
-		if depth > maxDepth {
-			return &PlanRunResult{Transcript: transcript, PathTaken: pathTaken, DepthReached: depth, StoppedReason: StopMaxDepth, EdgesEvaluated: edgesEvaluated, EdgesMatched: edgesMatched}, nil
+		if opCtx.depth+depth > opCtx.maxDepth {
+			return newPlanRunResult(transcript, pathTaken, opCtx.depth+depth, StopMaxDepth, edgesEvaluated, edgesMatched, executedNodes, executedOperations), nil
 		}
 		node := byID[currentID]
-		if operationsExecuted+len(node.Commands) > maxPlanOperations {
-			return &PlanRunResult{Transcript: transcript, PathTaken: pathTaken, DepthReached: depth, StoppedReason: StopResourceLimit, EdgesEvaluated: edgesEvaluated, EdgesMatched: edgesMatched}, nil
+		if !reservePlanOperations(opCtx, len(node.Commands)) {
+			return newPlanRunResult(transcript, pathTaken, opCtx.depth+depth, StopResourceLimit, edgesEvaluated, edgesMatched, executedNodes, executedOperations), nil
 		}
-		operationsExecuted += len(node.Commands)
+		executedNodes++
 		pathTaken = append(pathTaken, currentID)
 
-		nodeResult := PlanNodeResult{NodeID: currentID, Depth: depth}
+		nodeResult := PlanNodeResult{NodeID: currentID, Depth: opCtx.depth + depth}
 		var lastOpResult PlanOpResult
 		blocked := false
+		nodeCtx := context.WithValue(ctx, planExecutionContextKey{}, &planExecutionContext{
+			depth:               opCtx.depth + depth,
+			maxDepth:            opCtx.maxDepth,
+			dangerousAuthorized: opCtx.dangerousAuthorized,
+			budget:              opCtx.budget,
+		})
 
 		runOp := func(op PlanOp) (PlanOpResult, bool) {
-			result, isBlocked := planEngine.runPlanOp(ctx, planEngine.workDir, op)
+			result, isBlocked := planEngine.runPlanOp(nodeCtx, planEngine.workDir, op)
 			return result, isBlocked
 		}
 		if node.Mutates {
 			runOp = func(op PlanOp) (PlanOpResult, bool) {
-				result, isBlocked := planEngine.runMutatingOp(ctx, planEngine.workDir, node, plan.Force && opCtx.dangerousAuthorized, op)
+				result, isBlocked := planEngine.runMutatingOp(nodeCtx, planEngine.workDir, node, plan.Force && opCtx.dangerousAuthorized, op)
 				return result, isBlocked
 			}
 		}
@@ -802,20 +844,21 @@ func (e *Engine) runPlanTree(ctx context.Context, plan *PlanTree) (*PlanRunResul
 				}(i, op)
 			}
 			wg.Wait()
+			executedOperations += len(node.Commands)
 			for i, b := range blockedFlags {
 				nodeResult.Ops = append(nodeResult.Ops, boundPlanOpResult(ops[i]))
 				lastOpResult = ops[i]
 				if b {
 					blocked = true
-					break
 				}
 			}
 		} else {
 			for _, op := range node.Commands {
 				if ctx.Err() != nil {
-					return &PlanRunResult{Transcript: transcript, PathTaken: pathTaken, DepthReached: depth, StoppedReason: StopAborted, EdgesEvaluated: edgesEvaluated, EdgesMatched: edgesMatched}, nil
+					break
 				}
 				opRes, isBlocked := runOp(op)
+				executedOperations++
 				nodeResult.Ops = append(nodeResult.Ops, boundPlanOpResult(opRes))
 				lastOpResult = opRes
 				if isBlocked {
@@ -826,23 +869,29 @@ func (e *Engine) runPlanTree(ctx context.Context, plan *PlanTree) (*PlanRunResul
 		}
 
 		transcript = append(transcript, nodeResult)
-		if !planTranscriptWithinBudget(transcript, pathTaken, depth, edgesEvaluated, edgesMatched) {
-			transcript, pathTaken = fitPlanTranscript(transcript, pathTaken, depth, edgesEvaluated, edgesMatched)
-			return &PlanRunResult{Transcript: transcript, PathTaken: pathTaken, DepthReached: depth, StoppedReason: StopResourceLimit, EdgesEvaluated: edgesEvaluated, EdgesMatched: edgesMatched}, nil
+		if !planTranscriptWithinBudget(transcript, pathTaken, opCtx.depth+depth, edgesEvaluated, edgesMatched) {
+			transcript, pathTaken = fitPlanTranscript(transcript, pathTaken, opCtx.depth+depth, edgesEvaluated, edgesMatched)
+			if ctx.Err() != nil {
+				return newPlanRunResult(transcript, pathTaken, opCtx.depth+depth, StopAborted, edgesEvaluated, edgesMatched, executedNodes, executedOperations), nil
+			}
+			return newPlanRunResult(transcript, pathTaken, opCtx.depth+depth, StopResourceLimit, edgesEvaluated, edgesMatched, executedNodes, executedOperations), nil
+		}
+		if ctx.Err() != nil {
+			return newPlanRunResult(transcript, pathTaken, opCtx.depth+depth, StopAborted, edgesEvaluated, edgesMatched, executedNodes, executedOperations), nil
 		}
 		if blocked {
-			return &PlanRunResult{Transcript: transcript, PathTaken: pathTaken, DepthReached: depth, StoppedReason: StopMutationBlocked, EdgesEvaluated: edgesEvaluated, EdgesMatched: edgesMatched}, nil
+			return newPlanRunResult(transcript, pathTaken, opCtx.depth+depth, StopMutationBlocked, edgesEvaluated, edgesMatched, executedNodes, executedOperations), nil
 		}
 
 		matched := false
 		for _, edge := range node.Edges {
 			if ctx.Err() != nil {
-				return &PlanRunResult{Transcript: transcript, PathTaken: pathTaken, DepthReached: depth, StoppedReason: StopAborted, EdgesEvaluated: edgesEvaluated, EdgesMatched: edgesMatched}, nil
+				return newPlanRunResult(transcript, pathTaken, opCtx.depth+depth, StopAborted, edgesEvaluated, edgesMatched, executedNodes, executedOperations), nil
 			}
 			edgesEvaluated++
 			ok, err := planEngine.evaluateCondition(lastOpResult, edge.When)
 			if err != nil {
-				return &PlanRunResult{Transcript: transcript, PathTaken: pathTaken, DepthReached: depth, StoppedReason: StopError, EdgesEvaluated: edgesEvaluated, EdgesMatched: edgesMatched}, nil
+				return newPlanRunResult(transcript, pathTaken, opCtx.depth+depth, StopError, edgesEvaluated, edgesMatched, executedNodes, executedOperations), nil
 			}
 			if ok {
 				edgesMatched++
@@ -857,8 +906,21 @@ func (e *Engine) runPlanTree(ctx context.Context, plan *PlanTree) (*PlanRunResul
 			if len(node.Edges) == 0 {
 				reason = StopLeaf
 			}
-			return &PlanRunResult{Transcript: transcript, PathTaken: pathTaken, DepthReached: depth, StoppedReason: reason, EdgesEvaluated: edgesEvaluated, EdgesMatched: edgesMatched}, nil
+			return newPlanRunResult(transcript, pathTaken, opCtx.depth+depth, reason, edgesEvaluated, edgesMatched, executedNodes, executedOperations), nil
 		}
+	}
+}
+
+func newPlanRunResult(transcript []PlanNodeResult, pathTaken []string, depth int, reason StopReason, evaluated, matched, executedNodes, executedOperations int) *PlanRunResult {
+	return &PlanRunResult{
+		Transcript:         transcript,
+		PathTaken:          pathTaken,
+		DepthReached:       depth,
+		StoppedReason:      reason,
+		EdgesEvaluated:     evaluated,
+		EdgesMatched:       matched,
+		executedNodes:      executedNodes,
+		executedOperations: executedOperations,
 	}
 }
 

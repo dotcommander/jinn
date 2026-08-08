@@ -78,6 +78,21 @@ func TestEstimateRequestsSaved(t *testing.T) {
 	}
 }
 
+func TestEstimateRequestsSavedUsesExecutionCountAfterTranscriptFitting(t *testing.T) {
+	t.Parallel()
+	result := &PlanRunResult{
+		Transcript:         []PlanNodeResult{{NodeID: "retained", Ops: []PlanOpResult{{OK: true}}}},
+		executedNodes:      16,
+		executedOperations: maxPlanOperations,
+	}
+	if got, want := estimateRequestsSaved(result), maxPlanOperations-1; got != want {
+		t.Fatalf("estimateRequestsSaved() = %d, want %d", got, want)
+	}
+	if got, want := planRunNodeCount(result), 16; got != want {
+		t.Fatalf("planRunNodeCount() = %d, want %d", got, want)
+	}
+}
+
 func TestRecordPlanStats(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("JINN_CONFIG_DIR", dir)

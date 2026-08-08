@@ -44,15 +44,29 @@ func estimateRequestsSaved(result *PlanRunResult) int {
 	if result == nil {
 		return 0
 	}
-	total := 0
-	for _, n := range result.Transcript {
-		total += len(n.Ops)
-	}
-	saved := total - 1
+	saved := planRunOperationCount(result) - 1
 	if saved < 0 {
 		return 0
 	}
 	return saved
+}
+
+func planRunNodeCount(result *PlanRunResult) int {
+	if result.executedNodes > 0 {
+		return result.executedNodes
+	}
+	return len(result.Transcript)
+}
+
+func planRunOperationCount(result *PlanRunResult) int {
+	if result.executedOperations > 0 {
+		return result.executedOperations
+	}
+	total := 0
+	for _, n := range result.Transcript {
+		total += len(n.Ops)
+	}
+	return total
 }
 
 // recordPlanStats fire-and-forget appends a stats row for a completed
@@ -75,18 +89,13 @@ func recordPlanStats(result *PlanRunResult) {
 		return
 	}
 
-	total := 0
-	for _, n := range result.Transcript {
-		total += len(n.Ops)
-	}
-
 	rec := PlanStatsRecord{
 		V:              1,
 		Ts:             time.Now().UTC().Format(time.RFC3339),
 		StoppedReason:  string(result.StoppedReason),
 		DepthReached:   result.DepthReached,
-		Nodes:          len(result.Transcript),
-		Ops:            total,
+		Nodes:          planRunNodeCount(result),
+		Ops:            planRunOperationCount(result),
 		EdgesEvaluated: result.EdgesEvaluated,
 		EdgesMatched:   result.EdgesMatched,
 		RequestsSaved:  estimateRequestsSaved(result),

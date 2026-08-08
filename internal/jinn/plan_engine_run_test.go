@@ -5,8 +5,22 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
+
+type cancelAfterErrChecksContext struct {
+	context.Context
+	allowErrChecks int32
+	errChecks      atomic.Int32
+}
+
+func (c *cancelAfterErrChecksContext) Err() error {
+	if c.errChecks.Add(1) > c.allowErrChecks {
+		return context.Canceled
+	}
+	return nil
+}
 
 func TestRunPlanTree(t *testing.T) {
 	t.Parallel()
@@ -68,6 +82,9 @@ func TestRunPlanTree(t *testing.T) {
 		}
 		if len(result.PathTaken) != 2 || result.PathTaken[0] != "n1" || result.PathTaken[1] != "a" {
 			t.Errorf("expected PathTaken [n1 a], got %v", result.PathTaken)
+		}
+		if result.EdgesEvaluated != 1 || result.EdgesMatched != 1 {
+			t.Errorf("edge counts = evaluated:%d matched:%d, want 1:1", result.EdgesEvaluated, result.EdgesMatched)
 		}
 	})
 
@@ -251,6 +268,168 @@ func TestRunPlanFailedToolDoesNotRouteAsSuccess(t *testing.T) {
 	}
 }
 
+func TestRunPlanFailedToolRoutesByNonzeroExitCode(t *testing.T) {
+	t.Parallel()
+	e, _ := testEngine(t)
+	plan := &PlanTree{
+		Root: "n1",
+		Nodes: []PlanNode{
+			{
+				ID:       "n1",
+				Commands: []PlanOp{{Tool: "read_file", Args: map[string]any{"path": "missing.txt"}}},
+				Edges:    []PlanEdge{{When: Condition{Kind: "exitCode", Op: "eq", Value: 1}, To: "failure"}},
+			},
+			{ID: "failure", Commands: []PlanOp{{Tool: "list_dir", Args: map[string]any{"path": "."}}}},
+		},
+	}
+	result, err := e.runPlanTree(context.Background(), plan)
+	if err != nil {
+		t.Fatalf("runPlanTree(): %v", err)
+	}
+	if result.StoppedReason != StopLeaf || strings.Join(result.PathTaken, ",") != "n1,failure" {
+		t.Fatalf("failed-operation route = %+v, want n1 then failure leaf", result)
+	}
+}
+
+func TestRunPlanShellFailureCannotRouteNestedPlanAsSuccess(t *testing.T) {
+	t.Parallel()
+	e, dir := testEngine(t)
+	fallback := filepath.Join(dir, "must-not-exist.txt")
+	child := map[string]any{
+		"root": "child",
+		"nodes": []any{map[string]any{
+			"id":       "child",
+			"commands": []any{map[string]any{"shell": "false"}},
+		}},
+	}
+	plan := &PlanTree{Root: "outer", Nodes: []PlanNode{
+		{
+			ID:       "outer",
+			Mutates:  true,
+			Commands: []PlanOp{{Tool: "run_plan", Args: map[string]any{"plan": child}}},
+			Edges:    []PlanEdge{{When: Condition{Kind: "exitCode", Op: "eq", Value: 0}, To: "fallback"}},
+		},
+		{
+			ID:       "fallback",
+			Mutates:  true,
+			Commands: []PlanOp{{Tool: "write_file", Args: map[string]any{"path": fallback, "content": "must not execute"}}},
+		},
+	}}
+	result, err := e.runPlanTree(context.Background(), plan)
+	if err != nil {
+		t.Fatalf("runPlanTree(): %v", err)
+	}
+	if result.StoppedReason != StopNoEdgeMatch || len(result.PathTaken) != 1 {
+		t.Fatalf("nested failed-shell route = %+v, want outer no-edge-match", result)
+	}
+	if op := result.Transcript[0].Ops[0]; op.OK || op.ExitCode == 0 {
+		t.Fatalf("nested failed-shell result = %+v, want failed nonzero", op)
+	}
+	if _, err := os.Stat(fallback); !os.IsNotExist(err) {
+		t.Fatalf("failed nested shell reached mutation fallback: %v", err)
+	}
+}
+
+func TestRunPlanShellResultRejectsTerminalClassifications(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name     string
+		exitCode int
+		command  string
+		meta     map[string]any
+		err      error
+		want     string
+	}{
+		{name: "error", exitCode: 1, command: "false", want: string(ClassError)},
+		{name: "timeout", exitCode: 124, command: "anything", want: string(ClassTimeout)},
+		{name: "signal", exitCode: 137, command: "anything", want: string(ClassSignal)},
+		{name: "resource limit", exitCode: 0, command: "anything", meta: map[string]any{"classification": "resource_limit"}, want: "resource_limit"},
+		{name: "canceled", exitCode: 0, command: "anything", err: context.Canceled, want: string(ClassSuccess)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			meta := map[string]any{"exit_code": tc.exitCode}
+			for key, value := range tc.meta {
+				meta[key] = value
+			}
+			op := planShellResult("", meta, tc.err, tc.command)
+			if op.OK || op.ExitCode == 0 || op.Classification != tc.want {
+				t.Fatalf("planShellResult() = %+v, want non-OK %q classification", op, tc.want)
+			}
+		})
+	}
+}
+
+func TestRunPlanCancellationAfterCompletedOperations(t *testing.T) {
+	t.Parallel()
+	t.Run("serial leaf", func(t *testing.T) {
+		t.Parallel()
+		e, dir := testEngine(t)
+		writeTestFile(t, dir, "serial.txt", "ok")
+		ctx := &cancelAfterErrChecksContext{Context: context.Background(), allowErrChecks: 2}
+		result, err := e.runPlanTree(ctx, &PlanTree{Root: "n", Nodes: []PlanNode{{ID: "n", Commands: []PlanOp{{Tool: "read_file", Args: args("path", "serial.txt")}}}}})
+		if err != nil {
+			t.Fatalf("runPlanTree(): %v", err)
+		}
+		if result.StoppedReason != StopAborted || len(result.Transcript) != 1 || len(result.Transcript[0].Ops) != 1 || !result.Transcript[0].Ops[0].OK {
+			t.Fatalf("serial cancellation result = %+v, want completed op then aborted", result)
+		}
+	})
+	t.Run("parallel leaf", func(t *testing.T) {
+		t.Parallel()
+		e, dir := testEngine(t)
+		writeTestFile(t, dir, "one.txt", "one")
+		writeTestFile(t, dir, "two.txt", "two")
+		ctx := &cancelAfterErrChecksContext{Context: context.Background(), allowErrChecks: 1}
+		result, err := e.runPlanTree(ctx, &PlanTree{Root: "n", Nodes: []PlanNode{{
+			ID:       "n",
+			Parallel: true,
+			Commands: []PlanOp{{Tool: "read_file", Args: args("path", "one.txt")}, {Tool: "read_file", Args: args("path", "two.txt")}},
+		}}})
+		if err != nil {
+			t.Fatalf("runPlanTree(): %v", err)
+		}
+		if result.StoppedReason != StopAborted || len(result.Transcript) != 1 || len(result.Transcript[0].Ops) != 2 {
+			t.Fatalf("parallel cancellation result = %+v, want completed operations then aborted", result)
+		}
+		for _, op := range result.Transcript[0].Ops {
+			if !op.OK {
+				t.Fatalf("parallel completed op = %+v, want success", op)
+			}
+		}
+	})
+}
+
+func TestRunPlanParallelTranscriptIncludesAllExecutedOps(t *testing.T) {
+	t.Parallel()
+	e, dir := testEngine(t)
+	readPath := filepath.Join(dir, "readable.txt")
+	if err := os.WriteFile(readPath, []byte("ok"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	plan := &PlanTree{Root: "n1", Nodes: []PlanNode{{
+		ID:       "n1",
+		Parallel: true,
+		Commands: []PlanOp{
+			{Tool: "write_file", Args: map[string]any{"path": "blocked.txt", "content": "must not write"}},
+			{Tool: "read_file", Args: map[string]any{"path": "readable.txt"}},
+		},
+	}}}
+	result, err := e.runPlanTree(context.Background(), plan)
+	if err != nil {
+		t.Fatalf("runPlanTree(): %v", err)
+	}
+	if result.StoppedReason != StopMutationBlocked {
+		t.Fatalf("StoppedReason = %q, want %q", result.StoppedReason, StopMutationBlocked)
+	}
+	if len(result.Transcript) != 1 || len(result.Transcript[0].Ops) != 2 {
+		t.Fatalf("parallel transcript = %+v, want both command outcomes", result.Transcript)
+	}
+	if !result.Transcript[0].Ops[1].OK {
+		t.Fatalf("read operation missing or failed: %+v", result.Transcript[0].Ops[1])
+	}
+}
+
 func TestRunPlanConditionErrorStopsWalk(t *testing.T) {
 	t.Parallel()
 	e, dir := testEngine(t)
@@ -318,6 +497,9 @@ func TestRunPlanShellMetadataUsesOriginalCommand(t *testing.T) {
 	}
 	if op.ExitCode != 1 || op.Classification != string(ClassExpectedNonzero) {
 		t.Errorf("shell result = %+v, want grep's expected nonzero exit", op)
+	}
+	if !op.OK {
+		t.Errorf("expected semantic expected-nonzero shell result to remain OK: %+v", op)
 	}
 	if !strings.Contains(op.Result, "[classification: expected_nonzero") {
 		t.Errorf("result classification was not rewritten for original command: %q", op.Result)

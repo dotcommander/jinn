@@ -17,7 +17,7 @@ type PlanTree struct {
 	Root     string     `json:"root"`
 	Nodes    []PlanNode `json:"nodes"`
 	Cwd      string     `json:"cwd,omitempty"`       // existing directory within the Engine sandbox; empty keeps Engine workDir
-	MaxDepth int        `json:"max_depth,omitempty"` // 0 => DefaultMaxDepth; also bounds nested run_plan depth
+	MaxDepth int        `json:"max_depth,omitempty"` // 0 => DefaultMaxDepth at the outermost plan; nested 0 inherits, positive values can only lower the inherited ceiling
 	Force    bool       `json:"force,omitempty"`     // plan-level dangerous-mutation gate, Phase 2 only
 }
 
@@ -112,4 +112,9 @@ type PlanRunResult struct {
 	StoppedReason  StopReason       `json:"stopped_reason"`
 	EdgesEvaluated int              `json:"edges_evaluated"`
 	EdgesMatched   int              `json:"edges_matched"`
+
+	// These counters intentionally remain internal so the public plan_run
+	// schema stays stable even when transcript fitting drops old entries.
+	executedNodes      int
+	executedOperations int
 }
