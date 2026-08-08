@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dotcommander/jinn/internal/jinn"
 	"github.com/voocel/mcp-sdk-go/protocol"
@@ -59,12 +60,27 @@ func TestMCPHTTPOriginParsing(t *testing.T) {
 		"https://agent.example.com/",
 		"https://agent.example.com/path",
 		"https://agent.example.com?query=1",
+		"https://agent.example.com?",
+		"https://agent.example.com#fragment",
+		"https://user@agent.example.com",
+		"https://:443",
 		"ftp://agent.example.com",
 		"https://agent.example.com,,https://other.example.com",
 	} {
 		if _, err := parseMCPHTTPOrigins(value); err == nil {
 			t.Fatalf("parseMCPHTTPOrigins(%q) accepted invalid origins", value)
 		}
+	}
+}
+
+func TestMCPHTTPServerUsesExplicitLimits(t *testing.T) {
+	t.Parallel()
+	server := newMCPHTTPServer("127.0.0.1:8788", http.NotFoundHandler())
+	if server.ReadHeaderTimeout != 5*time.Second || server.ReadTimeout != 15*time.Second || server.WriteTimeout != 60*time.Second || server.IdleTimeout != 60*time.Second {
+		t.Fatalf("HTTP server timeouts = %#v", server)
+	}
+	if server.MaxHeaderBytes != mcpHTTPMaxHeader {
+		t.Fatalf("MaxHeaderBytes = %d, want %d", server.MaxHeaderBytes, mcpHTTPMaxHeader)
 	}
 }
 
@@ -124,6 +140,31 @@ func TestMCPHTTPAuthRejectsBeforeDispatch(t *testing.T) {
 	handler.ServeHTTP(resp, req)
 	if resp.Code != http.StatusOK || called != 1 {
 		t.Fatalf("valid auth status/calls = %d/%d", resp.Code, called)
+	}
+}
+
+func TestMCPHTTPHandlerAuthenticatesBeforeMCPValidation(t *testing.T) {
+	t.Parallel()
+	handler := newMCPHTTPHandler(newMCPServer("test", jinn.ShellModeDisabled), mcpHTTPConfig{
+		addr:    "127.0.0.1:8788",
+		token:   "secret",
+		origins: []string{"https://allowed.example.com"},
+	})
+	req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:8788/mcp", strings.NewReader("not json"))
+	req.Header.Set("Origin", "https://blocked.example.com")
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+	if resp.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated malformed blocked-origin request status = %d, want 401", resp.Code)
+	}
+	if resp.Header().Get("WWW-Authenticate") != "Bearer" {
+		t.Fatalf("unauthenticated challenge = %q", resp.Header().Get("WWW-Authenticate"))
+	}
+	req.Header.Set("Authorization", "Bearer secret")
+	resp = httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+	if resp.Code != http.StatusForbidden {
+		t.Fatalf("authenticated blocked-origin malformed request status = %d, want 403", resp.Code)
 	}
 }
 
@@ -231,6 +272,14 @@ func TestMCPHTTPOriginRejectsUnlistedBrowser(t *testing.T) {
 	if status != http.StatusForbidden || !strings.Contains(string(body), "origin not allowed") {
 		t.Fatalf("blocked origin status/body = %d/%s", status, body)
 	}
+	status, body, _ = mcpHTTPPost(t, handler, "/mcp", "server/discover", "", map[string]string{"Origin": "http://localhost:3000"})
+	if status != http.StatusForbidden || !strings.Contains(string(body), "origin not allowed") {
+		t.Fatalf("SDK localhost exception bypassed configured origins: %d/%s", status, body)
+	}
+	status, body, _ = mcpHTTPPost(t, handler, "/mcp", "server/discover", "", map[string]string{"Origin": "https://allowed.example.com"})
+	if status != http.StatusOK {
+		t.Fatalf("allowed exact origin status/body = %d/%s", status, body)
+	}
 }
 
 func mcpHTTPPost(t *testing.T, handler http.Handler, path, method, paramsExtra string, headers map[string]string) (int, []byte, http.Header) {
@@ -243,6 +292,7 @@ func mcpHTTPPost(t *testing.T, handler http.Handler, path, method, paramsExtra s
 	body := `{"jsonrpc":"2.0","id":1,"method":"` + method + `","params":` + params + `}`
 	req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:8788"+path, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
 	req.Header.Set("MCP-Protocol-Version", protocol.Version)
 	req.Header.Set("Mcp-Method", method)
 	if method == "tools/call" {

@@ -42,8 +42,9 @@ func parseMCPProfile(value string) (mcpProfile, error) {
 }
 
 // runMCP serves the current MCP 2026-07-28 protocol through the official SDK.
-// A first initialize-style request is routed to the legacy compatibility
-// handler so existing jinn MCP clients can migrate without a flag change.
+// A first initialize-style request on the default profile is routed to the
+// legacy compatibility handler so existing jinn MCP clients can migrate
+// without a flag change.
 func runMCP(ctx context.Context, in io.Reader, out io.Writer, ldVersion string, mode jinn.ShellMode) error {
 	return runMCPWithProfile(ctx, in, out, ldVersion, mode, mcpProfileDiscover)
 }
@@ -58,9 +59,10 @@ func runMCPWithProfile(ctx context.Context, in io.Reader, out io.Writer, ldVersi
 		return fmt.Errorf("read MCP input: %w", err)
 	}
 	input := io.MultiReader(bytes.NewReader(prefix), reader)
-	if legacy {
-		// Legacy initialize-based clients retain the compatibility surface. The
-		// read-only profile requires the current stateless request metadata.
+	if legacy && profile != mcpProfileReadOnly {
+		// Legacy initialize-based clients retain the default compatibility
+		// surface. The read-only profile deliberately leaves legacy traffic to
+		// the current SDK, which rejects it before any route or tool dispatch.
 		return runLegacyMCP(ctx, input, out, ldVersion, mode)
 	}
 
@@ -183,7 +185,7 @@ func newMCPServerWithProfile(ldVersion string, mode jinn.ShellMode, profile mcpP
 		Name:         mcpRouteTool,
 		Title:        "Route to Jinn tools",
 		Description:  "Deterministically find relevant Jinn tools for a coding-agent task. Recommendation only; does not execute tools.",
-		InputSchema:  protocol.JSONSchema(mcpRouteInputSchema),
+		InputSchema:  protocol.JSONSchema(mcpRouteInputSchemaForProfile(profile)),
 		OutputSchema: protocol.JSONSchema(mcpRouteOutputSchema),
 		Annotations: &protocol.ToolAnnotations{
 			ReadOnlyHint:    &readOnly,
@@ -382,6 +384,31 @@ var mcpRouteInputSchema = map[string]any{
 	},
 	"required":             []string{"need"},
 	"additionalProperties": false,
+}
+
+func mcpRouteInputSchemaForProfile(profile mcpProfile) map[string]any {
+	if profile != mcpProfileReadOnly {
+		return mcpRouteInputSchema
+	}
+	schema := make(map[string]any, len(mcpRouteInputSchema))
+	for key, value := range mcpRouteInputSchema {
+		schema[key] = value
+	}
+	properties := mcpRouteInputSchema["properties"].(map[string]any)
+	readOnlyProperties := make(map[string]any, len(properties))
+	for key, value := range properties {
+		readOnlyProperties[key] = value
+	}
+	includeMutating := properties["include_mutating"].(map[string]any)
+	readOnlyIncludeMutating := make(map[string]any, len(includeMutating))
+	for key, value := range includeMutating {
+		readOnlyIncludeMutating[key] = value
+	}
+	readOnlyIncludeMutating["default"] = false
+	readOnlyIncludeMutating["description"] = "Always false in the read-only profile; mutating tools are never recommended."
+	readOnlyProperties["include_mutating"] = readOnlyIncludeMutating
+	schema["properties"] = readOnlyProperties
+	return schema
 }
 
 //nolint:gochecknoglobals // MCP schemas are immutable package-level wire contracts.

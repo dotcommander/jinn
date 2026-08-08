@@ -23,6 +23,7 @@ const (
 	mcpHTTPDefaultAddr = "127.0.0.1:8788"
 	mcpHTTPPath        = "/mcp"
 	mcpHTTPMaxBody     = 8 << 20
+	mcpHTTPMaxHeader   = 1 << 20
 	mcpHTTPTokenEnv    = "JINN_MCP_HTTP_TOKEN"
 	mcpHTTPOriginsEnv  = "JINN_MCP_HTTP_ORIGINS"
 )
@@ -63,7 +64,7 @@ func parseMCPHTTPOrigins(value string) ([]string, error) {
 			return nil, fmt.Errorf("%s contains duplicate origin %q", mcpHTTPOriginsEnv, origin)
 		}
 		u, err := url.Parse(origin)
-		if err != nil || u.Host == "" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || u.Opaque != "" {
+		if err != nil || u.Hostname() == "" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.Opaque != "" {
 			return nil, fmt.Errorf("%s origin %q must be an exact http or https origin", mcpHTTPOriginsEnv, origin)
 		}
 		if u.Scheme != "http" && u.Scheme != "https" {
@@ -124,14 +125,7 @@ func serveMCPHTTP(ctx context.Context, addr, ldVersion string, mode jinn.ShellMo
 	}
 
 	handler := newMCPHTTPHandler(newMCPServerWithProfile(ldVersion, mode, profile, engine), config)
-	httpServer := &http.Server{
-		Addr:              config.addr,
-		Handler:           handler,
-		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       15 * time.Second,
-		WriteTimeout:      60 * time.Second,
-		IdleTimeout:       60 * time.Second,
-	}
+	httpServer := newMCPHTTPServer(config.addr, handler)
 	listener, err := net.Listen("tcp", config.addr)
 	if err != nil {
 		return fmt.Errorf("listen for MCP HTTP on %s: %w", config.addr, err)
@@ -155,12 +149,24 @@ func serveMCPHTTP(ctx context.Context, addr, ldVersion string, mode jinn.ShellMo
 	return err
 }
 
+func newMCPHTTPServer(addr string, handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    mcpHTTPMaxHeader,
+	}
+}
+
 func newMCPHTTPHandler(srv *server.Server, config mcpHTTPConfig) http.Handler {
 	handler := streamhttp.NewHandler(srv, &streamhttp.Options{
 		AllowedOrigins: config.origins,
 		MaxBodyBytes:   mcpHTTPMaxBody,
 	})
-	protected := mcpHTTPAuth(config.token, handler)
+	protected := mcpHTTPAuth(config.token, mcpHTTPOriginAllowlist(config.origins, handler))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != mcpHTTPPath {
 			http.NotFound(w, r)
@@ -168,6 +174,28 @@ func newMCPHTTPHandler(srv *server.Server, config mcpHTTPConfig) http.Handler {
 		}
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		protected.ServeHTTP(w, r)
+	})
+}
+
+// mcpHTTPOriginAllowlist runs before the SDK so configured origins are exact
+// even when the SDK's local-development exception would otherwise allow them.
+func mcpHTTPOriginAllowlist(origins []string, next http.Handler) http.Handler {
+	if len(origins) == 0 {
+		return next
+	}
+	allowed := make(map[string]struct{}, len(origins))
+	for _, origin := range origins {
+		allowed[origin] = struct{}{}
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+		if origin != "" {
+			if _, ok := allowed[origin]; !ok {
+				http.Error(w, "origin not allowed", http.StatusForbidden)
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
 	})
 }
 

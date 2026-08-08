@@ -108,6 +108,7 @@ def post(
         data=json.dumps(body, separators=(",", ":")).encode("utf-8"),
         method="POST",
         headers={
+            "Accept": "application/json, text/event-stream",
             "Content-Type": "application/json",
             "MCP-Protocol-Version": PROTOCOL_VERSION,
             "Mcp-Method": method,
@@ -209,7 +210,10 @@ def readonly_smoke(binary: str) -> None:
         if status != 401 or headers.get("www-authenticate") != "Bearer":
             fail(f"missing HTTP auth status/body/headers = {status}/{body!r}/{headers!r}")
 
-        tools = require_ok(post(url, "tools/list", dict(META), token=token), "read-only HTTP tools/list")
+        tools = require_ok(
+            post(url, "tools/list", dict(META), token=token, origin="https://allowed.example.com"),
+            "read-only HTTP tools/list",
+        )
         listed = tools.get("result", {}).get("tools", [])
         names = {tool.get("name") for tool in listed}
         if names != {"jinn_route", "jinn_call"}:
@@ -260,6 +264,16 @@ def readonly_smoke(binary: str) -> None:
         )
         if status != 403:
             fail(f"blocked HTTP origin status/body = {status}/{body!r}")
+
+        status, body, _ = post(
+            url,
+            "server/discover",
+            dict(META),
+            token=token,
+            origin="http://localhost:3000",
+        )
+        if status != 403:
+            fail(f"configured origins allowed SDK-special-cased localhost: {status}/{body!r}")
     finally:
         finish(proc, host_port, "read-only HTTP smoke")
 

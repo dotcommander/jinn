@@ -177,6 +177,7 @@ func parseShellModeArgs(arguments []string) (jinn.ShellMode, []string, error) {
 func parseCLIArgs(arguments []string) (jinn.ShellMode, mcpProfile, []string, error) {
 	mode := jinn.ShellModeDisabled
 	profile := mcpProfileDiscover
+	profileSet := false
 	positional := make([]string, 0, len(arguments))
 	for i := 0; i < len(arguments); i++ {
 		arg := arguments[i]
@@ -197,6 +198,7 @@ func parseCLIArgs(arguments []string) (jinn.ShellMode, mcpProfile, []string, err
 				return "", "", nil, err
 			}
 			profile = parsed
+			profileSet = true
 			continue
 		case arg == "--mcp-profile":
 			if i+1 >= len(arguments) {
@@ -208,6 +210,7 @@ func parseCLIArgs(arguments []string) (jinn.ShellMode, mcpProfile, []string, err
 				return "", "", nil, err
 			}
 			profile = parsed
+			profileSet = true
 			continue
 		default:
 			positional = append(positional, arg)
@@ -218,6 +221,9 @@ func parseCLIArgs(arguments []string) (jinn.ShellMode, mcpProfile, []string, err
 			return "", "", nil, err
 		}
 		mode = parsed
+	}
+	if profileSet && (len(positional) == 0 || (positional[0] != "--mcp" && positional[0] != "--mcp-http")) {
+		return "", "", nil, errors.New("--mcp-profile requires --mcp or --mcp-http")
 	}
 	return mode, profile, positional, nil
 }

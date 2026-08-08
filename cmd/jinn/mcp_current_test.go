@@ -29,6 +29,15 @@ func TestMCPProfileParsing(t *testing.T) {
 	if _, err := parseMCPProfile("unsafe"); err == nil {
 		t.Fatal("parseMCPProfile accepted an unsupported profile")
 	}
+	for _, arguments := range [][]string{
+		{"--mcp-profile=discover"},
+		{"--mcp-profile", "read-only", "--schema"},
+		{"--mcp-profile=read-only", "--schema", "--mcp"},
+	} {
+		if _, _, _, err := parseCLIArgs(arguments); err == nil || !strings.Contains(err.Error(), "--mcp-profile requires --mcp or --mcp-http") {
+			t.Fatalf("parseCLIArgs(%q) error = %v, want MCP transport requirement", arguments, err)
+		}
+	}
 }
 
 func TestMCPCurrentDiscoverAdvertises2026(t *testing.T) {
@@ -99,6 +108,14 @@ func TestMCPReadOnlyProfileAddsCallToolWithReadOnlyAllowlist(t *testing.T) {
 		seen[name] = true
 		if name != mcpRouteTool && name != mcpCallTool {
 			t.Fatalf("unexpected profile tool: %q", name)
+		}
+		if name == mcpRouteTool {
+			inputSchema := tool["inputSchema"].(map[string]any)
+			properties := inputSchema["properties"].(map[string]any)
+			includeMutating := properties["include_mutating"].(map[string]any)
+			if includeMutating["default"] != false || strings.Contains(includeMutating["description"].(string), "Allow recommendations") {
+				t.Fatalf("read-only route schema advertises mutation: %#v", includeMutating)
+			}
 		}
 		if name == mcpCallTool {
 			inputSchema := tool["inputSchema"].(map[string]any)
@@ -242,6 +259,44 @@ func TestMCPCurrentRejectsLegacyInitializeAtSDKLayer(t *testing.T) {
 	errResp := resp["error"].(map[string]any)
 	if errResp["code"] != float64(protocol.CodeInvalidParams) {
 		t.Fatalf("initialize error code = %v", errResp["code"])
+	}
+}
+
+func TestMCPReadOnlyRunLoopRejectsLegacyInitializeAtSDKLayer(t *testing.T) {
+	t.Parallel()
+	inputReader, inputWriter := io.Pipe()
+	outputReader, outputWriter := io.Pipe()
+	defer func() { _ = inputReader.Close() }()
+	defer func() { _ = outputReader.Close() }()
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	runErr := make(chan error, 1)
+	go func() {
+		runErr <- runMCPWithProfile(ctx, inputReader, outputWriter, "test", jinn.ShellModeUnsafe, mcpProfileReadOnly)
+	}()
+	if _, err := io.WriteString(inputWriter, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}`+"\n"); err != nil {
+		t.Fatalf("write legacy initialize: %v", err)
+	}
+	var resp map[string]any
+	decodeErr := make(chan error, 1)
+	go func() { decodeErr <- json.NewDecoder(outputReader).Decode(&resp) }()
+	select {
+	case err := <-decodeErr:
+		if err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+	case <-ctx.Done():
+		t.Fatalf("timed out waiting for legacy rejection: %v", ctx.Err())
+	}
+	errResp, ok := resp["error"].(map[string]any)
+	if !ok || errResp["code"] != float64(protocol.CodeInvalidParams) {
+		t.Fatalf("read-only legacy initialize response = %#v", resp)
+	}
+	if err := inputWriter.Close(); err != nil {
+		t.Fatalf("close MCP input: %v", err)
+	}
+	if err := <-runErr; err != nil {
+		t.Fatalf("runMCPWithProfile: %v", err)
 	}
 }
 

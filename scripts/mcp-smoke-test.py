@@ -183,6 +183,19 @@ def legacy_smoke(binary: str) -> None:
 def readonly_smoke(binary: str) -> None:
     proc = start(binary, "read-only")
     try:
+        send(
+            proc,
+            {
+                "jsonrpc": "2.0",
+                "id": 0,
+                "method": "initialize",
+                "params": {"protocolVersion": "2025-06-18"},
+            },
+        )
+        response = receive(proc, "read-only legacy initialize")
+        if response.get("error", {}).get("code") != -32602:
+            fail(f"read-only legacy initialize was not rejected by the current SDK: {response!r}")
+
         discover = {
             "jsonrpc": "2.0",
             "id": 1,
