@@ -2,6 +2,7 @@ package jinn
 
 import (
 	"fmt"
+	"path"
 	"strings"
 )
 
@@ -118,31 +119,36 @@ var riskTable = map[string]riskRule{
 	"sqlite3":   {RiskCaution, "database CLI — may modify persistent data"},
 
 	// DANGEROUS — destructive, hard to reverse.
-	"rm":        {RiskDangerous, "removes files — irreversible"},
-	"rmdir":     {RiskDangerous, "removes directory"},
-	"unlink":    {RiskDangerous, "removes file — irreversible"},
-	"dd":        {RiskDangerous, "raw disk write — can destroy data"},
-	"mkfs":      {RiskDangerous, "formats filesystem"},
-	"mkfs.ext4": {RiskDangerous, "formats filesystem"},
-	"mkfs.xfs":  {RiskDangerous, "formats filesystem"},
-	"fdisk":     {RiskDangerous, "partitions disk"},
-	"parted":    {RiskDangerous, "partitions disk"},
-	"shred":     {RiskDangerous, "overwrites and deletes"},
-	"wipe":      {RiskDangerous, "secure delete"},
-	"truncate":  {RiskDangerous, "truncates file contents — can destroy data"},
-	"fsck":      {RiskDangerous, "repairs filesystem — can corrupt if misused"},
-	"reboot":    {RiskDangerous, "reboots system"},
-	"shutdown":  {RiskDangerous, "halts system"},
-	"halt":      {RiskDangerous, "halts system"},
-	"poweroff":  {RiskDangerous, "powers off"},
-	"kill":      {RiskDangerous, "signals process"},
-	"killall":   {RiskDangerous, "signals multiple processes"},
-	"sudo":      {RiskDangerous, "elevated privileges — treat entire command as dangerous"},
-	"su":        {RiskDangerous, "switches user — elevated privileges"},
-	"eval":      {RiskDangerous, "evaluates shell code — arbitrary command execution"},
-	"source":    {RiskDangerous, "sources shell code — arbitrary command execution"},
-	".":         {RiskDangerous, "sources shell code — arbitrary command execution"},
-	"trap":      {RiskDangerous, "registers shell code handler — arbitrary command execution"},
+	"rm":         {RiskDangerous, "removes files — irreversible"},
+	"rmdir":      {RiskDangerous, "removes directory"},
+	"unlink":     {RiskDangerous, "removes file — irreversible"},
+	"dd":         {RiskDangerous, "raw disk write — can destroy data"},
+	"mkfs":       {RiskDangerous, "formats filesystem"},
+	"mkfs.ext4":  {RiskDangerous, "formats filesystem"},
+	"mkfs.xfs":   {RiskDangerous, "formats filesystem"},
+	"mkswap":     {RiskDangerous, "initializes swap area — destroys existing data"},
+	"wipefs":     {RiskDangerous, "erases filesystem signatures"},
+	"blkdiscard": {RiskDangerous, "discards block-device contents"},
+	"fdisk":      {RiskDangerous, "partitions disk"},
+	"parted":     {RiskDangerous, "partitions disk"},
+	"shred":      {RiskDangerous, "overwrites and deletes"},
+	"wipe":       {RiskDangerous, "secure delete"},
+	"truncate":   {RiskDangerous, "truncates file contents — can destroy data"},
+	"fsck":       {RiskDangerous, "repairs filesystem — can corrupt if misused"},
+	"reboot":     {RiskDangerous, "reboots system"},
+	"shutdown":   {RiskDangerous, "halts system"},
+	"halt":       {RiskDangerous, "halts system"},
+	"poweroff":   {RiskDangerous, "powers off"},
+	"kill":       {RiskDangerous, "signals process"},
+	"killall":    {RiskDangerous, "signals multiple processes"},
+	"sudo":       {RiskDangerous, "elevated privileges — treat entire command as dangerous"},
+	"su":         {RiskDangerous, "switches user — elevated privileges"},
+	"doas":       {RiskDangerous, "elevated privileges — treat entire command as dangerous"},
+	"pkexec":     {RiskDangerous, "elevated privileges — treat entire command as dangerous"},
+	"eval":       {RiskDangerous, "evaluates shell code — arbitrary command execution"},
+	"source":     {RiskDangerous, "sources shell code — arbitrary command execution"},
+	".":          {RiskDangerous, "sources shell code — arbitrary command execution"},
+	"trap":       {RiskDangerous, "registers shell code handler — arbitrary command execution"},
 }
 
 // Subcommand-level overrides for multi-purpose verbs.
@@ -301,6 +307,10 @@ func classifySegment(seg string) (RiskLevel, string) {
 	if onlyShellTerminators(tokens) {
 		return RiskSafe, "shell terminator"
 	}
+	wrapperLevel, wrapperReason, wrapperWrites := timeOutputRisk(tokens)
+	if wrapperLevel == RiskDangerous {
+		return wrapperLevel, wrapperReason
+	}
 
 	verb, commandTokens := effectiveCommand(tokens)
 	if verb == "" {
@@ -310,6 +320,9 @@ func classifySegment(seg string) (RiskLevel, string) {
 	if isDynamicCommandVerb(verb) {
 		return RiskDangerous, "dynamic command expansion — arbitrary command execution"
 	}
+	if isFilesystemFormatter(verb) {
+		return RiskDangerous, "formats filesystem"
+	}
 	// Shell interpreters execute arbitrary command text from flags, files, or stdin.
 	if isShellInterpreter(verb) {
 		return RiskDangerous, verb + " shell execution — arbitrary command execution"
@@ -317,8 +330,17 @@ func classifySegment(seg string) (RiskLevel, string) {
 	if isInlineCodeExecution(verb, commandTokens) {
 		return RiskDangerous, verb + " inline code — arbitrary code execution"
 	}
-	if hasInputRedirection(seg) && isStdinCodeInterpreterInvocation(verb, commandTokens) {
-		return RiskDangerous, "input redirection feeds interpreter stdin — arbitrary code execution"
+	if isStdinCodeInterpreterInvocation(verb, commandTokens) {
+		if isImplicitNodeStdinInvocation(verb, commandTokens) {
+			return RiskDangerous, "node input type without script — arbitrary code execution"
+		}
+		if hasInputRedirection(seg) {
+			return RiskDangerous, "input redirection feeds interpreter stdin — arbitrary code execution"
+		}
+		program, _ := stdinCodeProgram(verb, commandTokens)
+		if isStdinCodeProgram(program) {
+			return RiskDangerous, verb + " explicit stdin program — arbitrary code execution"
+		}
 	}
 	if reason, dangerous := arbitraryCodeInvocation(verb, commandTokens); dangerous {
 		return RiskDangerous, reason
@@ -335,7 +357,57 @@ func classifySegment(seg string) (RiskLevel, string) {
 	if hasOutputRedirection(seg) && level < RiskCaution {
 		return RiskCaution, "shell output redirection — writes files"
 	}
+	if wrapperWrites && level < RiskCaution {
+		return RiskCaution, wrapperReason
+	}
 	return level, reason
+}
+
+// timeOutputRisk keeps /usr/bin/time's output-file side effect visible after
+// the wrapper has been unwrapped to classify its payload.
+func timeOutputRisk(tokens []string) (RiskLevel, string, bool) {
+	for i, tok := range tokens {
+		if isEnvAssignment(tok) {
+			continue
+		}
+		verb := normalizedCommandVerb(tok)
+		if verb == "" {
+			continue
+		}
+		if verb == "time" {
+			return classifyTimeInvocation(tokens[i+1:])
+		}
+		if payload, ok := wrappedCommandPayload(verb, tokens[i+1:]); ok {
+			return timeOutputRisk(payload)
+		}
+		return RiskSafe, "", false
+	}
+	return RiskSafe, "", false
+}
+
+func classifyTimeInvocation(tokens []string) (RiskLevel, string, bool) {
+	invocation := parseTimeInvocation(tokens)
+	level, reason, found := RiskSafe, "", false
+	for _, target := range invocation.outputTargets {
+		found = true
+		if isDangerousDevicePath(target) {
+			level, reason = RiskDangerous, "time output to device "+target+" — can destroy data"
+			break
+		}
+		level, reason = RiskCaution, "time output — writes file"
+	}
+	if invocation.payloadIndex < 0 {
+		return level, reason, found
+	}
+	payloadLevel, payloadReason, payloadFound := timeOutputRisk(tokens[invocation.payloadIndex:])
+	if payloadLevel > level {
+		return payloadLevel, payloadReason, payloadFound || found
+	}
+	return level, reason, found || payloadFound
+}
+
+func isFilesystemFormatter(verb string) bool {
+	return verb == "mkfs" || strings.HasPrefix(verb, "mkfs.")
 }
 
 // arbitraryCodeInvocation identifies command frontends whose ordinary purpose
@@ -427,7 +499,7 @@ var inlineCodeFlagRules = map[string]map[string]bool{
 	"nodejs":         {"-e": true, "--eval": true, "-p": true, "--print": true},
 	"perl":           {"-e": true, "-E": true},
 	"ruby":           {"-e": true},
-	"php":            {"-r": true},
+	"php":            {"-r": true, "-B": true, "-R": true, "-E": true},
 	"lua":            {"-e": true},
 	"Rscript":        {"-e": true, "--expression": true},
 	"rscript":        {"-e": true, "--expression": true},
@@ -448,6 +520,11 @@ func isStdinCodeInterpreterInvocation(verb string, tokens []string) bool {
 	if !isInlineCodeInterpreter(verb) {
 		return false
 	}
+	program, implicit := stdinCodeProgram(verb, tokens)
+	return implicit || isStdinCodeProgram(program)
+}
+
+func stdinCodeProgram(verb string, tokens []string) (string, bool) {
 	for i := 1; i < len(tokens); i++ {
 		tok := tokens[i]
 		if isInputRedirectionToken(tok) {
@@ -457,13 +534,102 @@ func isStdinCodeInterpreterInvocation(verb string, tokens []string) bool {
 			continue
 		}
 		if tok == "-" {
+			return tok, false
+		}
+		role, value, attached := interpreterOptionValue(verb, tok)
+		switch role {
+		case interpreterConfigArgument:
+			if !attached {
+				i++
+			}
 			continue
+		case interpreterSourceArgument:
+			if attached {
+				return value, false
+			}
+			if i+1 < len(tokens) {
+				return tokens[i+1], false
+			}
+			return "", true
 		}
 		if !isFlag(tok) {
-			return false
+			return tok, false
 		}
 	}
-	return true
+	return "", true
+}
+
+func isStdinCodeProgram(program string) bool {
+	return program == "-" || program == "/dev/stdin" || program == "/dev/fd/0"
+}
+
+func isImplicitNodeStdinInvocation(verb string, tokens []string) bool {
+	if verb != "node" && verb != "nodejs" {
+		return false
+	}
+	for _, tok := range tokens[1:] {
+		if tok == "--input-type" || strings.HasPrefix(tok, "--input-type=") {
+			program, implicit := stdinCodeProgram(verb, tokens)
+			return implicit && program == ""
+		}
+	}
+	return false
+}
+
+type interpreterOptionRole uint8
+
+const (
+	interpreterOptionNone interpreterOptionRole = iota
+	interpreterConfigArgument
+	interpreterSourceArgument
+)
+
+// interpreterOptionValue distinguishes options that configure an interpreter
+// from options that select the source program it executes.
+func interpreterOptionValue(verb, token string) (interpreterOptionRole, string, bool) {
+	for _, option := range interpreterOptionSpecs(verb) {
+		if token == option.name {
+			return option.role, "", false
+		}
+		if strings.HasPrefix(option.name, "--") && strings.HasPrefix(token, option.name+"=") {
+			return option.role, strings.TrimPrefix(token, option.name+"="), true
+		}
+		if !strings.HasPrefix(option.name, "--") && strings.HasPrefix(token, option.name) && len(token) > len(option.name) {
+			return option.role, token[len(option.name):], true
+		}
+	}
+	return interpreterOptionNone, "", false
+}
+
+type interpreterOptionSpec struct {
+	name string
+	role interpreterOptionRole
+}
+
+func interpreterOptionSpecs(verb string) []interpreterOptionSpec {
+	if isPythonVerb(verb) {
+		return []interpreterOptionSpec{
+			{"-W", interpreterConfigArgument}, {"-X", interpreterConfigArgument},
+			{"-m", interpreterSourceArgument}, {"--check-hash-based-pycs", interpreterConfigArgument},
+		}
+	}
+	switch verb {
+	case "node", "nodejs":
+		return []interpreterOptionSpec{
+			{"-r", interpreterConfigArgument}, {"--require", interpreterConfigArgument},
+			{"--import", interpreterConfigArgument}, {"--loader", interpreterConfigArgument},
+			{"--experimental-loader", interpreterConfigArgument}, {"-C", interpreterConfigArgument},
+			{"--conditions", interpreterConfigArgument}, {"--input-type", interpreterConfigArgument},
+		}
+	case "perl":
+		return []interpreterOptionSpec{{"-I", interpreterConfigArgument}, {"-M", interpreterConfigArgument}, {"-m", interpreterConfigArgument}}
+	case "ruby":
+		return []interpreterOptionSpec{{"-I", interpreterConfigArgument}, {"-r", interpreterConfigArgument}, {"-C", interpreterConfigArgument}, {"--directory", interpreterConfigArgument}}
+	case "php":
+		return []interpreterOptionSpec{{"-c", interpreterConfigArgument}, {"-d", interpreterConfigArgument}, {"-f", interpreterSourceArgument}, {"--file", interpreterSourceArgument}}
+	default:
+		return nil
+	}
 }
 
 func isPythonVerb(verb string) bool {
@@ -671,17 +837,103 @@ func lastNonFlagToken(tokens []string) string {
 }
 
 func checkCurlOutputTarget(tokens []string) (RiskLevel, string, bool) {
-	if target, ok := commandOptionTarget(tokens[1:], "-o", "--output"); ok && isDangerousDevicePath(target) {
-		return RiskDangerous, "curl output to device " + target + " — can destroy data", true
+	for _, target := range commandOptionTargets(tokens[1:], curlFileWritingOptions...) {
+		if isDangerousDevicePath(target) {
+			return RiskDangerous, "curl output to device " + target + " — can destroy data", true
+		}
+	}
+	for _, target := range curlWriteOutTargets(tokens[1:]) {
+		if isDangerousDevicePath(target) {
+			return RiskDangerous, "curl write-out to device " + target + " — can destroy data", true
+		}
+	}
+	if target, ok := curlRemoteOutputDirectory(tokens[1:]); ok && isDangerousOutputDirectory(target) {
+		return RiskDangerous, "curl remote output directory " + target + " — can destroy data", true
 	}
 	return 0, "", false
 }
 
 func checkWgetOutputTarget(tokens []string) (RiskLevel, string, bool) {
-	if target, ok := commandOptionTarget(tokens[1:], "-O", "--output-document"); ok && isDangerousDevicePath(target) {
-		return RiskDangerous, "wget output to device " + target + " — can destroy data", true
+	for _, target := range commandOptionTargets(tokens[1:], wgetFileWritingOptions...) {
+		if isDangerousDevicePath(target) {
+			return RiskDangerous, "wget output to device " + target + " — can destroy data", true
+		}
+	}
+	for _, target := range commandOptionTargets(tokens[1:], "-P", "--directory-prefix") {
+		if isDangerousOutputDirectory(target) {
+			return RiskDangerous, "wget output directory " + target + " — can destroy data", true
+		}
 	}
 	return 0, "", false
+}
+
+func curlWriteOutTargets(tokens []string) []string {
+	var targets []string
+	for _, format := range commandOptionTargets(tokens, "-w", "--write-out") {
+		for remaining := format; ; {
+			start := strings.Index(remaining, "%output{")
+			if start < 0 {
+				break
+			}
+			remaining = remaining[start+len("%output{"):]
+			end := strings.IndexByte(remaining, '}')
+			if end < 0 {
+				break
+			}
+			target := strings.TrimPrefix(remaining[:end], ">>")
+			if target != "" {
+				targets = append(targets, target)
+			}
+			remaining = remaining[end+1:]
+		}
+	}
+	return targets
+}
+
+func curlRemoteOutputDirectory(tokens []string) (string, bool) {
+	remoteName := false
+	for _, tok := range tokens {
+		if tok == "-O" || tok == "--remote-name" || tok == "--remote-name-all" {
+			remoteName = true
+			break
+		}
+	}
+	if !remoteName {
+		return "", false
+	}
+	targets := commandOptionTargets(tokens, "--output-dir")
+	if len(targets) == 0 {
+		return "", false
+	}
+	return targets[len(targets)-1], true
+}
+
+func isDangerousOutputDirectory(target string) bool {
+	if strings.HasPrefix(target, "/") {
+		target = path.Clean(target)
+	}
+	if target == "/dev/null" || target == "/dev/stdout" || target == "/dev/stderr" {
+		return false
+	}
+	return target == "/dev" || strings.HasPrefix(target, "/dev/")
+}
+
+var curlFileWritingOptions = []string{
+	"-o", "--output",
+	"-D", "--dump-header",
+	"--trace", "--trace-ascii",
+	"--stderr",
+	"-c", "--cookie-jar",
+	"--hsts", "--alt-svc",
+	"--etag-save", "--libcurl",
+}
+
+var wgetFileWritingOptions = []string{
+	"-O", "--output-document",
+	"-o", "--output-file",
+	"-a", "--append-output",
+	"--hsts-file",
+	"--save-cookies", "--rejected-log",
 }
 
 func checkTarOutputTarget(tokens []string) (RiskLevel, string, bool) {
@@ -734,22 +986,28 @@ func firstNonFlagToken(tokens []string) string {
 	return ""
 }
 
-func commandOptionTarget(tokens []string, shortFlag, longFlag string) (string, bool) {
+// commandOptionTargets returns every value supplied to a short or long output
+// option. Repeated options are valid for several command-line tools, and any
+// one dangerous device target must not be masked by an earlier safe target.
+func commandOptionTargets(tokens []string, options ...string) []string {
+	var targets []string
 	for i := 0; i < len(tokens); i++ {
 		tok := tokens[i]
-		switch {
-		case tok == shortFlag || tok == longFlag:
-			if i+1 < len(tokens) {
-				return tokens[i+1], true
+		for _, option := range options {
+			switch {
+			case tok == option:
+				if i+1 < len(tokens) {
+					targets = append(targets, tokens[i+1])
+					i++
+				}
+			case strings.HasPrefix(option, "--") && strings.HasPrefix(tok, option+"="):
+				targets = append(targets, strings.TrimPrefix(tok, option+"="))
+			case !strings.HasPrefix(option, "--") && strings.HasPrefix(tok, option) && len(tok) > len(option):
+				targets = append(targets, tok[len(option):])
 			}
-			return "", true
-		case strings.HasPrefix(tok, shortFlag) && len(tok) > len(shortFlag):
-			return tok[len(shortFlag):], true
-		case strings.HasPrefix(tok, longFlag+"="):
-			return strings.TrimPrefix(tok, longFlag+"="), true
 		}
 	}
-	return "", false
+	return targets
 }
 
 // checkGitForcePush flags git push with --force/-f.

@@ -221,8 +221,9 @@ var directShellWrappers = map[string]bool{
 }
 
 var flagSkippingShellWrappers = map[string]map[string]bool{
-	"time": nil,
-	"nice": {"-n": true, "--adjustment": true},
+	"nice":   {"-n": true, "--adjustment": true},
+	"setsid": nil,
+	"stdbuf": {"-i": true, "-o": true, "-e": true, "--input": true, "--output": true, "--error": true},
 }
 
 var shellWrapperPayloadIndex = map[string]func([]string) int{
@@ -233,6 +234,9 @@ var shellWrapperPayloadIndex = map[string]func([]string) int{
 	"builtin": commandPayloadIndex,
 	"busybox": multiplexerPayloadIndex,
 	"toybox":  multiplexerPayloadIndex,
+	"timeout": timeoutPayloadIndex,
+	"taskset": tasksetPayloadIndex,
+	"time":    timePayloadIndex,
 }
 
 func restPayload(tokens []string) ([]string, bool) {
@@ -327,8 +331,12 @@ func envPayload(tokens []string) ([]string, bool) {
 			continue
 		}
 		switch {
-		case tok == "-u" || tok == "--unset":
+		case tok == "-u" || tok == "--unset" || tok == "-C" || tok == "--chdir" || tok == "-a" || tok == "--argv0" || tok == "-P":
 			i++
+			continue
+		case strings.HasPrefix(tok, "--chdir=") || strings.HasPrefix(tok, "--argv0="):
+			continue
+		case (strings.HasPrefix(tok, "-C") || strings.HasPrefix(tok, "-a") || strings.HasPrefix(tok, "-P")) && len(tok) > 2:
 			continue
 		case tok == "-S" || tok == "--split-string":
 			if i+1 >= len(tokens) {
@@ -391,6 +399,134 @@ func multiplexerPayloadIndex(tokens []string) int {
 			continue
 		}
 		return i
+	}
+	return -1
+}
+
+// timeout accepts a duration between its options and the command payload.
+// Skipping only flags would otherwise classify the duration as the executable,
+// allowing a destructive command to hide behind the wrapper.
+func timeoutPayloadIndex(tokens []string) int {
+	for i := 0; i < len(tokens); i++ {
+		tok := tokens[i]
+		if tok == "--" {
+			if i+2 < len(tokens) {
+				return i + 2 // duration, then command
+			}
+			return -1
+		}
+		if timeoutFlagConsumesArg(tok) {
+			i++
+			continue
+		}
+		if strings.HasPrefix(tok, "-") {
+			continue
+		}
+		if i+1 < len(tokens) {
+			return i + 1 // duration, then command
+		}
+		return -1
+	}
+	return -1
+}
+
+func timeoutFlagConsumesArg(tok string) bool {
+	switch tok {
+	case "-k", "--kill-after", "-s", "--signal":
+		return true
+	default:
+		return false
+	}
+}
+
+type timeInvocation struct {
+	outputTargets []string
+	payloadIndex  int
+}
+
+func timePayloadIndex(tokens []string) int {
+	return parseTimeInvocation(tokens).payloadIndex
+}
+
+// parseTimeInvocation stops at the wrapped command, so payload arguments such
+// as "echo -o /dev/sda" cannot be mistaken for time output options.
+func parseTimeInvocation(tokens []string) timeInvocation {
+	invocation := timeInvocation{payloadIndex: -1}
+	for i := 0; i < len(tokens); i++ {
+		tok := tokens[i]
+		switch {
+		case tok == "--":
+			if i+1 < len(tokens) {
+				invocation.payloadIndex = i + 1
+			}
+			return invocation
+		case tok == "-f" || tok == "--format":
+			i++
+		case tok == "-o" || tok == "--output":
+			if i+1 < len(tokens) {
+				invocation.outputTargets = append(invocation.outputTargets, tokens[i+1])
+				i++
+			}
+		case strings.HasPrefix(tok, "--format="):
+			continue
+		case strings.HasPrefix(tok, "--output="):
+			invocation.outputTargets = append(invocation.outputTargets, strings.TrimPrefix(tok, "--output="))
+		case strings.HasPrefix(tok, "-f") && len(tok) > len("-f"):
+			continue
+		case strings.HasPrefix(tok, "-o") && len(tok) > len("-o"):
+			invocation.outputTargets = append(invocation.outputTargets, tok[len("-o"):])
+		case strings.HasPrefix(tok, "-"):
+			continue
+		default:
+			invocation.payloadIndex = i
+			return invocation
+		}
+	}
+	return invocation
+}
+
+// taskset has one required affinity argument before the wrapped command. In
+// CPU-list mode that affinity is consumed by -c/--cpu-list instead; -p edits or
+// reads an existing PID and does not execute a payload command.
+func tasksetPayloadIndex(tokens []string) int {
+	cpuListMode := false
+	for i := 0; i < len(tokens); i++ {
+		tok := tokens[i]
+		if tok == "--" {
+			if i+2 < len(tokens) {
+				return i + 2
+			}
+			return -1
+		}
+		if tok == "-p" || tok == "--pid" {
+			return -1
+		}
+		if tok == "-c" || tok == "--cpu-list" {
+			if i+1 >= len(tokens) {
+				return -1
+			}
+			cpuListMode = true
+			i++
+			continue
+		}
+		if strings.HasPrefix(tok, "--cpu-list=") {
+			cpuListMode = true
+			continue
+		}
+		if strings.HasPrefix(tok, "-c") && len(tok) > 2 {
+			cpuListMode = true
+			continue
+		}
+		if strings.HasPrefix(tok, "-") {
+			continue
+		}
+		if cpuListMode {
+			return i
+		}
+		if i+1 < len(tokens) {
+			return i + 1
+		}
+		return -1
 	}
 	return -1
 }
@@ -723,27 +859,80 @@ func compactOutputRedirectionTarget(tok, op string) (string, bool) {
 	return tok[index+len(op):], true
 }
 
-func isDangerousDevicePath(path string) bool {
+func isDangerousDevicePath(target string) bool {
+	if strings.HasPrefix(target, "/") {
+		target = path.Clean(target)
+	}
 	switch {
-	case path == "/dev/null" || path == "/dev/stdout" || path == "/dev/stderr":
+	case target == "/dev/null" || target == "/dev/stdout" || target == "/dev/stderr":
 		return false
-	case strings.HasPrefix(path, "/dev/sd"):
+	case strings.HasPrefix(target, "/dev/sd"):
 		return true
-	case strings.HasPrefix(path, "/dev/hd"):
+	case strings.HasPrefix(target, "/dev/hd"):
 		return true
-	case strings.HasPrefix(path, "/dev/vd"):
+	case strings.HasPrefix(target, "/dev/vd"):
 		return true
-	case strings.HasPrefix(path, "/dev/xvd"):
+	case strings.HasPrefix(target, "/dev/xvd"):
 		return true
-	case strings.HasPrefix(path, "/dev/nvme"):
+	case strings.HasPrefix(target, "/dev/nvme"):
 		return true
-	case strings.HasPrefix(path, "/dev/mmcblk"):
+	case strings.HasPrefix(target, "/dev/mmcblk"):
 		return true
-	case strings.HasPrefix(path, "/dev/disk"):
+	case strings.HasPrefix(target, "/dev/disk"):
 		return true
-	case strings.HasPrefix(path, "/dev/rdisk"):
+	case strings.HasPrefix(target, "/dev/rdisk"):
 		return true
-	case strings.HasPrefix(path, "/dev/mapper/"):
+	case strings.HasPrefix(target, "/dev/loop"):
+		return true
+	case strings.HasPrefix(target, "/dev/md"):
+		return true
+	case strings.HasPrefix(target, "/dev/dm-"):
+		return true
+	case strings.HasPrefix(target, "/dev/nbd"):
+		return true
+	case strings.HasPrefix(target, "/dev/rbd"):
+		return true
+	case strings.HasPrefix(target, "/dev/drbd"):
+		return true
+	case strings.HasPrefix(target, "/dev/pmem"):
+		return true
+	case strings.HasPrefix(target, "/dev/bcache"):
+		return true
+	case strings.HasPrefix(target, "/dev/dasd"):
+		return true
+	case strings.HasPrefix(target, "/dev/aoe/"):
+		return true
+	case strings.HasPrefix(target, "/dev/cciss/"):
+		return true
+	case strings.HasPrefix(target, "/dev/ram"):
+		return true
+	case strings.HasPrefix(target, "/dev/mtd"):
+		return true
+	case strings.HasPrefix(target, "/dev/zram"):
+		return true
+	case strings.HasPrefix(target, "/dev/ada"):
+		return true
+	case strings.HasPrefix(target, "/dev/da"):
+		return true
+	case strings.HasPrefix(target, "/dev/nda"):
+		return true
+	case strings.HasPrefix(target, "/dev/wd"):
+		return true
+	case strings.HasPrefix(target, "/dev/vtbd"):
+		return true
+	case strings.HasPrefix(target, "/dev/ld"):
+		return true
+	case strings.HasPrefix(target, "/dev/cgd"):
+		return true
+	case strings.HasPrefix(target, "/dev/vnd"):
+		return true
+	case strings.HasPrefix(target, "/dev/dsk/"):
+		return true
+	case strings.HasPrefix(target, "/dev/rdsk/"):
+		return true
+	case strings.HasPrefix(target, "/dev/zvol/"):
+		return true
+	case strings.HasPrefix(target, "/dev/mapper/"):
 		return true
 	default:
 		return false

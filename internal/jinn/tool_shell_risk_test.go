@@ -142,6 +142,96 @@ func TestShellRisk_CompactInterpreterInputRedirectionIsDangerous(t *testing.T) {
 	}
 }
 
+func TestShellRisk_TimeoutWrappedDangerousCommandBlocked(t *testing.T) {
+	t.Parallel()
+	e, _ := testEngine(t)
+	_, meta, err := e.runShell(context.Background(), args("command", "timeout 30 rm -rf /tmp/jinntest"))
+	if err == nil {
+		t.Fatal("expected error for timeout-wrapped dangerous command")
+	}
+	if !strings.Contains(err.Error(), "blocked by risk classifier") {
+		t.Errorf("expected blocked message, got: %v", err)
+	}
+	if got := metaString(meta, "risk"); got != RiskDangerous.String() {
+		t.Errorf("risk = %q, want %q", got, RiskDangerous)
+	}
+}
+
+func TestShellRisk_TimeDeviceOutputBlocked(t *testing.T) {
+	t.Parallel()
+	e, _ := testEngine(t)
+	_, meta, err := e.runShell(context.Background(), args("command", "/usr/bin/time -o /dev/./sda echo ok"))
+	if err == nil {
+		t.Fatal("expected error for time output to a device")
+	}
+	if !strings.Contains(err.Error(), "blocked by risk classifier") {
+		t.Errorf("expected blocked message, got: %v", err)
+	}
+	if got := metaString(meta, "risk"); got != RiskDangerous.String() {
+		t.Errorf("risk = %q, want %q", got, RiskDangerous)
+	}
+}
+
+func TestShellRisk_CurlEtagDeviceOutputBlocked(t *testing.T) {
+	t.Parallel()
+	e, _ := testEngine(t)
+	_, meta, err := e.runShell(context.Background(), args("command", "curl --etag-save /dev/./sda https://example.com"))
+	if err == nil {
+		t.Fatal("expected error for curl etag output to a device")
+	}
+	if !strings.Contains(err.Error(), "blocked by risk classifier") {
+		t.Errorf("expected blocked message, got: %v", err)
+	}
+	if got := metaString(meta, "risk"); got != RiskDangerous.String() {
+		t.Errorf("risk = %q, want %q", got, RiskDangerous)
+	}
+}
+
+func TestShellRisk_CurlWriteOutDeviceBlocked(t *testing.T) {
+	t.Parallel()
+	e, _ := testEngine(t)
+	_, meta, err := e.runShell(context.Background(), args("command", "curl -w '%output{/dev/./sda}' https://example.com"))
+	if err == nil {
+		t.Fatal("expected error for curl write-out to a device")
+	}
+	if !strings.Contains(err.Error(), "blocked by risk classifier") {
+		t.Errorf("expected blocked message, got: %v", err)
+	}
+	if got := metaString(meta, "risk"); got != RiskDangerous.String() {
+		t.Errorf("risk = %q, want %q", got, RiskDangerous)
+	}
+}
+
+func TestShellRisk_PHPBeginCodeBlocked(t *testing.T) {
+	t.Parallel()
+	e, _ := testEngine(t)
+	_, meta, err := e.runShell(context.Background(), args("command", "php -B 'echo 1;'"))
+	if err == nil {
+		t.Fatal("expected error for PHP begin code")
+	}
+	if !strings.Contains(err.Error(), "blocked by risk classifier") {
+		t.Errorf("expected blocked message, got: %v", err)
+	}
+	if got := metaString(meta, "risk"); got != RiskDangerous.String() {
+		t.Errorf("risk = %q, want %q", got, RiskDangerous)
+	}
+}
+
+func TestShellRisk_InterpreterStdinAliasBlocked(t *testing.T) {
+	t.Parallel()
+	e, _ := testEngine(t)
+	_, meta, err := e.runShell(context.Background(), args("command", "python3 -W ignore /dev/stdin"))
+	if err == nil {
+		t.Fatal("expected error for interpreter stdin alias")
+	}
+	if !strings.Contains(err.Error(), "blocked by risk classifier") {
+		t.Errorf("expected blocked message, got: %v", err)
+	}
+	if got := metaString(meta, "risk"); got != RiskDangerous.String() {
+		t.Errorf("risk = %q, want %q", got, RiskDangerous)
+	}
+}
+
 func TestShellRisk_PathWrappedDangerousCommand(t *testing.T) {
 	t.Parallel()
 	e, _ := testEngine(t)
