@@ -7,17 +7,48 @@ and jinn adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-08-11
+
 ### Added
 
-- Merge the Webfetch core as internal `web_fetch` and `web_search` tools with URL/redirect protections, Brave/Exa search, Jina/Defuddle/rendering, caching, coded errors, a `jinn web` CLI, and a bounded network MCP profile.
+- Merge the Webfetch core as internal `web_fetch` and `web_search` tools with
+  URL and redirect protections, Brave/Exa search, Jina/Defuddle/rendering,
+  caching, coded errors, a `jinn web` CLI, and a bounded network MCP profile.
 - Add `jinn mcp list|inspect|call`, public 60-second MCP list-cache metadata,
   panic containment, stream-safe HTTP limits, and optional redacted capped MCP
   JSONL logging.
+- Add an opt-in `--mcp-profile=read-only` surface with `jinn_call` for the
+  canonical read-only tool allowlist; mutation-capable tools and shell
+  execution are rejected before dispatch while the default profile stays
+  route-only.
+- Add an opt-in stateless MCP Streamable HTTP broker at `POST /mcp`, defaulting
+  to loopback `127.0.0.1:8788` and reusing the route-only and read-only profiles.
+  Non-loopback binds require environment-only bearer auth and exact origin
+  controls; stdio behavior and legacy compatibility remain unchanged.
+
+### Changed
+
+- Extend the real MCP smoke tests across discovery, legacy compatibility,
+  read-only and network profiles, the local explorer, HTTP headers, auth,
+  origin rejection, profile boundaries, and graceful shutdown.
+
+### Fixed
+
+- Align MCP argument decoding and numeric validation with the published schemas,
+  including unknown-field rejection and explicit bounds.
+- Harden shell risk detection across wrapped commands, interpreter stdin and
+  inline-code modes, output-directory flags, and normalized device paths.
+- Share depth, dangerous-mutation authority, and a 256-operation budget across
+  nested `run_plan` calls instead of letting child plans reset outer limits.
+- Harden MCP transport boundaries with profile-specific legacy handling, exact
+  origin allowlists, bounded requests, and required protocol headers.
+
+## [0.12.0] - 2026-08-04
 
 ### Changed
 
 - Disable shell execution by default and add explicit sandboxed and unsafe
-  modes; discovery now reports 20 or 21 tools accordingly.
+  modes; discovery reports 18 or 19 tools accordingly.
 - Enforce strict, bounded single-request JSON and closed per-tool arguments.
 - Root file I/O in the workspace, require mutation preconditions, serialize
   concurrent writers, and make undo snapshots fail closed and durable.
@@ -33,18 +64,6 @@ and jinn adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `$ref` output reuse, plus structured tool results.
 - Keep a compatibility path for existing initialize-based MCP clients during
   migration.
-- Add an opt-in `--mcp-profile=read-only` surface with `jinn_call` for the
-  canonical read-only tool allowlist; mutation-capable tools and shell
-  execution are rejected before dispatch while the default profile stays
-  route-only.
-- Extend the real MCP stdio smoke test to cover discovery, legacy compatibility,
-  and the read-only executor profile.
-- Add an opt-in stateless MCP Streamable HTTP broker at `POST /mcp`, defaulting
-  to loopback `127.0.0.1:8788` and reusing the route-only and read-only profiles.
-  Non-loopback binds require environment-only bearer auth and exact origin
-  controls; stdio behavior and legacy compatibility remain unchanged.
-- Add a real HTTP subprocess smoke test covering required headers, auth, origin
-  rejection, profile boundaries, and graceful shutdown.
 
 ## [0.11.4] - 2026-07-16
 
@@ -338,7 +357,9 @@ and jinn adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `--schema` flag to emit tool definitions
 - `--version` flag with ldflags and VCS fallback
 
-[Unreleased]: https://github.com/dotcommander/jinn/compare/v0.11.4...HEAD
+[Unreleased]: https://github.com/dotcommander/jinn/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/dotcommander/jinn/compare/v0.12.0...v0.13.0
+[0.12.0]: https://github.com/dotcommander/jinn/compare/v0.11.4...v0.12.0
 [0.11.4]: https://github.com/dotcommander/jinn/compare/v0.11.3...v0.11.4
 [0.11.3]: https://github.com/dotcommander/jinn/compare/v0.11.2...v0.11.3
 [0.11.2]: https://github.com/dotcommander/jinn/compare/v0.11.1...v0.11.2
