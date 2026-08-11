@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -76,12 +78,51 @@ func TestMCPHTTPOriginParsing(t *testing.T) {
 func TestMCPHTTPServerUsesExplicitLimits(t *testing.T) {
 	t.Parallel()
 	server := newMCPHTTPServer("127.0.0.1:8788", http.NotFoundHandler())
-	if server.ReadHeaderTimeout != 5*time.Second || server.ReadTimeout != 15*time.Second || server.WriteTimeout != 60*time.Second || server.IdleTimeout != 60*time.Second {
+	if server.ReadHeaderTimeout != 5*time.Second || server.ReadTimeout != 0 || server.WriteTimeout != 0 || server.IdleTimeout != 2*time.Minute {
 		t.Fatalf("HTTP server timeouts = %#v", server)
 	}
 	if server.MaxHeaderBytes != mcpHTTPMaxHeader {
 		t.Fatalf("MaxHeaderBytes = %d, want %d", server.MaxHeaderBytes, mcpHTTPMaxHeader)
 	}
+}
+
+func TestServeMCPHTTPServerWaitsForActiveHandlerDrain(t *testing.T) {
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	requestDone := make(chan struct{})
+	httpServer := newMCPHTTPServer("", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		close(entered)
+		<-release
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	serveDone := make(chan error, 1)
+	go func() { serveDone <- serveMCPHTTPServer(ctx, httpServer, listener) }()
+	go func() {
+		response, err := http.Get("http://" + listener.Addr().String())
+		if err == nil {
+			_ = response.Body.Close()
+		}
+		close(requestDone)
+	}()
+	<-entered
+	cancel()
+	select {
+	case err := <-serveDone:
+		t.Fatalf("server returned before active handler drained: %v", err)
+	default:
+	}
+	close(release)
+	if err := <-serveDone; err != nil {
+		t.Fatalf("serveMCPHTTPServer: %v", err)
+	}
+	<-requestDone
 }
 
 func TestMCPHTTPExposureRequiresControlsOutsideLoopback(t *testing.T) {
@@ -171,11 +212,11 @@ func TestMCPHTTPHandlerAuthenticatesBeforeMCPValidation(t *testing.T) {
 func TestMCPHTTPDefaultProfileServesOnlyRoute(t *testing.T) {
 	t.Parallel()
 	handler := newMCPHTTPHandler(newMCPServer("test", jinn.ShellModeDisabled), mcpHTTPConfig{addr: "127.0.0.1:8788"})
-	status, body, _ := mcpHTTPPost(t, handler, "/mcp", "server/discover", "", nil)
+	status, body := mcpHTTPPost(t, handler, "/mcp", "server/discover", "", nil)
 	if status != http.StatusOK {
 		t.Fatalf("discover status = %d, body = %s", status, body)
 	}
-	status, body, _ = mcpHTTPPost(t, handler, "/mcp", "tools/list", "", nil)
+	status, body = mcpHTTPPost(t, handler, "/mcp", "tools/list", "", nil)
 	if status != http.StatusOK {
 		t.Fatalf("tools/list status = %d, body = %s", status, body)
 	}
@@ -192,7 +233,7 @@ func TestMCPHTTPDefaultProfileServesOnlyRoute(t *testing.T) {
 	if len(response.Result.Tools) != 1 || response.Result.Tools[0].Name != mcpRouteTool {
 		t.Fatalf("default HTTP tools = %#v", response.Result.Tools)
 	}
-	status, _, _ = mcpHTTPPost(t, handler, "/other", "server/discover", "", nil)
+	status, _ = mcpHTTPPost(t, handler, "/other", "server/discover", "", nil)
 	if status != http.StatusNotFound {
 		t.Fatalf("non-MCP path status = %d, want 404", status)
 	}
@@ -212,7 +253,7 @@ func TestMCPHTTPReadOnlyProfileExecutesReadOnlyTool(t *testing.T) {
 	handler := newMCPHTTPHandler(newMCPServerWithProfile("test", jinn.ShellModeUnsafe, mcpProfileReadOnly, engine), mcpHTTPConfig{addr: "127.0.0.1:8788", token: "secret"})
 
 	headers := map[string]string{"Authorization": "Bearer secret"}
-	status, body, _ := mcpHTTPPost(t, handler, "/mcp", "tools/call", `"name":"jinn_call","arguments":{"tool":"read_file","arguments":{"path":"hello.txt"},"compress":false}`, headers)
+	status, body := mcpHTTPPost(t, handler, "/mcp", "tools/call", `"name":"jinn_call","arguments":{"tool":"read_file","arguments":{"path":"hello.txt"},"compress":false}`, headers)
 	if status != http.StatusOK {
 		t.Fatalf("read_file status = %d, body = %s", status, body)
 	}
@@ -231,11 +272,11 @@ func TestMCPHTTPReadOnlyProfileExecutesReadOnlyTool(t *testing.T) {
 		t.Fatalf("read-only HTTP result = %#v", readResponse.Result.Structured)
 	}
 
-	status, body, _ = mcpHTTPPost(t, handler, "/mcp", "tools/call", `"name":"jinn_call","arguments":{"tool":"write_file","arguments":{"path":"blocked.txt","content":"nope"}}`, headers)
+	status, body = mcpHTTPPost(t, handler, "/mcp", "tools/call", `"name":"jinn_call","arguments":{"tool":"write_file","arguments":{"path":"blocked.txt","content":"nope"}}`, headers)
 	if status != http.StatusOK || !strings.Contains(string(body), `"isError":true`) {
 		t.Fatalf("write_file HTTP result status/body = %d/%s", status, body)
 	}
-	status, body, _ = mcpHTTPPost(t, handler, "/mcp", "tools/call", `"name":"jinn_route","arguments":{"need":"write a file","include_mutating":true}`, headers)
+	status, body = mcpHTTPPost(t, handler, "/mcp", "tools/call", `"name":"jinn_route","arguments":{"need":"write a file","include_mutating":true}`, headers)
 	if status != http.StatusOK {
 		t.Fatalf("read-only route status = %d, body = %s", status, body)
 	}
@@ -256,7 +297,7 @@ func TestMCPHTTPReadOnlyProfileExecutesReadOnlyTool(t *testing.T) {
 			t.Fatalf("read-only route returned a mutating match: %#v", routeResponse.Result.Structured.Matches)
 		}
 	}
-	status, _, _ = mcpHTTPPost(t, handler, "/mcp", "tools/call", `"name":"jinn_call","arguments":{"tool":"run_shell","arguments":{"command":"printf blocked"}}`, headers)
+	status, _ = mcpHTTPPost(t, handler, "/mcp", "tools/call", `"name":"jinn_call","arguments":{"tool":"run_shell","arguments":{"command":"printf blocked"}}`, headers)
 	if status != http.StatusOK {
 		t.Fatalf("run_shell rejection status = %d", status)
 	}
@@ -268,21 +309,35 @@ func TestMCPHTTPOriginRejectsUnlistedBrowser(t *testing.T) {
 		addr:    "127.0.0.1:8788",
 		origins: []string{"https://allowed.example.com"},
 	})
-	status, body, _ := mcpHTTPPost(t, handler, "/mcp", "server/discover", "", map[string]string{"Origin": "https://blocked.example.com"})
+	status, body := mcpHTTPPost(t, handler, "/mcp", "server/discover", "", map[string]string{"Origin": "https://blocked.example.com"})
 	if status != http.StatusForbidden || !strings.Contains(string(body), "origin not allowed") {
 		t.Fatalf("blocked origin status/body = %d/%s", status, body)
 	}
-	status, body, _ = mcpHTTPPost(t, handler, "/mcp", "server/discover", "", map[string]string{"Origin": "http://localhost:3000"})
+	status, body = mcpHTTPPost(t, handler, "/mcp", "server/discover", "", map[string]string{"Origin": "http://localhost:3000"})
 	if status != http.StatusForbidden || !strings.Contains(string(body), "origin not allowed") {
 		t.Fatalf("SDK localhost exception bypassed configured origins: %d/%s", status, body)
 	}
-	status, body, _ = mcpHTTPPost(t, handler, "/mcp", "server/discover", "", map[string]string{"Origin": "https://allowed.example.com"})
+	status, body = mcpHTTPPost(t, handler, "/mcp", "server/discover", "", map[string]string{"Origin": "https://allowed.example.com"})
 	if status != http.StatusOK {
 		t.Fatalf("allowed exact origin status/body = %d/%s", status, body)
 	}
 }
 
-func mcpHTTPPost(t *testing.T, handler http.Handler, path, method, paramsExtra string, headers map[string]string) (int, []byte, http.Header) {
+func TestMCPHTTPOriginRejectsBrowserWhenUnconfigured(t *testing.T) {
+	t.Parallel()
+	handler := newMCPHTTPHandler(newMCPServer("test", jinn.ShellModeDisabled), mcpHTTPConfig{addr: "127.0.0.1:8788"})
+	status, body := mcpHTTPPost(t, handler, "/mcp", "server/discover", "", map[string]string{"Origin": "http://localhost:3000"})
+	if status != http.StatusForbidden || !strings.Contains(string(body), "origin not allowed") {
+		t.Fatalf("unconfigured browser origin status/body = %d/%s", status, body)
+	}
+	status, body = mcpHTTPPost(t, handler, "/mcp", "server/discover", "", nil)
+	if status != http.StatusOK {
+		t.Fatalf("originless request status/body = %d/%s", status, body)
+	}
+}
+
+//nolint:revive // The six explicit inputs make protocol test cases concise and readable.
+func mcpHTTPPost(t *testing.T, handler http.Handler, path, method, paramsExtra string, headers map[string]string) (int, []byte) {
 	t.Helper()
 	params := "{" + mcpHTTPTestMeta
 	if paramsExtra != "" {
@@ -313,5 +368,5 @@ func mcpHTTPPost(t *testing.T, handler http.Handler, path, method, paramsExtra s
 	if err != nil {
 		t.Fatalf("read HTTP response: %v", err)
 	}
-	return resp.Code, result, resp.Header()
+	return resp.Code, result
 }

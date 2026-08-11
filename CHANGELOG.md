@@ -7,10 +7,17 @@ and jinn adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Merge the Webfetch core as internal `web_fetch` and `web_search` tools with URL/redirect protections, Brave/Exa search, Jina/Defuddle/rendering, caching, coded errors, a `jinn web` CLI, and a bounded network MCP profile.
+- Add `jinn mcp list|inspect|call`, public 60-second MCP list-cache metadata,
+  panic containment, stream-safe HTTP limits, and optional redacted capped MCP
+  JSONL logging.
+
 ### Changed
 
 - Disable shell execution by default and add explicit sandboxed and unsafe
-  modes; discovery now reports 18 or 19 tools accordingly.
+  modes; discovery now reports 20 or 21 tools accordingly.
 - Enforce strict, bounded single-request JSON and closed per-tool arguments.
 - Root file I/O in the workspace, require mutation preconditions, serialize
   concurrent writers, and make undo snapshots fail closed and durable.

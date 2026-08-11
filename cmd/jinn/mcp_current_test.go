@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +17,37 @@ import (
 )
 
 const currentMCPMeta = `"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}`
+
+func TestDetectPipedMCPPreservesInputAndSelectsProtocol(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		input string
+		mcp   bool
+	}{
+		{name: "legacy initialize", input: `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}` + "\n", mcp: true},
+		{name: "current discovery", input: `{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{` + currentMCPMeta + `}}` + "\n", mcp: true},
+		{name: "one-shot tool request", input: `{"tool":"read_file","args":{"path":"README.md"}}`, mcp: false},
+		{name: "pretty one-shot request", input: "{\n  \"tool\": \"read_file\",\n  \"args\": {\"path\": \"README.md\"}\n}\n", mcp: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			replay, gotMCP := detectPipedMCP(strings.NewReader(tt.input))
+			if gotMCP != tt.mcp {
+				t.Fatalf("MCP = %v, want %v", gotMCP, tt.mcp)
+			}
+			gotInput, err := io.ReadAll(replay)
+			if err != nil {
+				t.Fatalf("read replay: %v", err)
+			}
+			if string(gotInput) != tt.input {
+				t.Fatalf("replayed input = %q, want %q", gotInput, tt.input)
+			}
+		})
+	}
+}
 
 func TestMCPProfileParsing(t *testing.T) {
 	t.Parallel()
@@ -37,6 +69,18 @@ func TestMCPProfileParsing(t *testing.T) {
 		if _, _, _, err := parseCLIArgs(arguments); err == nil || !strings.Contains(err.Error(), "--mcp-profile requires --mcp or --mcp-http") {
 			t.Fatalf("parseCLIArgs(%q) error = %v, want MCP transport requirement", arguments, err)
 		}
+	}
+}
+
+func TestParseCLIArgsPreservesMCPExplorerCommandArguments(t *testing.T) {
+	t.Parallel()
+	want := []string{"mcp", "inspect", "--command", "/bin/echo", "--arg", "--mcp-profile", "--arg", "network", "jinn_route"}
+	mode, profile, positional, err := parseCLIArgs(append([]string{"--shell-mode=sandboxed"}, want...))
+	if err != nil {
+		t.Fatalf("parseCLIArgs: %v", err)
+	}
+	if mode != jinn.ShellModeSandboxed || profile != mcpProfileDiscover || !slices.Equal(positional, want) {
+		t.Fatalf("parsed args = mode:%q profile:%q positional:%#v", mode, profile, positional)
 	}
 }
 
@@ -86,6 +130,7 @@ func TestMCPCurrentToolsListKeepsOneToolAndUsesJSONSchema202012(t *testing.T) {
 	}
 }
 
+//nolint:gocognit,gocyclo,revive // One end-to-end test intentionally validates the complete profile contract.
 func TestMCPReadOnlyProfileAddsCallToolWithReadOnlyAllowlist(t *testing.T) {
 	t.Parallel()
 	workspace := t.TempDir()
@@ -162,7 +207,7 @@ func TestMCPReadOnlyProfileCallExecutesReadOnlyToolAndRejectsMutation(t *testing
 		t.Fatalf("mutating call was not rejected: %#v", writeResult)
 	}
 	text := writeResult["content"].([]any)[0].(map[string]any)["text"].(string)
-	if !strings.Contains(text, "unavailable in the read-only profile") {
+	if !strings.Contains(text, "unavailable in this MCP profile") {
 		t.Fatalf("unexpected mutation rejection: %q", text)
 	}
 }

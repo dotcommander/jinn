@@ -209,3 +209,73 @@ func TestWriteFile_RejectsExistenceChangeAfterPreflight(t *testing.T) {
 		}
 	})
 }
+
+func TestWriteFile_RejectsChangeAfterSnapshotPrepared(t *testing.T) {
+	e, dir := testEngine(t)
+	path := filepath.Join(dir, "a.txt")
+	writeTestFile(t, dir, "a.txt", "before")
+	e.snapshotPreparedHook = func() {
+		if err := os.WriteFile(path, []byte("external"), 0o644); err != nil {
+			t.Fatalf("external WriteFile: %v", err)
+		}
+	}
+
+	_, err := e.writeFile(args("path", "a.txt", "content", "agent", "if_checksum", sha256Hex([]byte("before"))))
+	requireStaleFileError(t, err)
+	got, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatalf("read external file: %v", readErr)
+	}
+	if string(got) != "external" {
+		t.Fatalf("external content was overwritten: %q", got)
+	}
+	assertNoStagedWriteTemp(t, dir)
+	history, historyErr := e.loadHistory()
+	if historyErr != nil {
+		t.Fatalf("loadHistory: %v", historyErr)
+	}
+	if len(history.Entries) != 1 || history.Entries[0].State != historyStateAborted {
+		t.Fatalf("history entries = %#v, want one aborted snapshot", history.Entries)
+	}
+}
+
+func TestWriteFile_RejectsExistenceChangeAfterSnapshotPrepared(t *testing.T) {
+	e, dir := testEngine(t)
+	path := filepath.Join(dir, "created-externally.txt")
+	e.snapshotPreparedHook = func() {
+		if err := os.WriteFile(path, []byte("external"), 0o644); err != nil {
+			t.Fatalf("external WriteFile: %v", err)
+		}
+	}
+
+	_, err := e.writeFile(args("path", "created-externally.txt", "content", "agent"))
+	requireStaleFileError(t, err)
+	got, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatalf("read external file: %v", readErr)
+	}
+	if string(got) != "external" {
+		t.Fatalf("external content was overwritten: %q", got)
+	}
+	assertNoStagedWriteTemp(t, dir)
+	history, historyErr := e.loadHistory()
+	if historyErr != nil {
+		t.Fatalf("loadHistory: %v", historyErr)
+	}
+	if len(history.Entries) != 1 || history.Entries[0].State != historyStateAborted {
+		t.Fatalf("history entries = %#v, want one aborted snapshot", history.Entries)
+	}
+}
+
+func assertNoStagedWriteTemp(t *testing.T, dir string) {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read target directory: %v", err)
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".jinn-") {
+			t.Fatalf("staged write temp remains after stale rejection: %s", entry.Name())
+		}
+	}
+}

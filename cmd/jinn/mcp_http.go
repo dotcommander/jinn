@@ -23,8 +23,8 @@ const (
 	mcpHTTPDefaultAddr = "127.0.0.1:8788"
 	mcpHTTPPath        = "/mcp"
 	mcpHTTPMaxBody     = 8 << 20
-	mcpHTTPMaxHeader   = 1 << 20
-	mcpHTTPTokenEnv    = "JINN_MCP_HTTP_TOKEN"
+	mcpHTTPMaxHeader   = 64 << 10
+	mcpHTTPTokenEnv    = "JINN_MCP_HTTP_TOKEN" //nolint:gosec // This is an environment variable name, not a credential.
 	mcpHTTPOriginsEnv  = "JINN_MCP_HTTP_ORIGINS"
 )
 
@@ -49,6 +49,7 @@ func loadMCPHTTPConfig(addr string) (mcpHTTPConfig, error) {
 	return mcpHTTPConfig{addr: addr, token: token, origins: origins}, nil
 }
 
+//nolint:goconst // Scheme literals are the exact origin grammar.
 func parseMCPHTTPOrigins(value string) ([]string, error) {
 	if strings.TrimSpace(value) == "" {
 		return nil, nil
@@ -82,7 +83,7 @@ func validateMCPHTTPExposure(addr, token string, origins []string) error {
 		return fmt.Errorf("invalid MCP HTTP address %q: expected host:port", addr)
 	}
 	host = strings.Trim(host, "[]")
-	loopback := host == "localhost" || host == "127.0.0.1" || host == "::1"
+	loopback := host == loopbackHost || host == loopbackIPv4 || host == loopbackIPv6
 	if ip := net.ParseIP(host); ip != nil {
 		loopback = ip.IsLoopback()
 	}
@@ -108,45 +109,45 @@ func serveMCPHTTP(ctx context.Context, addr, ldVersion string, mode jinn.ShellMo
 		})
 	}
 
-	var engine *jinn.Engine
-	if profile == mcpProfileReadOnly {
-		workDir, err := os.Getwd()
-		if err != nil {
-			return fmt.Errorf("getwd for MCP HTTP read-only profile: %w", err)
-		}
-		engine, err = jinn.NewWithConfig(workDir, jinn.EngineConfig{
-			Version:   ldVersion,
-			ShellMode: jinn.ShellModeDisabled,
-		})
-		if err != nil {
-			return fmt.Errorf("open MCP HTTP read-only workspace: %w", err)
-		}
+	engine, err := openMCPProfileEngine(ldVersion, profile, "MCP HTTP")
+	if err != nil {
+		return err
+	}
+	if engine != nil {
 		defer func() { _ = engine.Close() }()
 	}
 
-	handler := newMCPHTTPHandler(newMCPServerWithProfile(ldVersion, mode, profile, engine), config)
+	logger, err := newMCPLoggerFromEnv()
+	if err != nil {
+		return fail(jinn.Response{Error: err.Error(), ErrorCode: jinn.ErrCodeInvalidArgs})
+	}
+	handler := newMCPHTTPHandler(newMCPServerWithProfileAndLogger(ldVersion, mode, profile, engine, logger), config)
 	httpServer := newMCPHTTPServer(config.addr, handler)
-	listener, err := net.Listen("tcp", config.addr)
+	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", config.addr)
 	if err != nil {
 		return fmt.Errorf("listen for MCP HTTP on %s: %w", config.addr, err)
 	}
 	defer func() { _ = listener.Close() }()
 
+	fmt.Fprintf(os.Stderr, "jinn MCP HTTP listening on http://%s%s\n", config.addr, mcpHTTPPath)
+	return serveMCPHTTPServer(ctx, httpServer, listener)
+}
+
+func serveMCPHTTPServer(ctx context.Context, httpServer *http.Server, listener net.Listener) error {
 	sigCtx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	shutdownDone := make(chan error, 1)
 	go func() {
 		<-sigCtx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
-		_ = httpServer.Shutdown(shutdownCtx)
+		shutdownDone <- httpServer.Shutdown(shutdownCtx)
 	}()
-
-	fmt.Fprintf(os.Stderr, "jinn MCP HTTP listening on http://%s%s\n", config.addr, mcpHTTPPath)
-	err = httpServer.Serve(listener)
-	if errors.Is(err, http.ErrServerClosed) {
-		return nil
+	err := httpServer.Serve(listener)
+	if !errors.Is(err, http.ErrServerClosed) {
+		return err
 	}
-	return err
+	return <-shutdownDone
 }
 
 func newMCPHTTPServer(addr string, handler http.Handler) *http.Server {
@@ -154,9 +155,9 @@ func newMCPHTTPServer(addr string, handler http.Handler) *http.Server {
 		Addr:              addr,
 		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       15 * time.Second,
-		WriteTimeout:      60 * time.Second,
-		IdleTimeout:       60 * time.Second,
+		ReadTimeout:       0,
+		WriteTimeout:      0,
+		IdleTimeout:       2 * time.Minute,
 		MaxHeaderBytes:    mcpHTTPMaxHeader,
 	}
 }
@@ -180,9 +181,6 @@ func newMCPHTTPHandler(srv *server.Server, config mcpHTTPConfig) http.Handler {
 // mcpHTTPOriginAllowlist runs before the SDK so configured origins are exact
 // even when the SDK's local-development exception would otherwise allow them.
 func mcpHTTPOriginAllowlist(origins []string, next http.Handler) http.Handler {
-	if len(origins) == 0 {
-		return next
-	}
 	allowed := make(map[string]struct{}, len(origins))
 	for _, origin := range origins {
 		allowed[origin] = struct{}{}

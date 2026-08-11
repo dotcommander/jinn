@@ -107,6 +107,14 @@ for the canonical read-only tool allowlist and rejects mutation, shell,
 `memory`, and `undo` before dispatch. The default entry above remains
 route-only.
 
+For public-web work, use a distinct network-profile server entry. It still has two MCP tools (`jinn_route`, `jinn_call`) and `jinn_call` permits only the local read-only allowlist plus `web_fetch` and `web_search`; it never permits shell or mutation.
+
+These web requests leave the machine and may consume provider quota.
+
+```json
+{"mcpServers":{"jinn-network":{"command":"jinn","args":["--mcp-profile=network","--mcp"]}}}
+```
+
 ### MCP Streamable HTTP
 
 Use the opt-in HTTP broker when the harness expects a URL rather than a stdio

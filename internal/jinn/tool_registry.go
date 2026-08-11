@@ -8,6 +8,7 @@ const (
 	toolRouteRiskReadOnly toolRouteRisk = "read_only"
 	toolRouteRiskMutating toolRouteRisk = "mutating"
 	toolRouteRiskShell    toolRouteRisk = "shell"
+	toolRouteRiskNetwork  toolRouteRisk = "network"
 )
 
 type toolDescriptor struct {
@@ -17,7 +18,7 @@ type toolDescriptor struct {
 }
 
 func (descriptor toolDescriptor) mayMutate() bool {
-	return descriptor.routeRisk != toolRouteRiskReadOnly
+	return descriptor.routeRisk == toolRouteRiskMutating || descriptor.routeRisk == toolRouteRiskShell
 }
 
 // toolCatalog is the runtime registry. Its order must match the embedded wire
@@ -42,6 +43,8 @@ var toolCatalog = [...]toolDescriptor{
 	{name: "lsp_query", features: []string{"definition", "references", "hover", "symbols", "diagnostics", "rename", "symbol_column", "context_lines"}, routeRisk: toolRouteRiskReadOnly},
 	{name: "diff_files", features: []string{"context_lines"}, routeRisk: toolRouteRiskReadOnly},
 	{name: "search_replace", features: []string{"regex", "capture_groups", "multi_file", "glob_patterns", "replace_all", "dry_run", "case_insensitive", "multiline"}, routeRisk: toolRouteRiskMutating},
+	{name: webFetchTool, features: []string{"url_safety", "reader", "render", "cache"}, routeRisk: toolRouteRiskNetwork},
+	{name: webSearchTool, features: []string{"brave", "exa", "domain_filters", "result_limit"}, routeRisk: toolRouteRiskNetwork},
 }
 
 func lookupToolDescriptor(name string) (toolDescriptor, bool) {
@@ -77,6 +80,17 @@ func ReadOnlyToolNames() []string {
 	names := make([]string, 0, len(toolCatalog))
 	for _, descriptor := range toolCatalog {
 		if descriptor.routeRisk == toolRouteRiskReadOnly {
+			names = append(names, descriptor.name)
+		}
+	}
+	return names
+}
+
+// NetworkToolNames returns the stable, non-mutating open-world tool allowlist.
+func NetworkToolNames() []string {
+	names := make([]string, 0, 2)
+	for _, descriptor := range toolCatalog {
+		if descriptor.routeRisk == toolRouteRiskNetwork {
 			names = append(names, descriptor.name)
 		}
 	}
@@ -123,7 +137,7 @@ func validateToolCatalogSchemaParity() error {
 		}
 		seen[descriptor.name] = true
 		switch descriptor.routeRisk {
-		case toolRouteRiskReadOnly, toolRouteRiskMutating, toolRouteRiskShell:
+		case toolRouteRiskReadOnly, toolRouteRiskMutating, toolRouteRiskShell, toolRouteRiskNetwork:
 		default:
 			return fmt.Errorf("invalid tool catalog entry %q: unknown route risk %q", descriptor.name, descriptor.routeRisk)
 		}

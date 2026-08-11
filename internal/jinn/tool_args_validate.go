@@ -43,7 +43,7 @@ func validateSuppliedNonNegativeNumbers(args map[string]interface{}) error {
 	numeric := map[string]bool{
 		"timeout": true, "max_matches": true, "max_entries": true,
 		"limit": true, "max_results": true, "depth": true,
-		"max_depth": true, "context_lines": true,
+		"max_depth": true, "context_lines": true, "highlight_sentences": true,
 	}
 	for key, value := range args {
 		if !numeric[key] {

@@ -19,6 +19,8 @@ import (
 const (
 	inspectorMaxBody = 1 << 20
 	loopbackIPv4     = "127.0.0.1"
+	loopbackIPv6     = "::1"
+	loopbackHost     = "localhost"
 )
 
 func serveInspector(ctx context.Context, addr string, version string, mode jinn.ShellMode) error {
@@ -35,7 +37,7 @@ func serveInspector(ctx context.Context, addr string, version string, mode jinn.
 		return fail(jinn.Response{Error: fmt.Sprintf("getwd: %s", err)})
 	}
 
-	engine, err := jinn.NewWithConfig(wd, jinn.EngineConfig{Version: version, ShellMode: mode})
+	engine, err := jinn.NewWithConfig(wd, jinn.EngineConfig{Version: version, ShellMode: mode, Web: webConfig()})
 	if err != nil {
 		return fail(jinn.Response{Error: err.Error(), ErrorCode: jinn.ErrCodeInvalidArgs})
 	}
@@ -72,7 +74,7 @@ func validateInspectorAddr(addr string) error {
 	if err != nil {
 		return fmt.Errorf("invalid inspector address %q: expected host:port", addr)
 	}
-	if host != loopbackIPv4 && host != "localhost" && host != "::1" {
+	if host != loopbackIPv4 && host != loopbackHost && host != loopbackIPv6 {
 		return fmt.Errorf("inspector address must be loopback, got %q", host)
 	}
 	return nil

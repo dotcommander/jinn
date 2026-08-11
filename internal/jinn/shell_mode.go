@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+
+	"github.com/dotcommander/jinn/internal/webfetch"
 )
 
 func sanitizeExecutablePath(raw string) []string {
@@ -64,6 +66,9 @@ const (
 type EngineConfig struct {
 	Version   string
 	ShellMode ShellMode
+	// Web is the explicit configuration for opt-in network tools. It is
+	// intentionally supplied by the process entry point, which owns env reads.
+	Web webfetch.Config
 	// UnsafeAllowMutationWithoutPreconditions is an explicit compatibility
 	// escape hatch for trusted embedders and tests. Production callers should
 	// leave it false so every mutation supplies a current assertion.

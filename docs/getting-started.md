@@ -47,7 +47,7 @@ You'll get a response like:
 ```json
 {
   "ok": true,
-  "result": "1\tmodule github.com/dotcommander/jinn\n2\t\n3\tgo 1.26\n4\t\n5\ttoolchain go1.26.2\n"
+  "result": "1\tmodule github.com/dotcommander/jinn\n2\t\n3\tgo 1.26.4\n"
 }
 ```
 
@@ -229,11 +229,23 @@ Each line in `requests.jsonl` is a complete JSON request object. jinn processes 
 | `--inspect [addr]` | Start the local browser inspector UI. Defaults to `127.0.0.1:8787` |
 | `--mcp` | Start the MCP 2026-07-28 stdio broker in the route-only discovery profile |
 | `--mcp-http [addr]` | Start the stateless MCP 2026-07-28 Streamable HTTP broker at `/mcp`. Defaults to `127.0.0.1:8788` |
-| `--mcp-profile=discover\|read-only` | Select the MCP profile. `read-only` adds the guarded `jinn_call` executor and requires `--mcp` or `--mcp-http` |
+| `--mcp-profile=discover\|read-only\|network` | Select the MCP profile. `read-only` adds guarded local inspection; `network` adds guarded web execution. Requires `--mcp` or `--mcp-http` |
 | `JINN_MCP_HTTP_TOKEN` | Optional loopback bearer token, required for non-loopback HTTP binds |
 | `JINN_MCP_HTTP_ORIGINS` | Exact comma-separated HTTP(S) origins, required for non-loopback HTTP binds |
 | `--version` | Print the version and exit |
 | `--help`, `-h` | Print usage information and exit |
+
+## Fetch and search the public web
+
+```bash
+jinn web fetch --json https://example.com
+jinn web fetch --json --max-lines=200 https://example.com/article
+jinn web search --provider=exa --include-domain=go.dev "context cancellation"
+```
+
+These subcommands use stdlib flags with human output and flat `--json` envelopes. `--max-bytes` and `--max-lines` add an explicit human truncation marker or JSON byte/line totals and truncation fields. Reader/cache/render settings use `JINN_WEB_*`, including `JINN_WEB_CHROME_PATH`; provider credentials use `JINA_API_KEY`, `BRAVE_API_KEY`, or `EXA_API_KEY`. The default cache directory is `$XDG_CACHE_HOME/jinn/web/urls`, falling back to `~/.cache/jinn/web/urls`.
+
+`web_fetch` and `web_search` are available to normal one-shot discovery. Native `web_fetch` accepts `format=markdown|headings|links`, zero-based `start_line`, `max_bytes`, and `max_lines`; continuation and truncation details are returned in snake-case metadata. They are network-risk tools, excluded from `read-only`, and rejected from every `run_plan` phase. Use `--mcp-profile=network` only when the MCP host is allowed to make public network requests.
 
 ## MCP Discovery Broker
 
@@ -242,12 +254,16 @@ stdin/stdout. The current protocol is 2026-07-28 and uses stateless requests,
 not an `initialize` handshake. Each request carries the protocol version and
 client capabilities under `_meta`.
 
+When an MCP host accepts only an executable path, it may launch `jinn` without
+arguments. Jinn auto-detects MCP JSON-RPC on piped stdin and otherwise retains
+the one-shot `{tool,args}` protocol. Interactive `jinn` still prints help.
+
 The default broker exposes one MCP tool, `jinn_route`. The tool is
 recommendation-only: it does not execute `read_file`, `run_shell`, or any other
 jinn tool. It maps a natural-language need to the most relevant existing jinn
 tools, risk/mutation notes, and optional lean schemas for only the matched
 tools. Keeping one tool in the default MCP surface avoids prompt bloat from
-listing all 19 executor schemas.
+listing all 21 executor schemas.
 
 For agents that need bounded inspection without granting mutation or shell
 access, use the opt-in read-only profile:
@@ -269,6 +285,22 @@ execution, `memory`, and `undo` are rejected before dispatch. It also forces
 shell execution off. The profile uses the current stateless 2026-07-28 request
 metadata; older initialize-based clients remain on the route-only compatibility
 path.
+
+The `network` profile retains only these two MCP tools and adds `web_fetch` and
+`web_search` through `jinn_call`. Those requests leave the machine and may
+consume provider quota.
+
+Use the built-in explorer for local fakes, stdio subprocesses, or HTTP(S):
+
+```bash
+jinn mcp list ENDPOINT
+jinn mcp inspect --command jinn --arg --mcp jinn_route
+jinn mcp call ENDPOINT jinn_route -a need '"read Go files"'
+```
+
+The deadline defaults to `30s`; bearer auth defaults from `JINN_MCP_HTTP_TOKEN`.
+Tool `isError` is a successful explorer response; transport/protocol failures
+use Jinn's normal nonzero error envelope.
 
 ### MCP Streamable HTTP
 

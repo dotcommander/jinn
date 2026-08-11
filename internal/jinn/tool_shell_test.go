@@ -67,7 +67,8 @@ func TestRunShell_NilContextPanics(t *testing.T) {
 			t.Fatalf("expected panic message containing 'nil ctx', got %v", r)
 		}
 	}()
-	_, _, _ = e.runShell(nil, args("command", "echo ok")) //nolint:staticcheck // intentional nil ctx: this test asserts runShell panics on a nil context
+	//lint:ignore SA1012 intentional nil ctx: this test asserts runShell panics on a nil context
+	_, _, _ = e.runShell(nil, args("command", "echo ok")) //nolint:staticcheck // same intentional nil assertion for golangci-lint
 }
 
 func TestRunShell_ExitCode(t *testing.T) {

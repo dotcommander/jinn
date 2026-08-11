@@ -417,6 +417,11 @@ Nodes with `mutates: true` (Phase 2) allow mutations under a risk gate:
 - `caution`-risk operations execute normally.
 - `dangerous`-risk operations require **both** `plan.force: true` **and** `node.force: true`. If either is missing, the op is blocked and the run stops with `stopped_reason: "mutation_blocked"`. Nested plans inherit the parent's remaining depth and dangerous-mutation authority, so a child `force` field cannot elevate an unforced parent.
 
+`web_fetch` and `web_search` are public-network tools and are rejected from all `run_plan` phases, including `mutates:true` and nested plans.
+
+Use Jinn's network MCP profile for read-only public-web requests. Such requests
+leave the machine and may consume provider quota.
+
 ### Edges and conditions
 
 Edges are evaluated in order against the last op result; the **first matching edge wins**. Each `PlanEdge` has a `when` (`Condition`) and a `to` (target node `id`).

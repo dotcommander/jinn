@@ -39,7 +39,7 @@ func TestToolRegistryRouteRisks(t *testing.T) {
 	t.Parallel()
 	for _, descriptor := range toolCatalog {
 		switch descriptor.routeRisk {
-		case toolRouteRiskReadOnly, toolRouteRiskMutating, toolRouteRiskShell:
+		case toolRouteRiskReadOnly, toolRouteRiskMutating, toolRouteRiskShell, toolRouteRiskNetwork:
 		default:
 			t.Errorf("tool %q has unknown route risk %q", descriptor.name, descriptor.routeRisk)
 		}
@@ -62,6 +62,8 @@ func TestToolRegistryFeatureMap(t *testing.T) {
 		"search_replace": {"regex", "capture_groups", "multi_file", "glob_patterns", "replace_all", "dry_run", "case_insensitive", "multiline"},
 		"run_plan":       {},
 		"lsp_query":      {"definition", "references", "hover", "symbols", "diagnostics", "rename", "symbol_column", "context_lines"},
+		"web_fetch":      {"url_safety", "reader", "render", "cache"},
+		"web_search":     {"brave", "exa", "domain_filters", "result_limit"},
 	}
 	got := registeredToolFeatures()
 	if !reflect.DeepEqual(got, want) {
@@ -117,6 +119,8 @@ func TestToolRegistryDispatcherCompleteness(t *testing.T) {
 		"lsp_query":      args("action", "invalid", "path", "missing.go"),
 		"diff_files":     args("path_a", "missing-a", "path_b", "missing-b"),
 		"search_replace": args("pattern", "x", "replacement", "y", "files", []interface{}{"missing.txt"}, "dry_run", true),
+		"web_fetch":      args("url", "http://127.0.0.1/"),
+		"web_search":     args("query", "jinn"),
 	}
 
 	for _, name := range registeredToolNames() {

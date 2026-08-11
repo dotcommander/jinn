@@ -7,13 +7,15 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/dotcommander/jinn/internal/webfetch"
 )
 
 var expectedSchemaToolNames = []string{
 	"run_plan", "run_shell", "read_file", "multi_read", "write_file",
 	"edit_file", "multi_edit", "apply_patch", "search_files", "stat_file",
 	"list_dir", "find_files", "list_tools", "detect_project", "memory",
-	"undo", "lsp_query", "diff_files", "search_replace",
+	"undo", "lsp_query", "diff_files", "search_replace", "web_fetch", "web_search",
 }
 
 func TestSchema_Valid(t *testing.T) {
@@ -103,12 +105,41 @@ func TestNewSecureDefaultsAndExplicitUnsafeOptOut(t *testing.T) {
 	}
 }
 
+func TestNewWithConfigDefaultWebUserAgent(t *testing.T) {
+	engine, err := NewWithConfig(t.TempDir(), EngineConfig{Version: "v1.2.3", ShellMode: ShellModeDisabled})
+	if err != nil {
+		t.Fatalf("NewWithConfig: %v", err)
+	}
+	t.Cleanup(func() { _ = engine.Close() })
+	if engine.webConfig.UserAgent != "jinn/v1.2.3" {
+		t.Fatalf("default web user agent = %q", engine.webConfig.UserAgent)
+	}
+
+	dev, err := NewWithConfig(t.TempDir(), EngineConfig{ShellMode: ShellModeDisabled})
+	if err != nil {
+		t.Fatalf("NewWithConfig dev: %v", err)
+	}
+	t.Cleanup(func() { _ = dev.Close() })
+	if dev.webConfig.UserAgent != "jinn/dev" {
+		t.Fatalf("blank-version web user agent = %q", dev.webConfig.UserAgent)
+	}
+
+	custom, err := NewWithConfig(t.TempDir(), EngineConfig{Version: "v1.2.3", ShellMode: ShellModeDisabled, Web: webfetch.Config{UserAgent: "custom-agent"}})
+	if err != nil {
+		t.Fatalf("NewWithConfig custom: %v", err)
+	}
+	t.Cleanup(func() { _ = custom.Close() })
+	if custom.webConfig.UserAgent != "custom-agent" {
+		t.Fatalf("custom web user agent = %q", custom.webConfig.UserAgent)
+	}
+}
+
 func TestModeSpecificDiscoveryExcludesNestedShellOperations(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		mode ShellMode
 		want int
-	}{{ShellModeDisabled, 18}, {ShellModeUnsafe, 19}} {
+	}{{ShellModeDisabled, 20}, {ShellModeUnsafe, 21}} {
 		raw, err := LeanSchemaForMode(tc.mode)
 		if err != nil {
 			t.Fatal(err)

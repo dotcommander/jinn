@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/dotcommander/jinn/internal/toolschema"
 )
 
 const (
@@ -18,10 +20,12 @@ const (
 
 // RouteRequest describes the desired routing result.
 type RouteRequest struct {
-	Need            string `json:"need"`
-	MaxTools        int    `json:"max_tools,omitempty"`
-	IncludeSchema   bool   `json:"include_schema,omitempty"`
-	IncludeMutating *bool  `json:"include_mutating,omitempty"`
+	Need             string `json:"need"`
+	MaxTools         int    `json:"max_tools,omitempty"`
+	IncludeSchema    bool   `json:"include_schema,omitempty"`
+	IncludeSignature bool   `json:"include_signature,omitempty"`
+	IncludeMutating  *bool  `json:"include_mutating,omitempty"`
+	IncludeNetwork   *bool  `json:"include_network,omitempty"`
 }
 
 // RouteResponse contains the deterministic recommendations for a route request.
@@ -40,6 +44,7 @@ type RouteMatch struct {
 	Risk        string   `json:"risk"`
 	Features    []string `json:"features,omitempty"`
 	Schema      any      `json:"schema,omitempty"`
+	Signature   string   `json:"signature,omitempty"`
 }
 
 type schemaTool struct {
@@ -105,6 +110,9 @@ func RouteToolsForMode(req RouteRequest, mode ShellMode) (RouteResponse, error) 
 		if descriptor.mayMutate() && !req.allowMutating() {
 			continue
 		}
+		if descriptor.routeRisk == toolRouteRiskNetwork && !req.allowNetwork() {
+			continue
+		}
 		if descriptor.routeRisk == toolRouteRiskShell && mode == ShellModeDisabled {
 			continue
 		}
@@ -136,6 +144,9 @@ func RouteToolsForMode(req RouteRequest, mode ShellMode) (RouteResponse, error) 
 		if req.IncludeSchema {
 			match.Schema = leanSchemaForTool(c.tool)
 		}
+		if req.IncludeSignature {
+			match.Signature = toolschema.Render(c.tool.Function.Name, c.tool.Function.Parameters)
+		}
 		resp.Matches = append(resp.Matches, match)
 	}
 
@@ -147,16 +158,20 @@ func (r RouteRequest) allowMutating() bool {
 	return r.IncludeMutating == nil || *r.IncludeMutating
 }
 
+func (r RouteRequest) allowNetwork() bool { return r.IncludeNetwork == nil || *r.IncludeNetwork }
+
 // DecodeRouteRequest decodes one JSON route request with its default policy.
 func DecodeRouteRequest(data []byte) (RouteRequest, error) {
 	if err := rejectDuplicateKeys(data); err != nil {
 		return RouteRequest{}, err
 	}
 	var raw struct {
-		Need            string `json:"need"`
-		MaxTools        int    `json:"max_tools"`
-		IncludeSchema   bool   `json:"include_schema"`
-		IncludeMutating *bool  `json:"include_mutating"`
+		Need             string `json:"need"`
+		MaxTools         int    `json:"max_tools"`
+		IncludeSchema    bool   `json:"include_schema"`
+		IncludeSignature bool   `json:"include_signature"`
+		IncludeMutating  *bool  `json:"include_mutating"`
+		IncludeNetwork   *bool  `json:"include_network"`
 	}
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
@@ -164,10 +179,12 @@ func DecodeRouteRequest(data []byte) (RouteRequest, error) {
 		return RouteRequest{}, err
 	}
 	req := RouteRequest{
-		Need:            raw.Need,
-		MaxTools:        raw.MaxTools,
-		IncludeSchema:   raw.IncludeSchema,
-		IncludeMutating: raw.IncludeMutating,
+		Need:             raw.Need,
+		MaxTools:         raw.MaxTools,
+		IncludeSchema:    raw.IncludeSchema,
+		IncludeSignature: raw.IncludeSignature,
+		IncludeMutating:  raw.IncludeMutating,
+		IncludeNetwork:   raw.IncludeNetwork,
 	}
 	return req, nil
 }

@@ -455,5 +455,47 @@
         "required": ["pattern", "replacement", "files"]
       }
     }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "web_fetch",
+      "description": "Fetch an http or https URL as extracted text. Private networks and unsafe redirects are blocked by default.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "url": {"type": "string", "description": "Absolute http or https URL to fetch"},
+          "raw": {"type": "boolean", "description": "Fetch raw response content instead of reader extraction", "default": false},
+          "reader": {"type": "string", "enum": ["jina", "defuddle", "auto"], "description": "HTML reader; omitted uses JINN_WEB_READER"},
+          "render": {"type": "string", "enum": ["never", "auto", "always"], "description": "Browser rendering policy for Defuddle extraction", "default": "never"},
+          "render_wait": {"type": "string", "enum": ["load", "networkidle"], "description": "Browser wait strategy when rendering"},
+          "format": {"type": "string", "enum": ["markdown", "headings", "links"], "description": "Content projection", "default": "markdown"},
+          "start_line": {"type": "integer", "minimum": 0, "description": "Zero-based line offset within the projection", "default": 0},
+          "max_bytes": {"type": "integer", "minimum": 0, "description": "Maximum projected UTF-8 bytes; zero is unlimited", "default": 0},
+          "max_lines": {"type": "integer", "minimum": 0, "description": "Maximum projected lines; zero is unlimited", "default": 0}
+        },
+        "required": ["url"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "web_search",
+      "description": "Search the public web with the configured Brave or Exa provider. Requires BRAVE_API_KEY or EXA_API_KEY.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {"type": "string", "description": "Search terms"},
+          "max_results": {"type": "integer", "minimum": 1, "maximum": 50, "default": 10, "description": "Maximum normalized results"},
+          "category": {"type": "string", "description": "Provider search category"},
+          "include_domains": {"type": "array", "items": {"type": "string"}, "description": "Restrict results to these hostnames"},
+          "start_published_date": {"type": "string", "description": "RFC3339 or YYYY-MM-DD publication lower bound"},
+          "include_highlights": {"type": "boolean", "default": true, "description": "Include provider highlights when supported"},
+          "highlight_sentences": {"type": "integer", "minimum": 1, "maximum": 10, "default": 3, "description": "Requested number of highlight sentences"}
+        },
+        "required": ["query"]
+      }
+    }
   }
 ]

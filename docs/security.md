@@ -118,6 +118,19 @@ Pipelines return the maximum risk of any component (`cmd1 | cmd2` inherits the h
 
 ---
 
+## Public web boundary
+
+`web_fetch` and `web_search` are explicitly classified as `network`, not read-only. They accept only HTTP(S) targets, reject embedded URL credentials, and block private/link-local/loopback destinations while revalidating redirect hops by default. `JINN_WEB_ALLOW_PRIVATE_NETWORKS=true` is a process-start escape hatch for controlled local tests; do not set it for general agents.
+
+`run_plan` rejects both web tools before any node executes, including nested plans and nodes marked `mutates:true`. MCP discovery exposes only `jinn_route`; the `read-only` profile keeps web unavailable, while the `network` profile has the same two-tool MCP surface but makes public-web calls available through its non-mutating allowlist.
+
+Network-profile `jinn_call` is read-only, non-destructive, and open-world;
+web requests leave the machine and may consume provider quota. MCP HTTP limits
+bodies to 8 MiB, headers to 64 KiB, and preserves stream-safe zero read/write
+deadlines. Optional `JINN_MCP_LOG_LEVEL` logging is private, capped at 10 MiB,
+and records only request metadata (never arguments, URLs, results, headers,
+tokens, credentials, or paths).
+
 ## Shell Environment Scrubbing
 
 `run_shell` does not inherit your full shell environment. jinn scrubs the environment down to an allowlist before executing the command:

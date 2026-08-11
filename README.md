@@ -111,8 +111,16 @@ Use MCP discovery mode:
 MCP tool, `jinn_route`. It recommends matching jinn tools for a task and can
 return lean schemas for only those tools. It does not execute filesystem or
 shell operations itself. The one-tool surface is intentional: it keeps model
-context bounded. Discovery exposes 18 tools by default and 19 with an explicit
+context bounded. Discovery exposes 20 tools by default and 21 with an explicit
 `sandboxed` or `unsafe` shell mode.
+
+MCP hosts that accept only an executable path may launch `jinn` with no
+arguments. Jinn detects MCP JSON-RPC on piped stdin while preserving its
+existing one-shot `{tool,args}` protocol. For example:
+
+```bash
+apfel --mcp /absolute/path/to/jinn "recommend tools for reviewing a Go package"
+```
 
 For an opt-in execution surface that is still safe for review and discovery
 work, start `jinn --mcp-profile=read-only --mcp`. It keeps `jinn_route` and adds
@@ -120,6 +128,22 @@ work, start `jinn --mcp-profile=read-only --mcp`. It keeps `jinn_route` and adds
 allowlist. File/state mutation, shell execution, `memory`, and `undo` are not
 available, and the profile forces shell execution off regardless of the
 `--shell-mode` flag. The default `--mcp` profile remains route-only.
+
+`--mcp-profile=network` keeps this compact routed surface while allowing only
+local read-only tools plus `web_fetch` and `web_search`. Network calls leave the
+machine and may consume provider quota; `jinn_call` remains read-only,
+non-destructive, and open-world.
+
+```bash
+jinn mcp list http://127.0.0.1:8788/mcp
+jinn mcp inspect --command jinn --arg --mcp jinn_route
+jinn mcp call http://127.0.0.1:8788/mcp jinn_route -a need '"read source"'
+```
+
+The explorer follows paginated tool lists, has a `30s` default deadline, and
+uses explicit subprocess argv (no shell). HTTP tokens default from
+`JINN_MCP_HTTP_TOKEN` and are never printed. `JINN_MCP_LOG_LEVEL=off|error|info|debug`
+controls capped, redacted JSONL records under `jinn/logs/mcp.jsonl`.
 
 Current MCP requests use `server/discover`, `tools/list`, and `tools/call` with
 `_meta.io.modelcontextprotocol/protocolVersion` set to `2026-07-28` plus
@@ -183,7 +207,7 @@ Recipes for Claude Code, Codex CLI, pi, and custom loops:
 
 ## Toolset
 
-`jinn` exposes 18 tools by default, or 19 with an enabled shell mode:
+`jinn` exposes 20 tools by default, or 21 with an enabled shell mode:
 
 | Tool | Description |
 | :--- | :--- |
@@ -212,6 +236,22 @@ Recipes for Claude Code, Codex CLI, pi, and custom loops:
 ## Security Model
 
 Security is not an opt-in feature; it is the core of the engine.
+
+## Public web tools
+
+`web_fetch` and `web_search` are opt-in network tools in the normal one-shot schema. Fetch can project Markdown, headings, or links and paginate the projection with zero-based `start_line`, `max_bytes`, and `max_lines`; text carries the selected content while snake-case metadata reports document fields, counts, truncation, and `next_start_line`. Search returns compact JSON text plus `provider` and `count` metadata. Both block private targets and unsafe redirects by default. They are never executable from `run_plan`, even in a mutating node.
+
+```bash
+jinn web fetch --reader=defuddle https://example.com/article
+jinn web fetch --json --max-lines=200 https://example.com/article
+jinn web search --include-domain=go.dev "Go context cancellation"
+```
+
+The fetch CLI supports human output and flat `--json` success shapes. Human output appends an explicit marker when `--max-bytes` or `--max-lines` truncates content; JSON includes the corresponding byte/line totals and truncation fields.
+
+The CLI uses `JINN_WEB_*` configuration only: `JINN_WEB_READER`, `JINN_WEB_SEARCH_PROVIDER`, `JINN_WEB_CACHE_TTL`, `JINN_WEB_CACHE_DIR`, `JINN_WEB_TIMEOUT`, `JINN_WEB_CHROME_PATH`, render limits, endpoint overrides, and `JINN_WEB_ALLOW_PRIVATE_NETWORKS`. Search credentials remain `JINA_API_KEY`, `BRAVE_API_KEY`, and `EXA_API_KEY`. Reader cache files default to `$XDG_CACHE_HOME/jinn/web/urls`, falling back to `~/.cache/jinn/web/urls`; temporary cache writes use the `.jinn-web-cache-` prefix.
+
+MCP stays route-only by default. `--mcp-profile=read-only` exposes local read-only execution only; `--mcp-profile=network` exposes the same two MCP tools but permits only local read-only tools plus `web_fetch` and `web_search`. In the network profile, local read-only tools default to compression while `web_fetch` and `web_search` default to uncompressed output; `compress` explicitly overrides either default.
 
 1. **Rooted File Access:** File operations use a workspace `os.Root`; traversal attempts and special-file reads are blocked. Recursive tools never follow directory symlinks.
 2. **Sensitive Blocklist:** Direct access to `.git`, `.ssh`, `.aws`, `.env`, and `.gnupg` is always denied.

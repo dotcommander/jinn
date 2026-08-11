@@ -159,8 +159,13 @@ func TestRunPlanSchemaRequiresOneNonEmptyCommand(t *testing.T) {
 	}
 	properties := items["properties"].(map[string]any)
 	knownTools, ok := properties["tool"].(map[string]any)["enum"].([]any)
-	if !ok || len(knownTools) != len(toolCatalog) {
-		t.Fatalf("commands.items.properties.tool.enum = %v, want %d known tools", knownTools, len(toolCatalog))
+	if !ok || len(knownTools) != len(toolCatalog)-len(NetworkToolNames()) {
+		t.Fatalf("commands.items.properties.tool.enum = %v, want %d non-network tools", knownTools, len(toolCatalog)-len(NetworkToolNames()))
+	}
+	for _, tool := range knownTools {
+		if tool == webFetchTool || tool == webSearchTool {
+			t.Fatalf("run_plan schema must reject web tool %q", tool)
+		}
 	}
 	planNodes := findRunPlanNodesSchema(t, tools)
 	if got, minItemsOK := planNodes["minItems"].(float64); !minItemsOK || got != 1 {
@@ -188,6 +193,27 @@ func TestRunPlanSchemaRequiresOneNonEmptyCommand(t *testing.T) {
 	if !ok || not["type"] != "null" {
 		t.Fatalf("jsonPath value schema = %v, want null exclusion", value)
 	}
+}
+
+func TestWebFetchSchemaProjectionContract(t *testing.T) {
+	t.Parallel()
+	tools, err := parseSchemaTools()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range tools {
+		if tool.Function.Name != webFetchTool {
+			continue
+		}
+		properties := tool.Function.Parameters["properties"].(map[string]any)
+		for _, name := range []string{"format", "start_line", "max_bytes", "max_lines"} {
+			if _, ok := properties[name]; !ok {
+				t.Fatalf("web_fetch schema missing %q", name)
+			}
+		}
+		return
+	}
+	t.Fatal("web_fetch schema not found")
 }
 
 func findRunPlanNodesSchema(t *testing.T, tools []map[string]any) map[string]any {

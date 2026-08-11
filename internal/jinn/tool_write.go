@@ -35,27 +35,37 @@ func atomicWriteJSON(path string, v any) error {
 // It preserves existing file permissions and fsyncs before rename for crash safety.
 // Returns a non-nil error on failure; caller is responsible for user-facing formatting.
 func (e *Engine) atomicWriteFile(resolved, content string) error {
+	_, err := e.atomicWriteFileStaged(resolved, content, nil)
+	return err
+}
+
+// atomicWriteFileStaged writes content via a durable temp file and calls
+// beforeRename after the staged data is durable but before replacing the target.
+// The returned bool reports whether the target was replaced.
+//
+//nolint:gocyclo // The linear durability stages deliberately retain their distinct failure boundaries.
+func (e *Engine) atomicWriteFileStaged(resolved, content string, beforeRename func() error) (bool, error) {
 	// Capture existing file permissions before overwriting.
 	perm := os.FileMode(0644)
 	rel, relErr := e.rootRelative(resolved)
 	if relErr != nil {
-		return relErr
+		return false, relErr
 	}
 	if info, statErr := e.root.Stat(rel); statErr == nil {
 		perm = info.Mode().Perm()
 	}
 	parent := filepath.Dir(rel)
 	if mkdirErr := e.root.MkdirAll(parent, 0o750); mkdirErr != nil {
-		return mkdirErr
+		return false, mkdirErr
 	}
 	var nonce [8]byte
 	if _, randErr := rand.Read(nonce[:]); randErr != nil {
-		return randErr
+		return false, randErr
 	}
 	tempName := filepath.Join(parent, ".jinn-"+hex.EncodeToString(nonce[:]))
 	temp, err := e.root.OpenFile(tempName, os.O_CREATE|os.O_EXCL|os.O_WRONLY, perm)
 	if err != nil {
-		return err
+		return false, err
 	}
 	committed := false
 	defer func() {
@@ -65,35 +75,40 @@ func (e *Engine) atomicWriteFile(resolved, content string) error {
 		}
 	}()
 	if _, writeErr := temp.Write([]byte(content)); writeErr != nil {
-		return writeErr
+		return false, writeErr
 	}
 	if syncErr := temp.Sync(); syncErr != nil {
-		return syncErr
+		return false, syncErr
 	}
 	if closeErr := temp.Close(); closeErr != nil {
-		return closeErr
+		return false, closeErr
+	}
+	if beforeRename != nil {
+		if callbackErr := beforeRename(); callbackErr != nil {
+			return false, callbackErr
+		}
 	}
 	if renameErr := e.root.Rename(tempName, rel); renameErr != nil {
-		return renameErr
+		return false, renameErr
 	}
 	committed = true
 	dir, err := e.root.Open(parent)
 	if err != nil {
-		return fmt.Errorf("open parent directory for durability: %w", err)
+		return true, fmt.Errorf("open parent directory for durability: %w", err)
 	}
 	if syncErr := dir.Sync(); syncErr != nil {
 		_ = dir.Close()
-		return fmt.Errorf("sync parent directory for durability: %w", syncErr)
+		return true, fmt.Errorf("sync parent directory for durability: %w", syncErr)
 	}
 	if closeErr := dir.Close(); closeErr != nil {
-		return fmt.Errorf("close parent directory after durability sync: %w", closeErr)
+		return true, fmt.Errorf("close parent directory after durability sync: %w", closeErr)
 	}
 
 	// Record the post-write mtime so the staleness tracker stays consistent.
 	if info, err := e.root.Stat(rel); err == nil {
 		e.tracker.record(resolved, info.ModTime(), info.Size())
 	}
-	return nil
+	return true, nil
 }
 
 // removeFileDurable unlinks one rooted file then fsyncs its exact parent so a
@@ -150,8 +165,15 @@ func (e *Engine) snapshotAndWrite(resolved, displayPath, op string, preContent [
 	if e.snapshotPreparedHook != nil {
 		e.snapshotPreparedHook()
 	}
-	if err := e.atomicWriteFile(resolved, content); err != nil {
-		_ = e.markSnapshotState(id, historyStateUncertain)
+	mutated, err := e.atomicWriteFileStaged(resolved, content, func() error {
+		return e.verifyPreflightState(resolved, preContent, preContent != nil)
+	})
+	if err != nil {
+		state := historyStateAborted
+		if mutated {
+			state = historyStateUncertain
+		}
+		_ = e.markSnapshotState(id, state)
 		return id, err
 	}
 	if err := e.markSnapshotState(id, historyStateCommitted); err != nil {

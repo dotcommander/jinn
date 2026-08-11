@@ -242,6 +242,9 @@ func validatePlanOp(op PlanOp) error {
 		return fmt.Errorf("plan op must set exactly one non-empty shell or tool")
 	}
 	if hasTool {
+		if op.Tool == webFetchTool || op.Tool == webSearchTool {
+			return fmt.Errorf("tool %s is not permitted in run_plan", op.Tool)
+		}
 		if _, ok := lookupToolDescriptor(op.Tool); !ok {
 			return fmt.Errorf("unknown tool: %s", op.Tool)
 		}
@@ -911,6 +914,7 @@ func (e *Engine) runPlanTree(ctx context.Context, plan *PlanTree) (*PlanRunResul
 	}
 }
 
+//nolint:revive // The aggregate constructor mirrors all result fields without hidden state.
 func newPlanRunResult(transcript []PlanNodeResult, pathTaken []string, depth int, reason StopReason, evaluated, matched, executedNodes, executedOperations int) *PlanRunResult {
 	return &PlanRunResult{
 		Transcript:         transcript,

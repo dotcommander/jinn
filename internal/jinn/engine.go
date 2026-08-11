@@ -16,6 +16,9 @@ import (
 	"path/filepath"
 	"runtime/debug"
 	"sync"
+	"time"
+
+	"github.com/dotcommander/jinn/internal/webfetch"
 )
 
 var errRegisteredToolNotDispatched = errors.New("registered tool has no dispatcher")
@@ -38,6 +41,9 @@ type Engine struct {
 	curScope                     string             // cached auto-detected scope; "" until first currentProjectID call
 	snapshotPreparedHook         func()             // test seam between durable history prepare and mutation commit
 	removeDurabilityHook         func(string) error // test seam for post-unlink parent durability stages
+	webConfig                    webfetch.Config
+	webMu                        sync.Mutex
+	web                          *webfetch.Service
 }
 
 // New creates an Engine rooted at the given working directory.
@@ -64,6 +70,13 @@ func NewWithConfig(workDir string, config EngineConfig) (*Engine, error) {
 	if config.ShellMode == "" {
 		config.ShellMode = ShellModeDisabled
 	}
+	if config.Web.UserAgent == "" {
+		resolvedVersion := ResolveVersion(config.Version)
+		if resolvedVersion == "" {
+			resolvedVersion = "dev"
+		}
+		config.Web.UserAgent = "jinn/" + resolvedVersion
+	}
 	sandboxBinary, err := validateShellMode(config.ShellMode)
 	if err != nil {
 		_ = root.Close()
@@ -76,6 +89,7 @@ func NewWithConfig(workDir string, config EngineConfig) (*Engine, error) {
 		shellMode: config.ShellMode, sandboxBinary: sandboxBinary,
 		requireMutationPreconditions: !config.UnsafeAllowMutationWithoutPreconditions,
 		tracker:                      newFileTracker(), rgPath: rgPath, execPath: execPath, LSPTimeoutSec: 10,
+		webConfig: config.Web,
 	}, nil
 }
 
@@ -98,6 +112,15 @@ func (e *Engine) Close() error {
 	if e.root != nil {
 		errs = append(errs, e.root.Close())
 		e.root = nil
+	}
+	e.webMu.Lock()
+	web := e.web
+	e.web = nil
+	e.webMu.Unlock()
+	if web != nil {
+		closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		errs = append(errs, web.Close(closeCtx))
+		cancel()
 	}
 	return errors.Join(errs...)
 }
@@ -142,6 +165,9 @@ func (e *Engine) Dispatch(ctx context.Context, tool string, args map[string]inte
 		return res, nil, err
 	}
 	if res, ok, err := e.dispatchSearchOps(ctx, args, tool); ok {
+		return res, nil, err
+	}
+	if res, ok, err := e.dispatchWeb(ctx, args, tool); ok {
 		return res, nil, err
 	}
 	if res, ok, err := e.dispatchMemoryMeta(ctx, args, tool); ok {

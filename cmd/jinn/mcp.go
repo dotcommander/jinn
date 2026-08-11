@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/dotcommander/jinn/internal/jinn"
 	"github.com/voocel/mcp-sdk-go/protocol"
@@ -28,6 +29,7 @@ type mcpProfile string
 const (
 	mcpProfileDiscover mcpProfile = "discover"
 	mcpProfileReadOnly mcpProfile = "read-only"
+	mcpProfileNetwork  mcpProfile = "network"
 )
 
 func parseMCPProfile(value string) (mcpProfile, error) {
@@ -36,9 +38,30 @@ func parseMCPProfile(value string) (mcpProfile, error) {
 		return mcpProfileDiscover, nil
 	case mcpProfileReadOnly:
 		return mcpProfileReadOnly, nil
+	case mcpProfileNetwork:
+		return mcpProfileNetwork, nil
 	default:
-		return "", fmt.Errorf("invalid --mcp-profile %q: use discover or read-only", value)
+		return "", fmt.Errorf("invalid --mcp-profile %q: use discover, read-only, or network", value)
 	}
+}
+
+func openMCPProfileEngine(ldVersion string, profile mcpProfile, transportLabel string) (*jinn.Engine, error) {
+	if profile != mcpProfileReadOnly && profile != mcpProfileNetwork {
+		return nil, nil
+	}
+	workDir, err := os.Getwd()
+	if err != nil {
+		return nil, fmt.Errorf("getwd for %s %s profile: %w", transportLabel, profile, err)
+	}
+	engine, err := jinn.NewWithConfig(workDir, jinn.EngineConfig{
+		Version:   ldVersion,
+		ShellMode: jinn.ShellModeDisabled,
+		Web:       webConfig(),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("open %s %s workspace: %w", transportLabel, profile, err)
+	}
+	return engine, nil
 }
 
 // runMCP serves the current MCP 2026-07-28 protocol through the official SDK.
@@ -49,6 +72,7 @@ func runMCP(ctx context.Context, in io.Reader, out io.Writer, ldVersion string, 
 	return runMCPWithProfile(ctx, in, out, ldVersion, mode, mcpProfileDiscover)
 }
 
+//nolint:revive // The transport boundary keeps its six independent protocol inputs explicit.
 func runMCPWithProfile(ctx context.Context, in io.Reader, out io.Writer, ldVersion string, mode jinn.ShellMode, profile mcpProfile) error {
 	if profile == "" {
 		profile = mcpProfileDiscover
@@ -59,34 +83,34 @@ func runMCPWithProfile(ctx context.Context, in io.Reader, out io.Writer, ldVersi
 		return fmt.Errorf("read MCP input: %w", err)
 	}
 	input := io.MultiReader(bytes.NewReader(prefix), reader)
-	if legacy && profile != mcpProfileReadOnly {
+	if legacy && allowsLegacyMCP(profile) {
 		// Legacy initialize-based clients retain the default compatibility
-		// surface. The read-only profile deliberately leaves legacy traffic to
-		// the current SDK, which rejects it before any route or tool dispatch.
+		// surface. Opt-in profiles deliberately leave legacy traffic to the
+		// current SDK, which rejects it before any route or tool dispatch.
 		return runLegacyMCP(ctx, input, out, ldVersion, mode)
 	}
 
-	var engine *jinn.Engine
-	if profile == mcpProfileReadOnly {
-		workDir, err := os.Getwd()
-		if err != nil {
-			return fmt.Errorf("getwd for MCP read-only profile: %w", err)
-		}
-		engine, err = jinn.NewWithConfig(workDir, jinn.EngineConfig{
-			Version:   ldVersion,
-			ShellMode: jinn.ShellModeDisabled,
-		})
-		if err != nil {
-			return fmt.Errorf("open MCP read-only workspace: %w", err)
-		}
+	engine, err := openMCPProfileEngine(ldVersion, profile, "MCP")
+	if err != nil {
+		return err
+	}
+	if engine != nil {
 		defer func() { _ = engine.Close() }()
 	}
 
-	srv := newMCPServerWithProfile(ldVersion, mode, profile, engine)
+	logger, err := newMCPLoggerFromEnv()
+	if err != nil {
+		return err
+	}
+	srv := newMCPServerWithProfileAndLogger(ldVersion, mode, profile, engine, logger)
 	if err := stdio.Serve(ctx, srv, &stdio.Options{Reader: input, Writer: out}); err != nil {
 		return fmt.Errorf("serve MCP: %w", err)
 	}
 	return nil
+}
+
+func allowsLegacyMCP(profile mcpProfile) bool {
+	return profile == mcpProfileDiscover
 }
 
 func readMCPPrefix(reader *bufio.Reader) ([]byte, bool, error) {
@@ -108,6 +132,27 @@ func readMCPPrefix(reader *bufio.Reader) ([]byte, bool, error) {
 	}
 }
 
+// detectPipedMCP lets executable-only hosts start Jinn without command-line
+// arguments while preserving the existing one-shot JSON protocol. Bytes read
+// during protocol selection are replayed unchanged to the selected decoder.
+//
+//nolint:goconst // JSON-RPC's fixed wire version is intentionally repeated across compatibility paths.
+func detectPipedMCP(in io.Reader) (io.Reader, bool) {
+	var captured bytes.Buffer
+	limited := &io.LimitedReader{R: in, N: mcpProbeMaxLineBytes + 1}
+	decoder := json.NewDecoder(io.TeeReader(limited, &captured))
+	var envelope struct {
+		JSONRPC string `json:"jsonrpc"`
+		Method  string `json:"method"`
+	}
+	decodeErr := decoder.Decode(&envelope)
+	replay := io.MultiReader(bytes.NewReader(captured.Bytes()), in)
+	if decodeErr != nil {
+		return replay, false
+	}
+	return replay, envelope.JSONRPC == "2.0" && envelope.Method != ""
+}
+
 func readMCPProbeLine(reader *bufio.Reader) (string, error) {
 	var line []byte
 	for {
@@ -126,6 +171,7 @@ func readMCPProbeLine(reader *bufio.Reader) (string, error) {
 	}
 }
 
+//nolint:goconst // Method and null literals are the legacy JSON-RPC wire grammar.
 func isLegacyMCPLine(line []byte) bool {
 	var probe struct {
 		Method string          `json:"method"`
@@ -153,7 +199,7 @@ func isLegacyMCPLine(line []byte) bool {
 	}
 }
 
-//nolint:goconst // protocol metadata uses canonical JSON-RPC and JSON Schema wire literals.
+//nolint:goconst,unparam // Protocol literals are canonical; the version parameter preserves the server constructor contract.
 func newMCPServer(ldVersion string, mode jinn.ShellMode) *server.Server {
 	return newMCPServerWithProfile(ldVersion, mode, mcpProfileDiscover, nil)
 }
@@ -163,12 +209,18 @@ func newMCPServer(ldVersion string, mode jinn.ShellMode) *server.Server {
 //
 //nolint:gocognit // profile-specific registration keeps the default surface and
 func newMCPServerWithProfile(ldVersion string, mode jinn.ShellMode, profile mcpProfile, engine *jinn.Engine) *server.Server {
+	return newMCPServerWithProfileAndLogger(ldVersion, mode, profile, engine, nil)
+}
+
+//nolint:goconst // Server identity and content-type literals are canonical MCP wire values.
+func newMCPServerWithProfileAndLogger(ldVersion string, mode jinn.ShellMode, profile mcpProfile, engine *jinn.Engine, logger *mcpLogger) *server.Server {
 	if ldVersion == "" {
 		ldVersion = "dev"
 	}
 	readOnlyProfile := profile == mcpProfileReadOnly
+	networkProfile := profile == mcpProfileNetwork
 	routeMode := mode
-	if readOnlyProfile {
+	if readOnlyProfile || networkProfile {
 		routeMode = jinn.ShellModeDisabled
 	}
 	srv := server.New(&server.Options{
@@ -178,7 +230,12 @@ func newMCPServerWithProfile(ldVersion string, mode jinn.ShellMode, profile mcpP
 			Version: jinn.ResolveVersion(ldVersion),
 		},
 		Instructions: mcpInstructions(profile),
+		ListCache: protocol.CacheControl{
+			TTLMs:      int64(time.Minute / time.Millisecond),
+			CacheScope: protocol.CacheScopePublic,
+		},
 	})
+	srv.Use(mcpRecoveryMiddleware(logger), mcpLoggingMiddleware(logger))
 	readOnly := true
 	destructive := false
 	srv.AddTool(&protocol.Tool{
@@ -192,34 +249,47 @@ func newMCPServerWithProfile(ldVersion string, mode jinn.ShellMode, profile mcpP
 			DestructiveHint: &destructive,
 		},
 	}, mcpRouteHandlerForProfile(routeMode, profile))
-	if readOnlyProfile && engine != nil {
+	if (readOnlyProfile || networkProfile) && engine != nil {
 		srv.AddTool(&protocol.Tool{
 			Name:         mcpCallTool,
 			Title:        "Execute a read-only Jinn tool",
-			Description:  "Execute one allowlisted read-only Jinn tool in the current workspace. Use jinn_route first when the tool or arguments are uncertain. Mutating tools and shell execution are unavailable in this profile.",
-			InputSchema:  protocol.JSONSchema(mcpCallInputSchema),
+			Description:  mcpCallDescription(profile),
+			InputSchema:  protocol.JSONSchema(mcpCallInputSchemaForProfile(profile)),
 			OutputSchema: protocol.JSONSchema(mcpCallOutputSchema),
 			Annotations: &protocol.ToolAnnotations{
 				ReadOnlyHint:    &readOnly,
 				DestructiveHint: &destructive,
+				OpenWorldHint:   &networkProfile,
 			},
-		}, mcpCallHandler(engine))
+		}, mcpCallHandler(engine, profile))
 	}
 	return srv
+}
+
+func mcpCallDescription(profile mcpProfile) string {
+	if profile == mcpProfileNetwork {
+		return "Execute one non-mutating local or web Jinn tool. web_fetch and web_search requests leave this machine and may consume provider quota. Use jinn_route first when the tool or arguments are uncertain. Mutating tools and shell execution are unavailable."
+	}
+	return "Execute one allowlisted non-mutating Jinn tool in the current workspace. Use jinn_route first when the tool or arguments are uncertain. Mutating tools and shell execution are unavailable."
 }
 
 func mcpInstructions(profile mcpProfile) string {
 	if profile == mcpProfileReadOnly {
 		return "Use jinn_route to deterministically find relevant Jinn tools. This opt-in read-only profile also exposes jinn_call for the canonical read-only allowlist; it never permits file or state mutation and never executes shell commands."
 	}
+	if profile == mcpProfileNetwork {
+		return "Use jinn_route to find relevant Jinn tools. This opt-in network profile exposes jinn_call for local read-only and web tools only; web_fetch and web_search requests leave this machine and may consume provider quota. Mutation and shell execution remain unavailable."
+	}
 	return "Use jinn_route to deterministically find relevant Jinn tools. The MCP surface intentionally exposes one recommendation-only tool to keep model context small; it never executes tools."
 }
 
 type mcpRouteArguments struct {
-	Need            string `json:"need"`
-	MaxTools        *int   `json:"max_tools,omitempty"`
-	IncludeSchema   bool   `json:"include_schema,omitempty"`
-	IncludeMutating *bool  `json:"include_mutating,omitempty"`
+	Need             string `json:"need"`
+	MaxTools         *int   `json:"max_tools,omitempty"`
+	IncludeSchema    bool   `json:"include_schema,omitempty"`
+	IncludeSignature bool   `json:"include_signature,omitempty"`
+	IncludeMutating  *bool  `json:"include_mutating,omitempty"`
+	IncludeNetwork   *bool  `json:"include_network,omitempty"`
 }
 
 func decodeMCPArguments(label string, rawArgs map[string]any, target any) error {
@@ -233,10 +303,6 @@ func decodeMCPArguments(label string, rawArgs map[string]any, target any) error 
 		return fmt.Errorf("%s arguments must be an object: %w", label, err)
 	}
 	return nil
-}
-
-func mcpRouteHandlerForMode(mode jinn.ShellMode) func(context.Context, *server.CallRequest) (protocol.ToolResponse, error) {
-	return mcpRouteHandlerForProfile(mode, mcpProfileDiscover)
 }
 
 func mcpRouteHandlerForProfile(mode jinn.ShellMode, profile mcpProfile) func(context.Context, *server.CallRequest) (protocol.ToolResponse, error) {
@@ -259,15 +325,22 @@ func mcpRouteHandlerForProfile(mode jinn.ShellMode, profile mcpProfile) func(con
 			maxTools = *args.MaxTools
 		}
 		includeMutating := args.IncludeMutating
-		if profile == mcpProfileReadOnly {
+		includeNetwork := args.IncludeNetwork
+		if profile == mcpProfileReadOnly || profile == mcpProfileNetwork {
 			allow := false
 			includeMutating = &allow
 		}
+		if profile == mcpProfileReadOnly {
+			allow := false
+			includeNetwork = &allow
+		}
 		route, err := jinn.RouteToolsForMode(jinn.RouteRequest{
-			Need:            args.Need,
-			MaxTools:        maxTools,
-			IncludeSchema:   args.IncludeSchema,
-			IncludeMutating: includeMutating,
+			Need:             args.Need,
+			MaxTools:         maxTools,
+			IncludeSchema:    args.IncludeSchema,
+			IncludeSignature: args.IncludeSignature,
+			IncludeMutating:  includeMutating,
+			IncludeNetwork:   includeNetwork,
 		}, mode)
 		if err != nil {
 			return protocol.NewToolResultError(err.Error()), nil
@@ -289,10 +362,16 @@ type mcpCallOutput struct {
 	Meta    map[string]any      `json:"meta,omitempty"`
 }
 
-func mcpCallHandler(engine *jinn.Engine) func(context.Context, *server.CallRequest) (protocol.ToolResponse, error) {
+//nolint:gocognit,gocyclo,goconst,revive // Keeping validation, allowlisting, dispatch, and projection together makes the security boundary auditable.
+func mcpCallHandler(engine *jinn.Engine, profile mcpProfile) func(context.Context, *server.CallRequest) (protocol.ToolResponse, error) {
 	allowed := make(map[string]struct{})
 	for _, name := range jinn.ReadOnlyToolNames() {
 		allowed[name] = struct{}{}
+	}
+	if profile == mcpProfileNetwork {
+		for _, name := range jinn.NetworkToolNames() {
+			allowed[name] = struct{}{}
+		}
 	}
 	return func(ctx context.Context, req *server.CallRequest) (protocol.ToolResponse, error) {
 		if req == nil || req.Params == nil {
@@ -307,7 +386,7 @@ func mcpCallHandler(engine *jinn.Engine) func(context.Context, *server.CallReque
 			return protocol.NewToolResultError("jinn_call: 'tool' is required"), nil
 		}
 		if _, ok := allowed[args.Tool]; !ok {
-			return protocol.NewToolResultError(fmt.Sprintf("jinn_call: tool %q is unavailable in the read-only profile", args.Tool)), nil
+			return protocol.NewToolResultError(fmt.Sprintf("jinn_call: tool %q is unavailable in this MCP profile", args.Tool)), nil
 		}
 		if args.Arguments == nil {
 			args.Arguments = make(map[string]any)
@@ -316,7 +395,7 @@ func mcpCallHandler(engine *jinn.Engine) func(context.Context, *server.CallReque
 		if dispatchErr != nil {
 			return protocol.NewToolResultError(dispatchErr.Error()), nil
 		}
-		compress := args.Compress == nil || *args.Compress
+		compress := mcpCallCompressionEnabled(args.Tool, args.Compress)
 		applyCompression(jinn.Request{Tool: args.Tool, Args: args.Arguments, Compress: compress}, result)
 		output := mcpCallOutput{
 			Tool:    args.Tool,
@@ -338,6 +417,14 @@ func mcpCallHandler(engine *jinn.Engine) func(context.Context, *server.CallReque
 		}
 		return response, nil
 	}
+}
+
+//nolint:goconst // Tool names are the explicit compression-default contract.
+func mcpCallCompressionEnabled(tool string, explicit *bool) bool {
+	if explicit != nil {
+		return *explicit
+	}
+	return tool != "web_fetch" && tool != "web_search"
 }
 
 func mergeMCPResultMeta(resultMeta, dispatchMeta map[string]any) map[string]any {
@@ -376,10 +463,18 @@ var mcpRouteInputSchema = map[string]any{
 			"description": "Include lean schemas only for returned tools.",
 			"default":     false,
 		},
+		"include_signature": map[string]any{
+			"type":        "boolean",
+			"description": "Include compact input signatures only for returned tools.",
+			"default":     false,
+		},
 		"include_mutating": map[string]any{
 			"type":        "boolean",
 			"description": "Allow recommendations for mutating tools.",
 			"default":     true,
+		},
+		"include_network": map[string]any{
+			"type": "boolean", "description": "Allow recommendations for public-network tools.", "default": true,
 		},
 	},
 	"required":             []string{"need"},
@@ -387,7 +482,7 @@ var mcpRouteInputSchema = map[string]any{
 }
 
 func mcpRouteInputSchemaForProfile(profile mcpProfile) map[string]any {
-	if profile != mcpProfileReadOnly {
+	if profile != mcpProfileReadOnly && profile != mcpProfileNetwork {
 		return mcpRouteInputSchema
 	}
 	schema := make(map[string]any, len(mcpRouteInputSchema))
@@ -405,13 +500,23 @@ func mcpRouteInputSchemaForProfile(profile mcpProfile) map[string]any {
 		readOnlyIncludeMutating[key] = value
 	}
 	readOnlyIncludeMutating["default"] = false
-	readOnlyIncludeMutating["description"] = "Always false in the read-only profile; mutating tools are never recommended."
+	readOnlyIncludeMutating["description"] = "Always false in this non-mutating profile; mutating tools are never recommended."
 	readOnlyProperties["include_mutating"] = readOnlyIncludeMutating
+	includeNetwork := properties["include_network"].(map[string]any)
+	readOnlyIncludeNetwork := make(map[string]any, len(includeNetwork))
+	for key, value := range includeNetwork {
+		readOnlyIncludeNetwork[key] = value
+	}
+	if profile == mcpProfileReadOnly {
+		readOnlyIncludeNetwork["default"] = false
+		readOnlyIncludeNetwork["description"] = "Always false in the read-only profile; public-network tools are never recommended."
+	}
+	readOnlyProperties["include_network"] = readOnlyIncludeNetwork
 	schema["properties"] = readOnlyProperties
 	return schema
 }
 
-//nolint:gochecknoglobals // MCP schemas are immutable package-level wire contracts.
+//nolint:gochecknoglobals,goconst // MCP schemas are immutable package-level wire contracts.
 var mcpCallInputSchema = map[string]any{
 	"$schema": "https://json-schema.org/draft/2020-12/schema",
 	"title":   "jinn_call input",
@@ -437,7 +542,38 @@ var mcpCallInputSchema = map[string]any{
 	"additionalProperties": false,
 }
 
-//nolint:gochecknoglobals // MCP schemas are immutable package-level wire contracts.
+func mcpCallInputSchemaForProfile(profile mcpProfile) map[string]any {
+	if profile != mcpProfileNetwork {
+		return mcpCallInputSchema
+	}
+	schema := make(map[string]any, len(mcpCallInputSchema))
+	for key, value := range mcpCallInputSchema {
+		schema[key] = value
+	}
+	properties := make(map[string]any, len(mcpCallInputSchema["properties"].(map[string]any)))
+	for key, value := range mcpCallInputSchema["properties"].(map[string]any) {
+		properties[key] = value
+	}
+	tool := make(map[string]any, len(properties["tool"].(map[string]any)))
+	for key, value := range properties["tool"].(map[string]any) {
+		tool[key] = value
+	}
+	allow := append(jinn.ReadOnlyToolNames(), jinn.NetworkToolNames()...)
+	tool["enum"] = allow
+	tool["description"] = "Read-only local or explicitly networked Jinn tool to execute. Use jinn_route to choose one."
+	properties["tool"] = tool
+	compress := make(map[string]any, len(properties["compress"].(map[string]any)))
+	for key, value := range properties["compress"].(map[string]any) {
+		compress[key] = value
+	}
+	delete(compress, "default")
+	compress["description"] = "Apply Jinn's deterministic context compression to text output. In the network profile, local read-only tools default to true and web_fetch/web_search default to false; set explicitly to override."
+	properties["compress"] = compress
+	schema["properties"] = properties
+	return schema
+}
+
+//nolint:gochecknoglobals,goconst // MCP schemas are immutable package-level wire contracts.
 var mcpCallOutputSchema = map[string]any{
 	"$schema": "https://json-schema.org/draft/2020-12/schema",
 	"title":   "jinn_call output",
@@ -505,7 +641,8 @@ var mcpRouteOutputSchema = map[string]any{
 					"type":  "array",
 					"items": map[string]any{"type": "string"},
 				},
-				"schema": map[string]any{},
+				"schema":    map[string]any{},
+				"signature": map[string]any{"type": "string"},
 			},
 			"required":             []string{"name", "description", "reason", "mutating", "risk"},
 			"additionalProperties": false,

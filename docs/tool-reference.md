@@ -1,6 +1,6 @@
 # Tool Reference
 
-jinn exposes 18 tools by default, or 19 when started with
+jinn exposes 20 tools by default, or 21 when started with
 `--shell-mode=sandboxed` or `--shell-mode=unsafe`. The protocol accepts exactly
 one JSON object of at most 16 MiB and rejects duplicate keys, trailing values,
 unknown fields, invalid types, and unknown tool arguments.
@@ -10,6 +10,46 @@ echo '{"tool":"read_file","args":{"path":"main.go"}}' | jinn
 ```
 
 Every text tool returns `{"ok": true, "result": "..."}` on success or `{"ok": false, "error": "..."}` on failure. Tools can also attach structured `content` and `meta` fields for images, checksums, truncation, diffs, and other machine-readable details.
+
+## Public web tools
+
+### web_fetch
+
+```bash
+echo '{"tool":"web_fetch","args":{"url":"https://example.com","reader":"defuddle"}}' | jinn
+```
+
+| Argument | Type | Default | Meaning |
+|---|---|---|---|
+| `url` | string | required | Absolute HTTP(S) URL. |
+| `raw` | bool | `false` | Return direct response content. |
+| `reader` | string | configured | `jina`, `defuddle`, or `auto`. |
+| `render` | string | `never` | `never`, `auto`, or `always`. |
+| `render_wait` | string | `load` | `load` or `networkidle` when rendering. |
+| `format` | string | `markdown` | `markdown`, `headings`, or `links` projection. Raw content supports only `markdown`. |
+| `start_line` | integer | `0` | Zero-based line offset within the selected projection. |
+| `max_bytes` | integer | `0` | Maximum projected UTF-8 bytes; zero is unlimited. |
+| `max_lines` | integer | `0` | Maximum projected lines; zero is unlimited. |
+
+The text result is projected document content. Metadata uses snake case for document fields plus `format`, `truncated`, `truncated_by`, `total_bytes`, `output_bytes`, `total_lines`, `output_lines`, `max_bytes`, `max_lines`, `start_line`, and `next_start_line`. Private/local addresses and redirect hops are denied unless `JINN_WEB_ALLOW_PRIVATE_NETWORKS=true` is intentionally set at process start.
+
+### web_search
+
+```bash
+echo '{"tool":"web_search","args":{"query":"Go release notes","max_results":5}}' | jinn
+```
+
+| Argument | Type | Default | Meaning |
+|---|---|---|---|
+| `query` | string | required | Search terms. |
+| `max_results` | integer | `10` | 1 through 50 normalized results. |
+| `category` | string | omitted | Provider category. |
+| `include_domains` | string array | omitted | Hostname filters. |
+| `start_published_date` | string | omitted | RFC3339 or YYYY-MM-DD lower bound. |
+| `include_highlights` | bool | `true` | Include provider highlights where supported. |
+| `highlight_sentences` | integer | `3` | Requested highlight sentence count, 1 through 10. |
+
+Search uses Brave by default (`BRAVE_API_KEY`) or Exa when `JINN_WEB_SEARCH_PROVIDER=exa` (`EXA_API_KEY`). `max_results` sizes one provider request; it is not multi-page provider pagination. Its text is compact JSON with `query` and `results`; metadata contains `provider` and `count`.
 
 ## Response Envelope
 
@@ -767,13 +807,36 @@ option is never enabled, and tokens are not accepted through CLI arguments.
 Use a non-loopback bind only on a trusted network or behind a TLS-terminating
 proxy or tunnel: bearer tokens authenticate requests but do not encrypt them.
 
-HTTP has an explicit 1 MiB header limit, the same five-second header,
-fifteen-second read, and sixty-second write/idle timeouts as the local inspector.
+HTTP has an explicit 64 KiB header limit and 8 MiB body limit, a five-second
+header timeout, no read/write stream deadline, and a two-minute idle timeout.
 SIGINT and SIGTERM perform bounded
 graceful shutdown. It intentionally does not implement the stdio legacy
 `initialize` compatibility path. See
 [mcp-smoke-test.md](mcp-smoke-test.md#streamable-http-smoke-test) for a
 real endpoint check.
+
+### MCP network profile and explorer
+
+`jinn --mcp-profile=network --mcp` keeps the compact `jinn_route` and
+`jinn_call` surface. `jinn_call` is read-only, non-destructive, and open-world:
+its `web_fetch` and `web_search` requests leave the machine and may consume
+provider quota. Web output defaults to uncompressed; local read-only output
+keeps compression by default.
+
+```bash
+jinn mcp list ENDPOINT [--timeout 30s]
+jinn mcp inspect ENDPOINT TOOL [connection flags]
+jinn mcp call ENDPOINT TOOL [--args JSON] [-a NAME VALUE]... [connection flags]
+jinn mcp list --command PATH [--arg ARG]...
+```
+
+The explorer accepts only HTTP(S) endpoints or explicit subprocess argv, follows
+all `tools/list` pages, disables HTTP retries, and reaps subprocesses. HTTP
+bearer authentication comes only from `JINN_MCP_HTTP_TOKEN`; it is never printed
+or accepted through a command-line option. `--args` and repeated assignments
+merge in command-line order; valid JSON assignment values remain typed. Its
+successful call JSON always contains `resultType`, `content`,
+`structuredContent`, and `isError`; a tool-level error still exits zero.
 
 ### detect_project
 

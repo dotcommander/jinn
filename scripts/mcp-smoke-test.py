@@ -24,11 +24,12 @@ def fail(message: str) -> None:
     raise RuntimeError(message)
 
 
-def start(binary: str, profile: Optional[str] = None) -> subprocess.Popen[str]:
+def start(binary: str, profile: Optional[str] = None, bare: bool = False) -> subprocess.Popen[str]:
     command = [binary]
-    if profile is not None:
-        command.extend(["--mcp-profile", profile])
-    command.append("--mcp")
+    if not bare:
+        if profile is not None:
+            command.extend(["--mcp-profile", profile])
+        command.append("--mcp")
     return subprocess.Popen(
         command,
         stdin=subprocess.PIPE,
@@ -180,6 +181,29 @@ def legacy_smoke(binary: str) -> None:
         finish(proc, "legacy MCP smoke")
 
 
+def bare_path_smoke(binary: str) -> None:
+    proc = start(binary, bare=True)
+    try:
+        send(
+            proc,
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {},
+                    "clientInfo": {"name": "executable-only-host", "version": "0"},
+                },
+            },
+        )
+        response = receive(proc, "bare-path initialize")
+        if response.get("result", {}).get("protocolVersion") != "2025-06-18":
+            fail(f"bare-path compatibility response changed: {response!r}")
+    finally:
+        finish(proc, "bare-path MCP smoke")
+
+
 def readonly_smoke(binary: str) -> None:
     proc = start(binary, "read-only")
     try:
@@ -268,10 +292,50 @@ def readonly_smoke(binary: str) -> None:
             fail(f"read-only mutation was not rejected: {result!r}")
         content = result.get("content", [])
         text = content[0].get("text", "") if content and isinstance(content[0], dict) else ""
-        if "unavailable in the read-only profile" not in text:
+        if "unavailable in this MCP profile" not in text:
             fail(f"unexpected read-only mutation rejection: {text!r}")
     finally:
         finish(proc, "read-only MCP smoke")
+
+
+def network_smoke(binary: str) -> None:
+    proc = start(binary, "network")
+    try:
+        request = {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": META}
+        response = receive_after_send(proc, request, "network tools/list")
+        tools = response.get("result", {}).get("tools", [])
+        names = {tool.get("name") for tool in tools}
+        if names != {"jinn_route", "jinn_call"}:
+            fail(f"unexpected network tools: {tools!r}")
+        call_tool = next(tool for tool in tools if tool.get("name") == "jinn_call")
+        enum = call_tool.get("inputSchema", {}).get("properties", {}).get("tool", {}).get("enum", [])
+        if not {"web_fetch", "web_search"}.issubset(enum):
+            fail(f"network web tools missing: {enum!r}")
+        if {"write_file", "run_shell", "memory"}.intersection(enum):
+            fail(f"network mutation leaked into enum: {enum!r}")
+    finally:
+        finish(proc, "network MCP smoke")
+
+
+def explorer_smoke(binary: str) -> None:
+    result = subprocess.run(
+        [binary, "mcp", "list", "--command", binary, "--arg", "--mcp"],
+        text=True,
+        capture_output=True,
+        timeout=10,
+        check=False,
+    )
+    if result.returncode != 0:
+        fail(f"explorer exited with {result.returncode}: {result.stderr!r}")
+    if result.stderr:
+        fail(f"explorer wrote stderr: {result.stderr!r}")
+    try:
+        value = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        fail(f"explorer output was not JSON: {exc}: {result.stdout!r}")
+    tools = value.get("tools", []) if isinstance(value, dict) else []
+    if len(tools) != 1 or tools[0].get("name") != "jinn_route":
+        fail(f"explorer tools changed: {tools!r}")
 
 
 def main() -> int:
@@ -281,13 +345,19 @@ def main() -> int:
     try:
         current_smoke(args.binary)
         legacy_smoke(args.binary)
+        bare_path_smoke(args.binary)
         readonly_smoke(args.binary)
+        network_smoke(args.binary)
+        explorer_smoke(args.binary)
     except RuntimeError as exc:
         print(f"mcp_smoke_failed: {exc}", file=sys.stderr)
         return 1
     print("mcp_current_stdio_smoke=passed")
     print("mcp_legacy_compatibility_smoke=passed")
+    print("mcp_bare_path_autodetect_smoke=passed")
     print("mcp_readonly_stdio_smoke=passed")
+    print("mcp_network_stdio_smoke=passed")
+    print("mcp_explorer_stdio_smoke=passed")
     return 0
 
 

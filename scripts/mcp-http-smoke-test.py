@@ -193,6 +193,15 @@ def route_only_smoke(binary: str) -> None:
         status, body, _ = post(url.removesuffix("/mcp") + "/other", "server/discover", dict(META))
         if status != 404:
             fail(f"HTTP non-MCP path status = {status}, body = {body!r}")
+
+        status, body, _ = post(
+            url,
+            "server/discover",
+            dict(META),
+            origin="http://localhost:3000",
+        )
+        if status != 403:
+            fail(f"unconfigured origins allowed browser localhost: {status}/{body!r}")
     finally:
         finish(proc, host_port, "route-only HTTP smoke")
 

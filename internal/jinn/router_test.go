@@ -119,6 +119,43 @@ func TestRouteToolsIncludeSchemaOnlyMatches(t *testing.T) {
 	}
 }
 
+func TestRouteToolsIncludeSignatureIsIndependentFromSchema(t *testing.T) {
+	t.Parallel()
+	without, err := RouteTools(RouteRequest{Need: "read a file", MaxTools: 2, IncludeMutating: boolPtr(true)})
+	if err != nil {
+		t.Fatalf("RouteTools defaults: %v", err)
+	}
+	for _, match := range without.Matches {
+		if match.Signature != "" || match.Schema != nil {
+			t.Fatalf("default match exposed optional fields: %+v", match)
+		}
+	}
+	with, err := RouteTools(RouteRequest{Need: "read a file", MaxTools: 2, IncludeSignature: true, IncludeMutating: boolPtr(true)})
+	if err != nil {
+		t.Fatalf("RouteTools signatures: %v", err)
+	}
+	if len(with.Matches) == 0 {
+		t.Fatal("expected matches")
+	}
+	for _, match := range with.Matches {
+		if match.Signature == "" {
+			t.Fatalf("match %s missing signature", match.Name)
+		}
+		if match.Schema != nil {
+			t.Fatalf("signature-only match %s unexpectedly has schema", match.Name)
+		}
+	}
+	both, err := RouteTools(RouteRequest{Need: "read a file", MaxTools: 2, IncludeSchema: true, IncludeSignature: true, IncludeMutating: boolPtr(true)})
+	if err != nil {
+		t.Fatalf("RouteTools schema and signatures: %v", err)
+	}
+	for _, match := range both.Matches {
+		if match.Signature == "" || match.Schema == nil {
+			t.Fatalf("combined match omitted an optional field: %+v", match)
+		}
+	}
+}
+
 func boolPtr(v bool) *bool {
 	return &v
 }

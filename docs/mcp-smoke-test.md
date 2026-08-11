@@ -19,10 +19,16 @@ The script checks three paths:
 - Structured route output plus its mirrored text content.
 - Empty stderr and clean shutdown after the client closes stdin.
 - Compatibility with the older initialize-based handshake.
+- Executable-only host startup with no `--mcp` argument.
 - The opt-in `read-only` profile, including its two-tool surface, generated
   read-only allowlist, successful `read_file` execution, and rejected
   `write_file` execution. Its legacy `initialize` request is rejected by the
   current SDK before any route or tool dispatch.
+
+- The opt-in `network` profile's two-tool surface and its absence of mutating
+  or shell execution. The smoke does not invoke real web providers.
+- The local explicit-argv explorer path (`jinn mcp list --command ... --mcp`)
+  with stable JSON and subprocess cleanup.
 
 The current SDK stdio transport treats EOF as client shutdown and cancels
 in-flight requests. A real MCP client must keep stdin open until it has read the
