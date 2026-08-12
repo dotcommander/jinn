@@ -475,7 +475,7 @@ var mcpRouteInputSchema = map[string]any{
 		},
 		"max_tools": map[string]any{
 			"type":        "integer",
-			"description": "Maximum recommendations to return. Defaults to 5 and is capped at 8.",
+			"description": fmt.Sprintf("Recommendation limit; default %d, maximum %d.", jinn.RouteDefaultMaxTools, jinn.RouteMaxTools),
 			"minimum":     1,
 			"maximum":     jinn.RouteMaxTools,
 			"default":     jinn.RouteDefaultMaxTools,

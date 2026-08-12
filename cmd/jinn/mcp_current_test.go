@@ -120,6 +120,11 @@ func TestMCPCurrentToolsListKeepsOneToolAndUsesJSONSchema202012(t *testing.T) {
 	if inputSchema["$schema"] != "https://json-schema.org/draft/2020-12/schema" {
 		t.Fatalf("input schema dialect = %v", inputSchema["$schema"])
 	}
+	inputProperties := inputSchema["properties"].(map[string]any)
+	maxTools := inputProperties["max_tools"].(map[string]any)
+	if maxTools["default"] != float64(1) {
+		t.Fatalf("max_tools default = %v, want 1", maxTools["default"])
+	}
 	outputSchema := tool["outputSchema"].(map[string]any)
 	if outputSchema["$schema"] != "https://json-schema.org/draft/2020-12/schema" {
 		t.Fatalf("output schema dialect = %v", outputSchema["$schema"])

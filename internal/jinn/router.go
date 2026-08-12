@@ -13,7 +13,7 @@ import (
 
 const (
 	// RouteDefaultMaxTools is used when a route request omits its result limit.
-	RouteDefaultMaxTools = 5
+	RouteDefaultMaxTools = 1
 	// RouteMaxTools bounds the number of recommendations returned by a route request.
 	RouteMaxTools = 8
 )

@@ -40,6 +40,17 @@ func TestRouteToolsCoreCases(t *testing.T) {
 	}
 }
 
+func TestRouteToolsDefaultReturnsOne(t *testing.T) {
+	t.Parallel()
+	resp, err := RouteTools(RouteRequest{Need: "read a file", IncludeMutating: boolPtr(true)})
+	if err != nil {
+		t.Fatalf("RouteTools: %v", err)
+	}
+	if len(resp.Matches) != 1 {
+		t.Fatalf("default match count = %d, want 1: %+v", len(resp.Matches), resp.Matches)
+	}
+}
+
 func TestRouteToolsLowSignal(t *testing.T) {
 	t.Parallel()
 	resp, err := RouteTools(RouteRequest{Need: "please help", IncludeMutating: boolPtr(true)})

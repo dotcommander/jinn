@@ -656,9 +656,12 @@ long-lived driver in [mcp-smoke-test.md](mcp-smoke-test.md).
 | Name | Type | Required | Default | Description |
 |------|------|----------|---------|-------------|
 | `need` | string | Yes | -- | Natural-language task or capability request |
-| `max_tools` | integer | No | `5` | Maximum recommendations, capped at `8` |
+| `max_tools` | integer | No | `1` | Maximum recommendations, capped at `8` |
 | `include_schema` | boolean | No | `false` | Include lean schemas only for returned tools |
 | `include_mutating` | boolean | No | `true` | Allow recommendations for mutating tools |
+
+The default returns only the highest-ranked match. Set `max_tools` explicitly
+when comparing alternatives or resolving an ambiguous request.
 
 `mutating` is a maximum-capability classification: it is true when at least one
 valid invocation of the tool may mutate files or persistent state. Therefore,

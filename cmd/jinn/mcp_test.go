@@ -125,7 +125,10 @@ func TestMCPToolsCallRouteDoesNotExecute(t *testing.T) {
 	if err := json.Unmarshal([]byte(text), &route); err != nil {
 		t.Fatalf("route text is not JSON: %v\n%s", err, text)
 	}
-	if len(route.Matches) == 0 || route.Matches[0].Name != "read_file" || route.Matches[0].Risk != "read_only" {
+	if len(route.Matches) != 1 {
+		t.Fatalf("default route returned %d matches, want 1: %#v", len(route.Matches), route.Matches)
+	}
+	if route.Matches[0].Name != "read_file" || route.Matches[0].Risk != "read_only" {
 		t.Fatalf("unexpected route: %#v", route.Matches)
 	}
 	if len(text) > 4000 {
