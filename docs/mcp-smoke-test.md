@@ -34,6 +34,41 @@ The current SDK stdio transport treats EOF as client shutdown and cancels
 in-flight requests. A real MCP client must keep stdin open until it has read the
 responses it requested.
 
+## Codex discoverability smoke (provider-backed)
+
+This opt-in gate invokes Codex up to three times and consumes OpenAI quota. It
+does not persist Codex sessions or MCP configuration. Build the task-owned
+binary, authenticate Codex, then run:
+
+```bash
+go build -o "${TMPDIR:-/tmp}/jinn-codex-discovery" ./cmd/jinn
+python3 scripts/codex-discoverability-smoke-test.py \
+  --binary "${TMPDIR:-/tmp}/jinn-codex-discovery"
+```
+
+For repeatable certification, pin the same model used in production:
+
+```bash
+python3 scripts/codex-discoverability-smoke-test.py \
+  --binary "${TMPDIR:-/tmp}/jinn-codex-discovery" \
+  --model "$CODEX_MODEL"
+```
+
+The cold prompts never name Jinn, `jinn_route`, or `jinn_call`. The test uses
+Jinn's route-only compatibility surface without enabling legacy execution. The
+isolated Codex run receives the same route-first `developer_instructions` rule
+documented in the
+[Codex CLI setup](harness-integrations.md#codex-mcp-configuration). The gate
+requires:
+
+- One route lookup for each of two distinct capability decisions.
+- No Jinn call for an unrelated arithmetic question.
+- No shell execution, failed MCP call, persistent Codex session, or persistent
+  MCP configuration.
+
+Use `--case route-only`, `--case ambiguous-route`, or
+`--case negative-control` to isolate a failure without rerunning passing cases.
+
 ## Streamable HTTP smoke test
 
 The HTTP smoke test starts a real subprocess on a temporary loopback port. It

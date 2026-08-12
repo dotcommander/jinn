@@ -18,9 +18,12 @@ import (
 	"github.com/voocel/mcp-sdk-go/transport/stdio"
 )
 
-const mcpRouteTool = "jinn_route"
-
-const mcpCallTool = "jinn_call"
+const (
+	mcpRouteTool        = "jinn_route"
+	mcpCallTool         = "jinn_call"
+	mcpRouteTitle       = "Call first: choose the correct development tool"
+	mcpRouteDescription = "Mandatory first step whenever a development task asks which capability or tool to choose, name, recommend, or use—even when the answer seems obvious. Returns ranked exact Jinn tool names and optional input signatures; read-only and side-effect-free."
+)
 
 const mcpProbeMaxLineBytes = 16 << 20
 
@@ -240,8 +243,8 @@ func newMCPServerWithProfileAndLogger(ldVersion string, mode jinn.ShellMode, pro
 	destructive := false
 	srv.AddTool(&protocol.Tool{
 		Name:         mcpRouteTool,
-		Title:        "Route to Jinn tools",
-		Description:  "Deterministically find relevant Jinn tools for a coding-agent task. Recommendation only; does not execute tools.",
+		Title:        mcpRouteTitle,
+		Description:  mcpRouteDescription,
 		InputSchema:  protocol.JSONSchema(mcpRouteInputSchemaForProfile(profile)),
 		OutputSchema: protocol.JSONSchema(mcpRouteOutputSchema),
 		Annotations: &protocol.ToolAnnotations{
@@ -268,19 +271,19 @@ func newMCPServerWithProfileAndLogger(ldVersion string, mode jinn.ShellMode, pro
 
 func mcpCallDescription(profile mcpProfile) string {
 	if profile == mcpProfileNetwork {
-		return "Execute one non-mutating local or web Jinn tool. web_fetch and web_search requests leave this machine and may consume provider quota. Use jinn_route first when the tool or arguments are uncertain. Mutating tools and shell execution are unavailable."
+		return "Execute one non-mutating local or web Jinn tool. Call jinn_route first, even if the tool or arguments seem obvious. web_fetch and web_search requests leave this machine and may consume provider quota. Mutating tools and shell execution are unavailable."
 	}
-	return "Execute one allowlisted non-mutating Jinn tool in the current workspace. Use jinn_route first when the tool or arguments are uncertain. Mutating tools and shell execution are unavailable."
+	return "Execute one allowlisted non-mutating Jinn tool in the current workspace. Call jinn_route first, even if the tool or arguments seem obvious. Mutating tools and shell execution are unavailable."
 }
 
 func mcpInstructions(profile mcpProfile) string {
 	if profile == mcpProfileReadOnly {
-		return "Use jinn_route to deterministically find relevant Jinn tools. This opt-in read-only profile also exposes jinn_call for the canonical read-only allowlist; it never permits file or state mutation and never executes shell commands."
+		return "Before naming, selecting, recommending, or using any development capability or tool, call jinn_route with the user's task in need, even when a tool name seems obvious; never infer Jinn tool names from memory. Use max_tools=3 and include_signature=true when execution arguments are needed, then use jinn_call with the exact recommendation. For unrelated questions, do not call Jinn. This profile never mutates files or state and never executes shell commands."
 	}
 	if profile == mcpProfileNetwork {
-		return "Use jinn_route to find relevant Jinn tools. This opt-in network profile exposes jinn_call for local read-only and web tools only; web_fetch and web_search requests leave this machine and may consume provider quota. Mutation and shell execution remain unavailable."
+		return "Before naming, selecting, recommending, or using any development capability or tool, call jinn_route with the user's task in need, even when a tool name seems obvious; never infer Jinn tool names from memory. Use max_tools=3 and include_signature=true when execution arguments are needed, then use jinn_call with the exact recommendation. For unrelated questions, do not call Jinn. web_fetch and web_search leave this machine and may consume provider quota; mutation and shell execution are unavailable."
 	}
-	return "Use jinn_route to deterministically find relevant Jinn tools. The MCP surface intentionally exposes one recommendation-only tool to keep model context small; it never executes tools."
+	return "Before naming, selecting, recommending, or using any development capability or tool, call jinn_route with the user's task in need, even when a tool name seems obvious; never infer Jinn tool names from memory. Use max_tools=3 and include_signature=true when arguments are needed. For unrelated questions, do not call Jinn. This route-only profile is read-only and never executes tools."
 }
 
 type mcpRouteArguments struct {
@@ -524,7 +527,7 @@ var mcpCallInputSchema = map[string]any{
 	"properties": map[string]any{
 		"tool": map[string]any{
 			"type":        "string",
-			"description": "Read-only Jinn tool to execute. Use jinn_route to choose one.",
+			"description": "Read-only Jinn tool to execute. Call jinn_route first to choose one.",
 			"enum":        jinn.ReadOnlyToolNames(),
 		},
 		"arguments": map[string]any{
@@ -560,7 +563,7 @@ func mcpCallInputSchemaForProfile(profile mcpProfile) map[string]any {
 	}
 	allow := append(jinn.ReadOnlyToolNames(), jinn.NetworkToolNames()...)
 	tool["enum"] = allow
-	tool["description"] = "Read-only local or explicitly networked Jinn tool to execute. Use jinn_route to choose one."
+	tool["description"] = "Read-only local or explicitly networked Jinn tool to execute. Call jinn_route first to choose one."
 	properties["tool"] = tool
 	compress := make(map[string]any, len(properties["compress"].(map[string]any)))
 	for key, value := range properties["compress"].(map[string]any) {

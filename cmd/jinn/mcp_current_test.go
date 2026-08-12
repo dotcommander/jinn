@@ -110,6 +110,12 @@ func TestMCPCurrentToolsListKeepsOneToolAndUsesJSONSchema202012(t *testing.T) {
 	if tool["name"] != mcpRouteTool {
 		t.Fatalf("tool name = %v", tool["name"])
 	}
+	if title, _ := tool["title"].(string); !strings.Contains(strings.ToLower(title), "call first") {
+		t.Fatalf("tool title does not make discovery order explicit: %q", title)
+	}
+	if description, _ := tool["description"].(string); !strings.Contains(description, "development task") || !strings.Contains(description, "side-effect-free") {
+		t.Fatalf("tool description does not make discovery behavior explicit: %q", description)
+	}
 	inputSchema := tool["inputSchema"].(map[string]any)
 	if inputSchema["$schema"] != "https://json-schema.org/draft/2020-12/schema" {
 		t.Fatalf("input schema dialect = %v", inputSchema["$schema"])
@@ -127,6 +133,13 @@ func TestMCPCurrentToolsListKeepsOneToolAndUsesJSONSchema202012(t *testing.T) {
 	items := matches["items"].(map[string]any)
 	if items["$ref"] != "#/$defs/route_match" {
 		t.Fatalf("matches items ref = %v", items["$ref"])
+	}
+	data, err := json.Marshal(resp)
+	if err != nil {
+		t.Fatalf("marshal tools/list response: %v", err)
+	}
+	if len(data) > 3000 {
+		t.Fatalf("current tools/list response too large: %d bytes", len(data))
 	}
 }
 
@@ -163,6 +176,10 @@ func TestMCPReadOnlyProfileAddsCallToolWithReadOnlyAllowlist(t *testing.T) {
 			}
 		}
 		if name == mcpCallTool {
+			description, _ := tool["description"].(string)
+			if !strings.Contains(description, "Call jinn_route first") {
+				t.Fatalf("jinn_call description does not require routing first: %q", description)
+			}
 			inputSchema := tool["inputSchema"].(map[string]any)
 			properties := inputSchema["properties"].(map[string]any)
 			enum := properties["tool"].(map[string]any)["enum"].([]any)

@@ -7,6 +7,21 @@ and jinn adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Add an opt-in provider-backed Codex discoverability smoke covering cold
+  routing for two distinct tasks and an unrelated negative control.
+
+### Changed
+
+- Make current and legacy MCP metadata require `jinn_route` before an agent
+  names, selects, recommends, or uses a development capability, while preserving
+  the compact route-only default surface.
+- Document Codex's route-only MCP profile and per-tool approval configuration so
+  the side-effect-free route lookup works in non-interactive sessions without
+  widening legacy execution authority, including the host-level route-first
+  instruction needed by cold Codex prompts.
+
 ## [0.13.0] - 2026-08-11
 
 ### Added

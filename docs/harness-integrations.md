@@ -107,6 +107,41 @@ for the canonical read-only tool allowlist and rejects mutation, shell,
 `memory`, and `undo` before dispatch. The default entry above remains
 route-only.
 
+#### Codex MCP configuration
+
+Give Codex the route-only compatibility surface and preapprove only the
+side-effect-free discovery lookup:
+
+```toml
+developer_instructions = """
+When a user asks you to choose, name, recommend, or use a development capability
+or tool, you MUST call the preapproved jinn_route MCP tool before answering or
+acting, even if the answer seems obvious. Pass the user's task in need and use
+the exact recommendation. For unrelated questions, do not call Jinn.
+"""
+
+[mcp_servers.jinn]
+command = "jinn"
+args = ["--mcp"]
+required = true
+
+[mcp_servers.jinn.tools.jinn_route]
+approval_mode = "approve"
+```
+
+The host-level rule reinforces Jinn's route-first server metadata for cold
+prompts. The router returns ranked exact names and optional compact signatures.
+`jinn_call` is intentionally unavailable on this compatibility path; use the
+exact recommendation with Codex's built-in tools or a one-shot Jinn CLI call
+instead of widening legacy execution authority. Merge the shown route-first
+rule into existing `developer_instructions` rather than replacing other local
+guidance.
+
+Run the opt-in provider-backed discoverability gate after changing MCP metadata
+or Codex integration behavior. It checks two distinct cold routing choices and
+an unrelated negative control. See
+[MCP smoke tests](mcp-smoke-test.md#codex-discoverability-smoke-provider-backed).
+
 For public-web work, use a distinct network-profile server entry. It still has two MCP tools (`jinn_route`, `jinn_call`) and `jinn_call` permits only the local read-only allowlist plus `web_fetch` and `web_search`; it never permits shell or mutation.
 
 These web requests leave the machine and may consume provider quota.

@@ -69,7 +69,7 @@ func TestMCPNetworkCallIsOpenWorld(t *testing.T) {
 			if annotations["openWorldHint"] != true {
 				t.Fatalf("network jinn_call annotations = %#v", annotations)
 			}
-			if description, _ := tool["description"].(string); !strings.Contains(description, "leave this machine") || !strings.Contains(description, "provider quota") {
+			if description, _ := tool["description"].(string); !strings.Contains(description, "Call jinn_route first") || !strings.Contains(description, "leave this machine") || !strings.Contains(description, "provider quota") {
 				t.Fatalf("network jinn_call warning = %q", description)
 			}
 			return

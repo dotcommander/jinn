@@ -24,6 +24,15 @@ def fail(message: str) -> None:
     raise RuntimeError(message)
 
 
+def require_route_metadata(tool: dict[str, Any], label: str) -> None:
+    title = tool.get("title", "")
+    description = tool.get("description", "")
+    if not isinstance(title, str) or "call first" not in title.lower():
+        fail(f"{label} route title does not make discovery order explicit: {title!r}")
+    if not isinstance(description, str) or "development task" not in description or "side-effect-free" not in description:
+        fail(f"{label} route description does not make discovery behavior explicit: {description!r}")
+
+
 def start(binary: str, profile: Optional[str] = None, bare: bool = False) -> subprocess.Popen[str]:
     command = [binary]
     if not bare:
@@ -108,6 +117,7 @@ def current_smoke(binary: str) -> None:
         tools = response.get("result", {}).get("tools", [])
         if len(tools) != 1 or tools[0].get("name") != "jinn_route":
             fail(f"expected one jinn_route tool: {tools!r}")
+        require_route_metadata(tools[0], "current")
         input_schema = tools[0].get("inputSchema", {})
         output_schema = tools[0].get("outputSchema", {})
         if input_schema.get("$schema") != "https://json-schema.org/draft/2020-12/schema":
@@ -146,6 +156,22 @@ def receive_after_send(proc: subprocess.Popen[str], message: dict[str, Any], lab
     return response
 
 
+def require_route_instructions(result: dict[str, Any], label: str) -> None:
+    instructions = result.get("instructions")
+    if not isinstance(instructions, str):
+        fail(f"{label} instructions missing: {result!r}")
+    for required in (
+        "Before naming",
+        "development capability or tool",
+        "call jinn_route",
+        "never infer Jinn tool names",
+    ):
+        if required not in instructions:
+            fail(f"{label} instructions omit {required!r}: {instructions!r}")
+    if len(instructions.encode("utf-8")) > 512:
+        fail(f"{label} instructions exceed 512 bytes: {instructions!r}")
+
+
 def legacy_smoke(binary: str) -> None:
     proc = start(binary)
     try:
@@ -163,8 +189,10 @@ def legacy_smoke(binary: str) -> None:
             },
         )
         response = receive(proc, "legacy initialize")
-        if response.get("result", {}).get("protocolVersion") != "2025-06-18":
+        result = response.get("result", {})
+        if result.get("protocolVersion") != "2025-06-18":
             fail(f"legacy compatibility response changed: {response!r}")
+        require_route_instructions(result, "legacy")
         send(
             proc,
             {
@@ -177,6 +205,7 @@ def legacy_smoke(binary: str) -> None:
         tools = response.get("result", {}).get("tools", [])
         if len(tools) != 1 or tools[0].get("name") != "jinn_route":
             fail(f"legacy route tool missing: {tools!r}")
+        require_route_metadata(tools[0], "legacy")
     finally:
         finish(proc, "legacy MCP smoke")
 
@@ -242,7 +271,11 @@ def readonly_smoke(binary: str) -> None:
         names = {tool.get("name") for tool in tools}
         if names != {"jinn_route", "jinn_call"}:
             fail(f"unexpected read-only tools: {tools!r}")
+        route_tool = next(tool for tool in tools if tool.get("name") == "jinn_route")
+        require_route_metadata(route_tool, "read-only")
         call_tool = next(tool for tool in tools if tool.get("name") == "jinn_call")
+        if "Call jinn_route first" not in call_tool.get("description", ""):
+            fail(f"read-only jinn_call does not require routing first: {call_tool!r}")
         enum = call_tool.get("inputSchema", {}).get("properties", {}).get("tool", {}).get("enum", [])
         if not isinstance(enum, list) or not enum:
             fail(f"read-only jinn_call enum missing: {call_tool!r}")

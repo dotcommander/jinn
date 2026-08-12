@@ -17,6 +17,15 @@ func TestMCPInitialize(t *testing.T) {
 	if result["protocolVersion"] != mcpProtocolVersion {
 		t.Fatalf("protocolVersion = %v", result["protocolVersion"])
 	}
+	instructions, _ := result["instructions"].(string)
+	for _, required := range []string{"Before naming", "development capability or tool", "call jinn_route", "never infer Jinn tool names"} {
+		if !strings.Contains(instructions, required) {
+			t.Fatalf("instructions = %q, want %q", instructions, required)
+		}
+	}
+	if len(instructions) > 512 {
+		t.Fatalf("instructions length = %d, want <= 512", len(instructions))
+	}
 	caps := result["capabilities"].(map[string]any)
 	if _, ok := caps["tools"]; !ok {
 		t.Fatalf("missing tools capability: %#v", caps)
@@ -39,9 +48,62 @@ func TestMCPToolsListOnlyRouteTool(t *testing.T) {
 	if tool["name"] != "jinn_route" {
 		t.Fatalf("tool name = %v", tool["name"])
 	}
+	if title, _ := tool["title"].(string); !strings.Contains(strings.ToLower(title), "call first") {
+		t.Fatalf("tool title does not make discovery order explicit: %q", title)
+	}
+	if description, _ := tool["description"].(string); !strings.Contains(description, "development task") || !strings.Contains(description, "side-effect-free") {
+		t.Fatalf("tool description does not make discovery behavior explicit: %q", description)
+	}
 	data, _ := json.Marshal(resp)
 	if len(data) > 1500 {
 		t.Fatalf("tools/list response too large: %d bytes", len(data))
+	}
+}
+
+func TestMCPInstructionsRequireRouteBeforeSelection(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		profile      mcpProfile
+		wantExecutor bool
+	}{
+		{profile: mcpProfileDiscover},
+		{profile: mcpProfileReadOnly, wantExecutor: true},
+		{profile: mcpProfileNetwork, wantExecutor: true},
+	}
+	for _, tt := range tests {
+		t.Run(string(tt.profile), func(t *testing.T) {
+			t.Parallel()
+			instructions := mcpInstructions(tt.profile)
+			for _, required := range []string{
+				"Before naming",
+				"call jinn_route",
+				"even when a tool name seems obvious",
+				"never infer Jinn tool names from memory",
+			} {
+				if !strings.Contains(instructions, required) {
+					t.Fatalf("instructions %q do not contain %q", instructions, required)
+				}
+			}
+			if len(instructions) > 512 {
+				t.Fatalf("instructions are %d bytes, want at most 512", len(instructions))
+			}
+			if got := strings.Contains(instructions, "then use jinn_call"); got != tt.wantExecutor {
+				t.Fatalf("instructions executor guidance = %t, want %t: %q", got, tt.wantExecutor, instructions)
+			}
+		})
+	}
+}
+
+func TestMCPCallDescriptionsRequireRouteFirst(t *testing.T) {
+	t.Parallel()
+	for _, profile := range []mcpProfile{mcpProfileReadOnly, mcpProfileNetwork} {
+		t.Run(string(profile), func(t *testing.T) {
+			t.Parallel()
+			description := mcpCallDescription(profile)
+			if !strings.Contains(description, "Call jinn_route first") || !strings.Contains(description, "even if the tool or arguments seem obvious") {
+				t.Fatalf("jinn_call description does not require routing first: %q", description)
+			}
+		})
 	}
 }
 

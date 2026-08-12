@@ -85,6 +85,7 @@ func handleMCPLine(line []byte, ldVersion string, mode jinn.ShellMode) (mcpRespo
 	case "initialize":
 		return mcpResult(msg.ID, map[string]any{
 			"protocolVersion": mcpProtocolVersion,
+			"instructions":    mcpInstructions(mcpProfileDiscover),
 			"capabilities": map[string]any{
 				"tools": map[string]any{"listChanged": false},
 			},
@@ -165,8 +166,8 @@ func mcpProtocolError(id json.RawMessage, code int, message string, data any) mc
 func mcpRouteToolDefinition() map[string]any {
 	return map[string]any{
 		"name":        "jinn_route",
-		"title":       "Jinn Tool Router",
-		"description": "Find relevant jinn tools for a coding-agent task. Recommendation only; does not execute tools.",
+		"title":       mcpRouteTitle,
+		"description": mcpRouteDescription,
 		"inputSchema": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
