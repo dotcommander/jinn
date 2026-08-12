@@ -7,6 +7,8 @@ and jinn adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.13.1] - 2026-08-12
+
 ### Added
 
 - Add an opt-in provider-backed Codex discoverability smoke covering cold
@@ -387,7 +389,8 @@ and jinn adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `--schema` flag to emit tool definitions
 - `--version` flag with ldflags and VCS fallback
 
-[Unreleased]: https://github.com/dotcommander/jinn/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/dotcommander/jinn/compare/v0.13.1...HEAD
+[0.13.1]: https://github.com/dotcommander/jinn/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/dotcommander/jinn/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/dotcommander/jinn/compare/v0.11.4...v0.12.0
 [0.11.4]: https://github.com/dotcommander/jinn/compare/v0.11.3...v0.11.4
