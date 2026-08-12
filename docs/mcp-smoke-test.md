@@ -55,16 +55,31 @@ python3 scripts/codex-discoverability-smoke-test.py \
 ```
 
 The cold prompts never name Jinn, `jinn_route`, or `jinn_call`. The test uses
-Jinn's route-only compatibility surface without enabling legacy execution. The
-isolated Codex run receives the same route-first `developer_instructions` rule
-documented in the
-[Codex CLI setup](harness-integrations.md#codex-mcp-configuration). The gate
-requires:
+Jinn's route-only compatibility surface without enabling legacy execution. Each
+isolated Codex run uses the same temporary two-file project as the JCode gate:
+`.jcode/mcp.json` and a short route-first `AGENTS.md`. It ignores user config and
+exec-policy rules, disables documented native tool families, and passes the
+exact `AGENTS.md` instruction bytes through Codex's session-level
+`developer_instructions` channel while suppressing a duplicate project-doc read.
+Only the configured Jinn route tool remains available as far as Codex's host
+controls permit. The gate requires:
 
 - One route lookup for each of two distinct capability decisions.
 - No Jinn call for an unrelated arithmetic question.
 - No shell execution, failed MCP call, persistent Codex session, or persistent
   MCP configuration.
+
+Each case reports a shared normalized usage schema: reported counter scope, a
+lower bound on model requests, total/cached/uncached input, cache-write input,
+total output, and reasoning output. Codex's `turn.completed` usage is cumulative
+for the turn and does not report cache writes, so that field is `null`. Neither
+host exposes a portable provider-request breakdown; the harness does not invent
+one.
+
+Codex's `code_mode_host` feature must remain enabled for the configured MCP tool
+to reach the model. The harness retains that host layer, includes its overhead
+in the reported usage, and disables `tool_suggest` plus the unrelated native
+feature families listed in the context inventory.
 
 Use `--case route-only`, `--case ambiguous-route`, or
 `--case negative-control` to isolate a failure without rerunning passing cases.
@@ -83,8 +98,9 @@ python3 scripts/jcode-discoverability-smoke-test.py \
   --model "$JCODE_MODEL"
 ```
 
-The harness creates a temporary project containing `.jcode/mcp.json` and a
-route-first `AGENTS.md`. It exposes only `mcp__jinn__jinn_route`, disables
+The harness creates the same temporary two-file project used by the Codex gate,
+containing `.jcode/mcp.json` and a route-first `AGENTS.md`. It exposes only
+`mcp__jinn__jinn_route`, disables
 JCode's built-in tools and automatic follow-up turns, and reads JCode's NDJSON
 tool lifecycle plus final usage record. The temporary project is removed after
 the run. JCode still writes its normal session records and may update its MCP
@@ -97,6 +113,13 @@ The cold prompts and acceptance criteria match the Codex gate:
 - No other tool, failed or incomplete tool lifecycle, auto-poke turn, or
   malformed NDJSON event.
 - A final provider, model, session ID, and token-usage record for every case.
+
+JCode reports the same normalized usage keys as Codex. Its scope is explicitly
+`done_event_reported`, and its cache-read and cache-creation counters map to the
+shared cache fields. `model_requests_lower_bound` is derived from validated tool
+calls plus the final response; it is a lower bound, not a claim about hidden
+provider retries or host-side turns. Both context inventories include the same
+instruction hash and record the host-native delivery channel.
 
 Omit `--provider` or `--model` to use JCode's configured selection, but that is
 not a repeatable certification. Use `--case route-only`,

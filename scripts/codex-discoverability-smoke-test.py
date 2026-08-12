@@ -10,7 +10,16 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import tempfile
 from typing import Any, Optional
+
+from discoverability_smoke_common import (
+    DISCOVERY_INSTRUCTIONS,
+    context_inventory,
+    normalize_usage,
+    sum_usage,
+    write_minimal_test_project,
+)
 
 
 @dataclass(frozen=True)
@@ -48,11 +57,20 @@ CASES = (
 )
 
 FORBIDDEN_PROMPT_NAMES = ("jinn", "jinn_route", "jinn_call")
-CODEX_DISCOVERY_INSTRUCTIONS = (
-    "When a user asks you to choose, name, recommend, or use a development capability or tool, "
-    "you MUST call the preapproved jinn_route MCP tool before answering or acting, even if the "
-    "answer seems obvious. Pass the user's task in need and use the exact recommendation. For "
-    "unrelated questions, do not call Jinn."
+CODEX_ROUTE_TOOL = "jinn_route"
+CODEX_DISABLED_FEATURES = (
+    "browser_use",
+    "computer_use",
+    "goals",
+    "image_generation",
+    "memories",
+    "multi_agent",
+    "plugins",
+    "remote_plugin",
+    "shell_tool",
+    "skill_search",
+    "tool_suggest",
+    "view_image",
 )
 
 
@@ -76,20 +94,34 @@ def config_string(value: str) -> str:
     return json.dumps(value)
 
 
-def codex_command(codex: str, binary: str, model: Optional[str], prompt: str) -> list[str]:
+def codex_command(
+    codex: str, binary: str, project: Path, model: Optional[str], prompt: str
+) -> list[str]:
     command = [
         codex,
         "exec",
+        "--strict-config",
         "--ignore-user-config",
         "--ignore-rules",
         "--ephemeral",
+        "--skip-git-repo-check",
+        "-C",
+        str(project),
         "--json",
         "--sandbox",
         "read-only",
         "-c",
         'model_reasoning_effort="low"',
         "-c",
-        f"developer_instructions={config_string(CODEX_DISCOVERY_INSTRUCTIONS)}",
+        f"developer_instructions={config_string(DISCOVERY_INSTRUCTIONS)}",
+        "-c",
+        "project_doc_max_bytes=0",
+        "-c",
+        'web_search="disabled"',
+        "-c",
+        "agents.enabled=false",
+        "-c",
+        "apps._default.enabled=false",
         "-c",
         f"mcp_servers.jinn.command={config_string(binary)}",
         "-c",
@@ -101,6 +133,8 @@ def codex_command(codex: str, binary: str, model: Optional[str], prompt: str) ->
         "-c",
         'mcp_servers.jinn.tools.jinn_route.approval_mode="approve"',
     ]
+    for feature in CODEX_DISABLED_FEATURES:
+        command.extend(["--disable", feature])
     if model is not None:
         command.extend(["--model", model])
     command.append(prompt)
@@ -160,28 +194,38 @@ def final_message(events: list[dict[str, Any]], label: str) -> str:
     return messages[-1]
 
 
-def usage(events: list[dict[str, Any]]) -> dict[str, int]:
+def usage(events: list[dict[str, Any]], model_requests_lower_bound: int) -> dict[str, Any]:
     for event in reversed(events):
         if event.get("type") == "turn.completed" and isinstance(event.get("usage"), dict):
             raw = event["usage"]
-            return {
-                "input_tokens": int(raw.get("input_tokens", 0)),
-                "cached_input_tokens": int(raw.get("cached_input_tokens", 0)),
-                "output_tokens": int(raw.get("output_tokens", 0)),
-                "reasoning_output_tokens": int(raw.get("reasoning_output_tokens", 0)),
-            }
+            return normalize_usage(
+                reported_scope="turn_completed_cumulative",
+                model_requests_lower_bound=model_requests_lower_bound,
+                input_tokens_total=raw.get("input_tokens", 0),
+                input_tokens_cached=raw.get("cached_input_tokens", 0),
+                cache_write_input_tokens=None,
+                output_tokens_total=raw.get("output_tokens", 0),
+                output_tokens_reasoning=raw.get("reasoning_output_tokens", 0),
+            )
     fail("Codex emitted no turn.completed usage event")
     return {}
 
 
-def run_case(codex: str, binary: str, model: Optional[str], timeout: float, case: Case) -> dict[str, int]:
+def run_case(
+    codex: str,
+    binary: str,
+    project: Path,
+    model: Optional[str],
+    timeout: float,
+    case: Case,
+) -> dict[str, Any]:
     lowered = case.prompt.lower()
     for forbidden in FORBIDDEN_PROMPT_NAMES:
         if forbidden in lowered:
             fail(f"{case.name} prompt names {forbidden!r}; the test is not cold")
     try:
         completed = subprocess.run(
-            codex_command(codex, binary, model, case.prompt),
+            codex_command(codex, binary, project, model, case.prompt),
             stdin=subprocess.DEVNULL,
             text=True,
             capture_output=True,
@@ -202,7 +246,7 @@ def run_case(codex: str, binary: str, model: Optional[str], timeout: float, case
         )
     if case.expected_answer is not None and answer != case.expected_answer:
         fail(f"{case.name} answer = {answer!r}, want {case.expected_answer!r}")
-    return usage(events)
+    return usage(events, len(calls) + 1)
 
 
 def main() -> int:
@@ -219,19 +263,30 @@ def main() -> int:
         binary = resolve_executable(args.binary)
         codex = resolve_executable(args.codex)
         selected = [case for case in CASES if args.case is None or case.name == args.case]
-        totals = {
-            "input_tokens": 0,
-            "cached_input_tokens": 0,
-            "output_tokens": 0,
-            "reasoning_output_tokens": 0,
-        }
-        for case in selected:
-            case_usage = run_case(codex, binary, args.model, args.timeout, case)
-            for key, value in case_usage.items():
-                totals[key] += value
-            print(f"codex_discoverability_{case.name}=passed usage={json.dumps(case_usage, separators=(',', ':'))}")
-        print(f"codex_discoverability_total={json.dumps(totals, separators=(',', ':'))}")
-    except RuntimeError as exc:
+        reports: list[dict[str, Any]] = []
+        with tempfile.TemporaryDirectory(prefix="jinn-codex-discovery-") as temporary:
+            project = Path(temporary)
+            write_minimal_test_project(project, binary)
+            print(
+                "codex_discoverability_context="
+                + json.dumps(
+                    context_inventory(
+                        CODEX_ROUTE_TOOL,
+                        CODEX_DISABLED_FEATURES,
+                        "developer_instructions",
+                    ),
+                    separators=(",", ":"),
+                )
+            )
+            for case in selected:
+                case_usage = run_case(codex, binary, project, args.model, args.timeout, case)
+                reports.append(case_usage)
+                print(
+                    f"codex_discoverability_{case.name}=passed "
+                    f"usage={json.dumps(case_usage, separators=(',', ':'))}"
+                )
+        print(f"codex_discoverability_total={json.dumps(sum_usage(reports), separators=(',', ':'))}")
+    except (RuntimeError, ValueError) as exc:
         print(f"codex_discoverability_failed: {exc}", file=sys.stderr)
         return 1
     return 0

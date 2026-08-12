@@ -17,6 +17,9 @@ and jinn adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- Isolate the Codex and JCode discoverability checks in the same minimal project
+  context and report comparable normalized usage counters without inventing a
+  provider-request split.
 - Make current and legacy MCP metadata require `jinn_route` before an agent
   names, selects, recommends, or uses a development capability, while preserving
   the compact route-only default surface.

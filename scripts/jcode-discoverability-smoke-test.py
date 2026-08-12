@@ -14,6 +14,13 @@ import sys
 import tempfile
 from typing import Any
 
+from discoverability_smoke_common import (
+    context_inventory,
+    normalize_usage,
+    sum_usage,
+    write_minimal_test_project,
+)
+
 
 @dataclass(frozen=True)
 class Case:
@@ -51,14 +58,7 @@ CASES = (
 )
 
 FORBIDDEN_PROMPT_NAMES = ("jinn", "jinn_route", "jinn_call")
-JCODE_DISCOVERY_INSTRUCTIONS = """# Jinn discoverability test
-
-When a user asks you to choose, name, recommend, or use a development capability
-or tool, you MUST call `mcp__jinn__jinn_route` before answering or acting, even
-if the answer seems obvious. Pass the user's task in `need` and use the exact
-recommendation. For unrelated questions, do not call Jinn.
-"""
-USAGE_KEYS = ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
+JCODE_DISABLED_TOOL_FAMILIES = ("base_tools",)
 
 
 def fail(message: str) -> None:
@@ -75,23 +75,6 @@ def resolve_executable(value: str) -> str:
     if resolved is None:
         fail(f"executable not found on PATH: {value}")
     return resolved
-
-
-def write_test_project(root: Path, binary: str) -> None:
-    config_dir = root / ".jcode"
-    config_dir.mkdir()
-    config = {
-        "mcpServers": {
-            "jinn": {
-                "command": binary,
-                "args": ["--mcp"],
-                "env": {},
-                "shared": False,
-            }
-        }
-    }
-    (config_dir / "mcp.json").write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
-    (root / "AGENTS.md").write_text(JCODE_DISCOVERY_INSTRUCTIONS, encoding="utf-8")
 
 
 def jcode_command(jcode: str, project: Path, provider: str | None, model: str | None, prompt: str) -> list[str]:
@@ -187,19 +170,19 @@ def final_event(events: list[dict[str, Any]], label: str) -> dict[str, Any]:
     return event
 
 
-def usage(done: dict[str, Any], label: str) -> dict[str, int]:
+def usage(done: dict[str, Any], label: str, model_requests_lower_bound: int) -> dict[str, Any]:
     raw = done.get("usage")
     if not isinstance(raw, dict):
         fail(f"{label} done event omitted usage: {done!r}")
-    result: dict[str, int] = {}
-    for key in USAGE_KEYS:
-        value = raw.get(key)
-        if value is None:
-            value = 0
-        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-            fail(f"{label} usage field {key!r} was invalid: {value!r}")
-        result[key] = value
-    return result
+    return normalize_usage(
+        reported_scope="done_event_reported",
+        model_requests_lower_bound=model_requests_lower_bound,
+        input_tokens_total=raw.get("input_tokens", 0),
+        input_tokens_cached=raw.get("cache_read_input_tokens", 0),
+        cache_write_input_tokens=raw.get("cache_creation_input_tokens", 0),
+        output_tokens_total=raw.get("output_tokens", 0),
+        output_tokens_reasoning=raw.get("reasoning_output_tokens", 0),
+    )
 
 
 def run_case(
@@ -244,7 +227,7 @@ def run_case(
         "session_id": done["session_id"],
         "provider": done["provider"],
         "model": done["model"],
-        "usage": usage(done, case.name),
+        "usage": usage(done, case.name, len(calls) + 1),
     }
 
 
@@ -266,10 +249,21 @@ def main() -> int:
         binary = resolve_executable(args.binary)
         jcode = resolve_executable(args.jcode)
         selected = [case for case in CASES if args.case is None or case.name == args.case]
-        totals = {key: 0 for key in USAGE_KEYS}
+        reports: list[dict[str, Any]] = []
         with tempfile.TemporaryDirectory(prefix="jinn-jcode-discovery-") as temporary:
             project = Path(temporary)
-            write_test_project(project, binary)
+            write_minimal_test_project(project, binary)
+            print(
+                "jcode_discoverability_context="
+                + json.dumps(
+                    context_inventory(
+                        ROUTE_TOOL,
+                        JCODE_DISABLED_TOOL_FAMILIES,
+                        "project_AGENTS.md",
+                    ),
+                    separators=(",", ":"),
+                )
+            )
             for case in selected:
                 result = run_case(
                     jcode,
@@ -280,14 +274,13 @@ def main() -> int:
                     args.mcp_wait_ms,
                     case,
                 )
-                for key, value in result["usage"].items():
-                    totals[key] += value
+                reports.append(result["usage"])
                 print(
                     f"jcode_discoverability_{case.name}=passed "
                     f"{json.dumps(result, separators=(',', ':'))}"
                 )
-        print(f"jcode_discoverability_total={json.dumps(totals, separators=(',', ':'))}")
-    except RuntimeError as exc:
+        print(f"jcode_discoverability_total={json.dumps(sum_usage(reports), separators=(',', ':'))}")
+    except (RuntimeError, ValueError) as exc:
         print(f"jcode_discoverability_failed: {exc}", file=sys.stderr)
         return 1
     return 0
