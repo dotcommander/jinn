@@ -317,32 +317,7 @@ func classifySegment(seg string) (RiskLevel, string) {
 		return RiskCaution, "only environment assignments — no command verb"
 	}
 
-	if isDynamicCommandVerb(verb) {
-		return RiskDangerous, "dynamic command expansion — arbitrary command execution"
-	}
-	if isFilesystemFormatter(verb) {
-		return RiskDangerous, "formats filesystem"
-	}
-	// Shell interpreters execute arbitrary command text from flags, files, or stdin.
-	if isShellInterpreter(verb) {
-		return RiskDangerous, verb + " shell execution — arbitrary command execution"
-	}
-	if isInlineCodeExecution(verb, commandTokens) {
-		return RiskDangerous, verb + " inline code — arbitrary code execution"
-	}
-	if isStdinCodeInterpreterInvocation(verb, commandTokens) {
-		if isImplicitNodeStdinInvocation(verb, commandTokens) {
-			return RiskDangerous, "node input type without script — arbitrary code execution"
-		}
-		if hasInputRedirection(seg) {
-			return RiskDangerous, "input redirection feeds interpreter stdin — arbitrary code execution"
-		}
-		program, _ := stdinCodeProgram(verb, commandTokens)
-		if isStdinCodeProgram(program) {
-			return RiskDangerous, verb + " explicit stdin program — arbitrary code execution"
-		}
-	}
-	if reason, dangerous := arbitraryCodeInvocation(verb, commandTokens); dangerous {
+	if reason, dangerous := dangerousCommandInvocation(seg, verb, commandTokens); dangerous {
 		return RiskDangerous, reason
 	}
 
@@ -361,6 +336,40 @@ func classifySegment(seg string) (RiskLevel, string) {
 		return RiskCaution, wrapperReason
 	}
 	return level, reason
+}
+
+func dangerousCommandInvocation(seg, verb string, tokens []string) (string, bool) {
+	switch {
+	case isDynamicCommandVerb(verb):
+		return "dynamic command expansion — arbitrary command execution", true
+	case isFilesystemFormatter(verb):
+		return "formats filesystem", true
+	case isShellInterpreter(verb):
+		return verb + " shell execution — arbitrary command execution", true
+	case isInlineCodeExecution(verb, tokens):
+		return verb + " inline code — arbitrary code execution", true
+	}
+	if reason, dangerous := dangerousStdinCodeInvocation(seg, verb, tokens); dangerous {
+		return reason, true
+	}
+	return arbitraryCodeInvocation(verb, tokens)
+}
+
+func dangerousStdinCodeInvocation(seg, verb string, tokens []string) (string, bool) {
+	if !isStdinCodeInterpreterInvocation(verb, tokens) {
+		return "", false
+	}
+	if isImplicitNodeStdinInvocation(verb, tokens) {
+		return "node input type without script — arbitrary code execution", true
+	}
+	if hasInputRedirection(seg) {
+		return "input redirection feeds interpreter stdin — arbitrary code execution", true
+	}
+	program, _ := stdinCodeProgram(verb, tokens)
+	if isStdinCodeProgram(program) {
+		return verb + " explicit stdin program — arbitrary code execution", true
+	}
+	return "", false
 }
 
 // timeOutputRisk keeps /usr/bin/time's output-file side effect visible after
@@ -527,34 +536,46 @@ func isStdinCodeInterpreterInvocation(verb string, tokens []string) bool {
 func stdinCodeProgram(verb string, tokens []string) (string, bool) {
 	for i := 1; i < len(tokens); i++ {
 		tok := tokens[i]
-		if isInputRedirectionToken(tok) {
-			if inputRedirectionConsumesNext(tok) {
-				i++
-			}
+		if skipped, redirection := inputRedirectionArgumentCount(tok); redirection {
+			i += skipped
 			continue
 		}
 		if tok == "-" {
 			return tok, false
 		}
 		role, value, attached := interpreterOptionValue(verb, tok)
-		switch role {
-		case interpreterConfigArgument:
+		if role == interpreterConfigArgument {
 			if !attached {
 				i++
 			}
 			continue
-		case interpreterSourceArgument:
-			if attached {
-				return value, false
-			}
-			if i+1 < len(tokens) {
-				return tokens[i+1], false
-			}
-			return "", true
 		}
-		if !isFlag(tok) {
+		if role == interpreterSourceArgument {
+			return interpreterSourceProgram(tokens, i, value, attached)
+		}
+		if role == interpreterOptionNone && !isFlag(tok) {
 			return tok, false
 		}
+	}
+	return "", true
+}
+
+func inputRedirectionArgumentCount(token string) (int, bool) {
+	if !isInputRedirectionToken(token) {
+		return 0, false
+	}
+	if inputRedirectionConsumesNext(token) {
+		return 1, true
+	}
+	return 0, true
+}
+
+func interpreterSourceProgram(tokens []string, index int, attachedValue string, attached bool) (string, bool) {
+	if attached {
+		return attachedValue, false
+	}
+	if index+1 < len(tokens) {
+		return tokens[index+1], false
 	}
 	return "", true
 }

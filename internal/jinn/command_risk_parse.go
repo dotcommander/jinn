@@ -330,36 +330,52 @@ func envPayload(tokens []string) ([]string, bool) {
 		if isEnvAssignment(tok) {
 			continue
 		}
-		switch {
-		case tok == "-u" || tok == "--unset" || tok == "-C" || tok == "--chdir" || tok == "-a" || tok == "--argv0" || tok == "-P":
+		if payload, split := envSplitStringPayload(tokens, i); split {
+			return payload, len(payload) > 0
+		}
+		if envOptionConsumesArgument(tok) {
 			i++
 			continue
-		case strings.HasPrefix(tok, "--chdir=") || strings.HasPrefix(tok, "--argv0="):
-			continue
-		case (strings.HasPrefix(tok, "-C") || strings.HasPrefix(tok, "-a") || strings.HasPrefix(tok, "-P")) && len(tok) > 2:
-			continue
-		case tok == "-S" || tok == "--split-string":
-			if i+1 >= len(tokens) {
-				return nil, false
-			}
-			payload := shellFields(tokens[i+1])
-			if len(payload) == 0 {
-				return nil, false
-			}
-			return payload, true
-		case strings.HasPrefix(tok, "--split-string="):
-			payload := shellFields(strings.TrimPrefix(tok, "--split-string="))
-			if len(payload) == 0 {
-				return nil, false
-			}
-			return payload, true
-		case strings.HasPrefix(tok, "-"):
-			continue
-		default:
-			return tokens[i:], true
 		}
+		if isAttachedEnvOption(tok) {
+			continue
+		}
+		if strings.HasPrefix(tok, "-") {
+			continue
+		}
+		return tokens[i:], true
 	}
 	return nil, false
+}
+
+func envSplitStringPayload(tokens []string, index int) ([]string, bool) {
+	token := tokens[index]
+	if token == "-S" || token == "--split-string" {
+		if index+1 >= len(tokens) {
+			return nil, true
+		}
+		return shellFields(tokens[index+1]), true
+	}
+	if value, ok := strings.CutPrefix(token, "--split-string="); ok {
+		return shellFields(value), true
+	}
+	return nil, false
+}
+
+func envOptionConsumesArgument(token string) bool {
+	switch token {
+	case "-u", "--unset", "-C", "--chdir", "-a", "--argv0", "-P":
+		return true
+	default:
+		return false
+	}
+}
+
+func isAttachedEnvOption(token string) bool {
+	if strings.HasPrefix(token, "--chdir=") || strings.HasPrefix(token, "--argv0=") {
+		return true
+	}
+	return len(token) > 2 && (strings.HasPrefix(token, "-C") || strings.HasPrefix(token, "-a") || strings.HasPrefix(token, "-P"))
 }
 
 func execPayloadIndex(tokens []string) int {
@@ -456,17 +472,12 @@ func parseTimeInvocation(tokens []string) timeInvocation {
 		tok := tokens[i]
 		switch {
 		case tok == "--":
-			if i+1 < len(tokens) {
-				invocation.payloadIndex = i + 1
-			}
+			invocation.payloadIndex = nextArgumentIndex(tokens, i)
 			return invocation
-		case tok == "-f" || tok == "--format":
+		case isTimeFormatOption(tok):
 			i++
-		case tok == "-o" || tok == "--output":
-			if i+1 < len(tokens) {
-				invocation.outputTargets = append(invocation.outputTargets, tokens[i+1])
-				i++
-			}
+		case isTimeOutputOption(tok):
+			i = appendNextTimeOutputTarget(&invocation, tokens, i)
 		case strings.HasPrefix(tok, "--format="):
 			continue
 		case strings.HasPrefix(tok, "--output="):
@@ -485,6 +496,30 @@ func parseTimeInvocation(tokens []string) timeInvocation {
 	return invocation
 }
 
+func nextArgumentIndex(tokens []string, index int) int {
+	if index+1 < len(tokens) {
+		return index + 1
+	}
+	return -1
+}
+
+func isTimeFormatOption(token string) bool {
+	return token == "-f" || token == "--format"
+}
+
+func isTimeOutputOption(token string) bool {
+	return token == "-o" || token == "--output"
+}
+
+func appendNextTimeOutputTarget(invocation *timeInvocation, tokens []string, index int) int {
+	next := nextArgumentIndex(tokens, index)
+	if next < 0 {
+		return index
+	}
+	invocation.outputTargets = append(invocation.outputTargets, tokens[next])
+	return next
+}
+
 // taskset has one required affinity argument before the wrapped command. In
 // CPU-list mode that affinity is consumed by -c/--cpu-list instead; -p edits or
 // reads an existing PID and does not execute a payload command.
@@ -493,12 +528,9 @@ func tasksetPayloadIndex(tokens []string) int {
 	for i := 0; i < len(tokens); i++ {
 		tok := tokens[i]
 		if tok == "--" {
-			if i+2 < len(tokens) {
-				return i + 2
-			}
-			return -1
+			return tasksetPayloadAfterAffinity(tokens, i+1)
 		}
-		if tok == "-p" || tok == "--pid" {
+		if isTasksetPIDOption(tok) {
 			return -1
 		}
 		if tok == "-c" || tok == "--cpu-list" {
@@ -509,24 +541,36 @@ func tasksetPayloadIndex(tokens []string) int {
 			i++
 			continue
 		}
-		if strings.HasPrefix(tok, "--cpu-list=") {
-			cpuListMode = true
-			continue
-		}
-		if strings.HasPrefix(tok, "-c") && len(tok) > 2 {
+		if isAttachedTasksetCPUListOption(tok) {
 			cpuListMode = true
 			continue
 		}
 		if strings.HasPrefix(tok, "-") {
 			continue
 		}
-		if cpuListMode {
-			return i
-		}
-		if i+1 < len(tokens) {
-			return i + 1
-		}
-		return -1
+		return tasksetPayloadFromArgument(tokens, i, cpuListMode)
+	}
+	return -1
+}
+
+func isTasksetPIDOption(token string) bool {
+	return token == "-p" || token == "--pid"
+}
+
+func isAttachedTasksetCPUListOption(token string) bool {
+	return strings.HasPrefix(token, "--cpu-list=") || (strings.HasPrefix(token, "-c") && len(token) > 2)
+}
+
+func tasksetPayloadFromArgument(tokens []string, index int, cpuListMode bool) int {
+	if cpuListMode {
+		return index
+	}
+	return tasksetPayloadAfterAffinity(tokens, index)
+}
+
+func tasksetPayloadAfterAffinity(tokens []string, affinityIndex int) int {
+	if affinityIndex+1 < len(tokens) {
+		return affinityIndex + 1
 	}
 	return -1
 }
@@ -859,84 +903,28 @@ func compactOutputRedirectionTarget(tok, op string) (string, bool) {
 	return tok[index+len(op):], true
 }
 
+var dangerousDevicePrefixes = [...]string{
+	"/dev/sd", "/dev/hd", "/dev/vd", "/dev/xvd", "/dev/nvme", "/dev/mmcblk",
+	"/dev/disk", "/dev/rdisk", "/dev/loop", "/dev/md", "/dev/dm-", "/dev/nbd",
+	"/dev/rbd", "/dev/drbd", "/dev/pmem", "/dev/bcache", "/dev/dasd", "/dev/aoe/",
+	"/dev/cciss/", "/dev/ram", "/dev/mtd", "/dev/zram", "/dev/ada", "/dev/da",
+	"/dev/nda", "/dev/wd", "/dev/vtbd", "/dev/ld", "/dev/cgd", "/dev/vnd",
+	"/dev/dsk/", "/dev/rdsk/", "/dev/zvol/", "/dev/mapper/",
+}
+
 func isDangerousDevicePath(target string) bool {
 	if strings.HasPrefix(target, "/") {
 		target = path.Clean(target)
 	}
-	switch {
-	case target == "/dev/null" || target == "/dev/stdout" || target == "/dev/stderr":
-		return false
-	case strings.HasPrefix(target, "/dev/sd"):
-		return true
-	case strings.HasPrefix(target, "/dev/hd"):
-		return true
-	case strings.HasPrefix(target, "/dev/vd"):
-		return true
-	case strings.HasPrefix(target, "/dev/xvd"):
-		return true
-	case strings.HasPrefix(target, "/dev/nvme"):
-		return true
-	case strings.HasPrefix(target, "/dev/mmcblk"):
-		return true
-	case strings.HasPrefix(target, "/dev/disk"):
-		return true
-	case strings.HasPrefix(target, "/dev/rdisk"):
-		return true
-	case strings.HasPrefix(target, "/dev/loop"):
-		return true
-	case strings.HasPrefix(target, "/dev/md"):
-		return true
-	case strings.HasPrefix(target, "/dev/dm-"):
-		return true
-	case strings.HasPrefix(target, "/dev/nbd"):
-		return true
-	case strings.HasPrefix(target, "/dev/rbd"):
-		return true
-	case strings.HasPrefix(target, "/dev/drbd"):
-		return true
-	case strings.HasPrefix(target, "/dev/pmem"):
-		return true
-	case strings.HasPrefix(target, "/dev/bcache"):
-		return true
-	case strings.HasPrefix(target, "/dev/dasd"):
-		return true
-	case strings.HasPrefix(target, "/dev/aoe/"):
-		return true
-	case strings.HasPrefix(target, "/dev/cciss/"):
-		return true
-	case strings.HasPrefix(target, "/dev/ram"):
-		return true
-	case strings.HasPrefix(target, "/dev/mtd"):
-		return true
-	case strings.HasPrefix(target, "/dev/zram"):
-		return true
-	case strings.HasPrefix(target, "/dev/ada"):
-		return true
-	case strings.HasPrefix(target, "/dev/da"):
-		return true
-	case strings.HasPrefix(target, "/dev/nda"):
-		return true
-	case strings.HasPrefix(target, "/dev/wd"):
-		return true
-	case strings.HasPrefix(target, "/dev/vtbd"):
-		return true
-	case strings.HasPrefix(target, "/dev/ld"):
-		return true
-	case strings.HasPrefix(target, "/dev/cgd"):
-		return true
-	case strings.HasPrefix(target, "/dev/vnd"):
-		return true
-	case strings.HasPrefix(target, "/dev/dsk/"):
-		return true
-	case strings.HasPrefix(target, "/dev/rdsk/"):
-		return true
-	case strings.HasPrefix(target, "/dev/zvol/"):
-		return true
-	case strings.HasPrefix(target, "/dev/mapper/"):
-		return true
-	default:
+	if target == "/dev/null" || target == "/dev/stdout" || target == "/dev/stderr" {
 		return false
 	}
+	for _, prefix := range dangerousDevicePrefixes {
+		if strings.HasPrefix(target, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func isInputRedirectionToken(tok string) bool {
