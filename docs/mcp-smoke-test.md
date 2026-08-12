@@ -58,11 +58,12 @@ The cold prompts never name Jinn, `jinn_route`, or `jinn_call`. The test uses
 Jinn's route-only compatibility surface without enabling legacy execution. Each
 isolated Codex run uses the same temporary two-file project as the JCode gate:
 `.jcode/mcp.json` and a short route-first `AGENTS.md`. It ignores user config and
-exec-policy rules, disables documented native tool families, and passes the
-exact `AGENTS.md` instruction bytes through Codex's session-level
-`developer_instructions` channel while suppressing a duplicate project-doc read.
-Only the configured Jinn route tool remains available as far as Codex's host
-controls permit. The gate requires:
+exec-policy rules, disables documented native tool families and discovered skill
+instructions, and uses the exact `AGENTS.md` bytes as Codex's
+`model_instructions_file` replacement while suppressing a duplicate project-doc
+read. Only the configured Jinn route tool remains available as far as Codex's
+host controls permit. The shared instruction caps each lookup at
+`max_tools=1`. The gate requires:
 
 - One route lookup for each of two distinct capability decisions.
 - No Jinn call for an unrelated arithmetic question.

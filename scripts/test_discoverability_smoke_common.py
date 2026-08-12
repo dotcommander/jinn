@@ -2,18 +2,24 @@ from __future__ import annotations
 
 import unittest
 
-from discoverability_smoke_common import context_inventory, normalize_usage, sum_usage
+from discoverability_smoke_common import (
+    DISCOVERY_INSTRUCTIONS,
+    context_inventory,
+    normalize_usage,
+    sum_usage,
+)
 
 
 class NormalizeUsageTest(unittest.TestCase):
     def test_context_inventory_exposes_instruction_parity(self) -> None:
-        codex = context_inventory("jinn_route", ("shell_tool",), "developer_instructions")
+        codex = context_inventory("jinn_route", ("shell_tool",), "model_instructions_file")
         jcode = context_inventory("mcp__jinn__jinn_route", ("base_tools",), "project_AGENTS.md")
 
         self.assertEqual(codex["project_files"], jcode["project_files"])
         self.assertEqual(codex["instruction_bytes"], jcode["instruction_bytes"])
         self.assertEqual(codex["instruction_sha256"], jcode["instruction_sha256"])
         self.assertNotEqual(codex["instruction_delivery"], jcode["instruction_delivery"])
+        self.assertIn("`max_tools` set to `1`", DISCOVERY_INSTRUCTIONS)
 
     def test_derives_uncached_input(self) -> None:
         usage = normalize_usage(

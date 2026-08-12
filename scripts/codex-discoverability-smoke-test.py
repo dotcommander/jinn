@@ -6,15 +6,15 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
 import sys
 import tempfile
-from typing import Any, Optional
+from typing import Any, Iterable, Optional
 
 from discoverability_smoke_common import (
-    DISCOVERY_INSTRUCTIONS,
     context_inventory,
     normalize_usage,
     sum_usage,
@@ -94,8 +94,38 @@ def config_string(value: str) -> str:
     return json.dumps(value)
 
 
+def codex_skill_roots() -> tuple[Path, ...]:
+    configured_home = os.environ.get("CODEX_HOME")
+    codex_home = Path(configured_home).expanduser() if configured_home else Path.home() / ".codex"
+    return codex_home / "skills", Path.home() / ".agents" / "skills"
+
+
+def discover_skill_instruction_files(
+    roots: Optional[Iterable[Path]] = None,
+) -> tuple[Path, ...]:
+    """Return prompt-visible skill locators that the isolated smoke must disable."""
+    found: set[Path] = set()
+    for root in roots if roots is not None else codex_skill_roots():
+        for pattern in ("*/SKILL.md", ".system/*/SKILL.md"):
+            found.update(path.absolute() for path in root.glob(pattern) if path.is_file())
+    return tuple(sorted(found))
+
+
+def skill_disable_config(skill_files: Iterable[Path]) -> str:
+    # Current Codex matches the prompt-visible SKILL.md locator, not its parent directory.
+    entries = ",".join(
+        f"{{path={config_string(str(path))},enabled=false}}" for path in skill_files
+    )
+    return f"skills.config=[{entries}]"
+
+
 def codex_command(
-    codex: str, binary: str, project: Path, model: Optional[str], prompt: str
+    codex: str,
+    binary: str,
+    project: Path,
+    model: Optional[str],
+    prompt: str,
+    skill_files: Iterable[Path],
 ) -> list[str]:
     command = [
         codex,
@@ -113,7 +143,7 @@ def codex_command(
         "-c",
         'model_reasoning_effort="low"',
         "-c",
-        f"developer_instructions={config_string(DISCOVERY_INSTRUCTIONS)}",
+        f"model_instructions_file={config_string(str(project / 'AGENTS.md'))}",
         "-c",
         "project_doc_max_bytes=0",
         "-c",
@@ -133,6 +163,9 @@ def codex_command(
         "-c",
         'mcp_servers.jinn.tools.jinn_route.approval_mode="approve"',
     ]
+    skill_files = tuple(skill_files)
+    if skill_files:
+        command.extend(["-c", skill_disable_config(skill_files)])
     for feature in CODEX_DISABLED_FEATURES:
         command.extend(["--disable", feature])
     if model is not None:
@@ -218,6 +251,7 @@ def run_case(
     model: Optional[str],
     timeout: float,
     case: Case,
+    skill_files: Iterable[Path],
 ) -> dict[str, Any]:
     lowered = case.prompt.lower()
     for forbidden in FORBIDDEN_PROMPT_NAMES:
@@ -225,7 +259,7 @@ def run_case(
             fail(f"{case.name} prompt names {forbidden!r}; the test is not cold")
     try:
         completed = subprocess.run(
-            codex_command(codex, binary, project, model, case.prompt),
+            codex_command(codex, binary, project, model, case.prompt, skill_files),
             stdin=subprocess.DEVNULL,
             text=True,
             capture_output=True,
@@ -262,24 +296,32 @@ def main() -> int:
     try:
         binary = resolve_executable(args.binary)
         codex = resolve_executable(args.codex)
+        skill_files = discover_skill_instruction_files()
         selected = [case for case in CASES if args.case is None or case.name == args.case]
         reports: list[dict[str, Any]] = []
         with tempfile.TemporaryDirectory(prefix="jinn-codex-discovery-") as temporary:
             project = Path(temporary)
             write_minimal_test_project(project, binary)
+            inventory = context_inventory(
+                CODEX_ROUTE_TOOL,
+                CODEX_DISABLED_FEATURES,
+                "model_instructions_file",
+            )
+            inventory["skill_instruction_files_disabled"] = len(skill_files)
             print(
                 "codex_discoverability_context="
-                + json.dumps(
-                    context_inventory(
-                        CODEX_ROUTE_TOOL,
-                        CODEX_DISABLED_FEATURES,
-                        "developer_instructions",
-                    ),
-                    separators=(",", ":"),
-                )
+                + json.dumps(inventory, separators=(",", ":"))
             )
             for case in selected:
-                case_usage = run_case(codex, binary, project, args.model, args.timeout, case)
+                case_usage = run_case(
+                    codex,
+                    binary,
+                    project,
+                    args.model,
+                    args.timeout,
+                    case,
+                    skill_files,
+                )
                 reports.append(case_usage)
                 print(
                     f"codex_discoverability_{case.name}=passed "
