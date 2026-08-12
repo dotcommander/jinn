@@ -27,7 +27,7 @@
                         "type": "object",
                         "properties": {
                           "shell": {"type": "string", "minLength": 1},
-                          "tool": {"type": "string", "enum": ["run_plan", "run_shell", "read_file", "multi_read", "write_file", "edit_file", "multi_edit", "apply_patch", "search_files", "stat_file", "list_dir", "find_files", "list_tools", "detect_project", "memory", "undo", "lsp_query", "diff_files", "search_replace"]},
+                          "tool": {"type": "string", "enum": ["run_plan", "run_shell", "read_file", "multi_read", "write_file", "edit_file", "multi_edit", "apply_patch", "search_files", "stat_file", "list_dir", "find_files", "list_tools", "detect_project", "memory", "undo", "lsp_query", "lsp_batch", "diff_files", "search_replace"]},
                           "args": {"type": "object"}
                         },
                         "oneOf": [
@@ -102,9 +102,29 @@
               },
               "cwd": {"type": "string"},
               "max_depth": {"type": "integer", "minimum": 0, "maximum": 32},
-              "force": {"type": "boolean"}
+              "force": {"type": "boolean"},
+              "steps": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 16,
+                "description": "Compact single-node tool sequence. Use root/nodes for conditions or shell commands.",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "tool": {"type": "string", "enum": ["run_plan", "read_file", "multi_read", "write_file", "edit_file", "multi_edit", "apply_patch", "search_files", "stat_file", "list_dir", "find_files", "list_tools", "detect_project", "memory", "undo", "lsp_query", "lsp_batch", "diff_files", "search_replace"]},
+                    "args": {"type": "object"}
+                  },
+                  "required": ["tool"],
+                  "additionalProperties": false
+                }
+              },
+              "parallel": {"type": "boolean", "default": false},
+              "mutates": {"type": "boolean", "default": false}
             },
-            "required": ["root", "nodes"]
+            "oneOf": [
+              {"required": ["root", "nodes"], "not": {"required": ["steps"]}},
+              {"required": ["steps"], "not": {"anyOf": [{"required": ["root"]}, {"required": ["nodes"]}]}}
+            ]
           }
         },
         "required": ["plan"]
@@ -132,7 +152,7 @@
     "type": "function",
     "function": {
       "name": "read_file",
-      "description": "Read file contents with line numbers. Up to 2000 lines per call. Use start_line/end_line for large files. All error responses include error_code and suggestion fields.",
+      "description": "Read file contents with line numbers. Up to 2000 lines per call. Sequential truncation returns an exact next_call. All errors include error_code and suggestion.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -153,7 +173,7 @@
     "type": "function",
     "function": {
       "name": "multi_read",
-      "description": "Read 1-20 files in one call. Valid shape: {\"files\":[{\"path\":\"...\"}]}. Returns JSON with files, per-file errors, and truncation metadata. Supports start_line/end_line/tail per file.",
+      "description": "Read 1-20 files in one call. Returns files, per-file errors, truncation metadata, and next_calls for unfinished input. Supports per-file windows.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -269,7 +289,7 @@
     "type": "function",
     "function": {
       "name": "search_files",
-      "description": "Search file contents with grep. Required valid shape: {\"pattern\":\"...\"}. Returns file:line:match. Default limit is 500 matches. Zero results include zero_match_reason; errors include error_code.",
+      "description": "Search file contents with grep. Required shape: {\"pattern\":\"...\"}. JSON pages return offsets and exact next_call arguments. Zero results include zero_match_reason.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -280,6 +300,7 @@
           "case_insensitive": {"type": "boolean", "description": "case-insensitive search (default: false)"},
           "literal": {"type": "boolean", "description": "treat pattern as a fixed string rather than a regex (default: false)", "default": false},
           "max_matches": {"type": "integer", "description": "Maximum number of matches to return (default: 500). When exceeded, response includes truncated=true and total_count.", "default": 500},
+          "offset": {"type": "integer", "minimum": 0, "description": "Zero-based match offset. Requires format=json.", "default": 0},
           "format": {"type": "string", "description": "output format: 'text' (default), 'json' (structured results with truncation metadata), or 'filenames' (filenames with match counts)", "enum": ["text", "json", "filenames"]}
         },
         "required": ["pattern"]
@@ -304,13 +325,14 @@
     "type": "function",
     "function": {
       "name": "list_dir",
-      "description": "List directory contents (pure Go, no subprocess). Hidden files excluded. Default limit is 500 entries (max 10000). Supports mtime filtering.",
+      "description": "List directory contents. Hidden files are excluded. Bounded pages return offsets and exact next_call arguments. Supports mtime filtering.",
       "parameters": {
         "type": "object",
         "properties": {
           "path": {"type": "string", "description": "directory to list (default: .)"},
           "depth": {"type": "integer", "description": "max depth (default: 3)"},
           "max_entries": {"type": "integer", "description": "Maximum number of entries to return (default: 500, minimum: 1, cap: 10000). When exceeded, response includes truncated=true and total_count.", "minimum": 1, "default": 500},
+          "offset": {"type": "integer", "minimum": 0, "maximum": 100000, "description": "Zero-based entry offset for continuation.", "default": 0},
           "changed_since": {"type": "number", "description": "Unix epoch seconds. Only list entries modified after this timestamp. 0 or absent = no filter.", "default": 0}
           ,"changed_after": {"type": "string", "description": "RFC3339Nano timestamp. Only entries modified strictly after this instant are included."}
         }
@@ -321,13 +343,14 @@
     "type": "function",
     "function": {
       "name": "find_files",
-      "description": "Find files with a native glob walker. Hidden and sensitive paths are pruned; .gitignore is not interpreted. Returns workspace-relative paths and exactness metadata.",
+      "description": "Find files with a native glob walker. Hidden paths are pruned and .gitignore is not interpreted. Bounded pages return offsets and exact next_call arguments.",
       "parameters": {
         "type": "object",
         "properties": {
           "pattern": {"type": "string", "description": "Glob pattern to match files, e.g. '*.go', '**/*.json', or 'src/**/*_test.go'"},
           "path": {"type": "string", "description": "Directory to search in (default: current directory)"},
-          "limit": {"type": "integer", "description": "Maximum number of results (default: 1000, minimum: 1)", "minimum": 1, "default": 1000}
+          "limit": {"type": "integer", "description": "Maximum number of results (default: 1000, minimum: 1)", "minimum": 1, "default": 1000},
+          "offset": {"type": "integer", "minimum": 0, "maximum": 100000, "description": "Zero-based result offset for continuation.", "default": 0}
         },
         "required": ["pattern"]
       }
@@ -416,6 +439,38 @@
           "new_name":  {"type": "string", "description": "New name for the symbol. Required when action is rename."}
         },
         "required": ["action", "path"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "lsp_batch",
+      "description": "Run up to 20 semantic queries in input order, sharing one language-server session per server and preserving partial results.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "queries": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 20,
+            "items": {
+              "type": "object",
+              "properties": {
+                "action": {"type": "string", "enum": ["definition", "references", "hover", "symbols", "diagnostics", "rename"], "description": "One of: definition, references, hover, symbols, diagnostics, rename."},
+                "path": {"type": "string"},
+                "line": {"type": "integer"},
+                "character": {"type": "integer"},
+                "symbol": {"type": "string"},
+                "new_name": {"type": "string"}
+              },
+              "required": ["action", "path"],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": ["queries"],
+        "additionalProperties": false
       }
     }
   },

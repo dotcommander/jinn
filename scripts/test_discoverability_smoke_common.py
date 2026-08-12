@@ -19,7 +19,7 @@ class NormalizeUsageTest(unittest.TestCase):
         self.assertEqual(codex["instruction_bytes"], jcode["instruction_bytes"])
         self.assertEqual(codex["instruction_sha256"], jcode["instruction_sha256"])
         self.assertNotEqual(codex["instruction_delivery"], jcode["instruction_delivery"])
-        self.assertIn("`max_tools` set to `1`", DISCOVERY_INSTRUCTIONS)
+        self.assertIn("omit `max_tools`", DISCOVERY_INSTRUCTIONS)
 
     def test_derives_uncached_input(self) -> None:
         usage = normalize_usage(

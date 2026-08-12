@@ -52,16 +52,18 @@ func TestToolRegistryFeatureMap(t *testing.T) {
 		"edit_file":      {"dry_run", "fuzzy_indent", "show_context"},
 		"multi_edit":     {"overlap_detection", "show_context", "dry_run"},
 		"run_shell":      {"risk_classification", "exit_classification", "dry_run", "stdout_stderr_split", "recovery_hints", "compress_output"},
-		"search_files":   {"literal", "context_lines", "format_json", "case_insensitive", "zero_match_reason"},
-		"read_file":      {"truncate_strategy", "include_checksum", "tail"},
-		"multi_read":     {"per_file_windowing", "partial_success"},
+		"search_files":   {"literal", "context_lines", "format_json", "case_insensitive", "zero_match_reason", "offset", "next_call"},
+		"read_file":      {"truncate_strategy", "include_checksum", "tail", "next_call"},
+		"multi_read":     {"per_file_windowing", "partial_success", "next_calls"},
 		"write_file":     {"dry_run"},
 		"stat_file":      {"encoding_detection", "line_ending_detection", "bom_detection"},
-		"list_dir":       {"changed_since"},
+		"list_dir":       {"changed_since", "offset", "next_call"},
+		"find_files":     {"offset", "next_call"},
 		"diff_files":     {"context_lines"},
 		"search_replace": {"regex", "capture_groups", "multi_file", "glob_patterns", "replace_all", "dry_run", "case_insensitive", "multiline"},
-		"run_plan":       {},
+		"run_plan":       {"compact_steps"},
 		"lsp_query":      {"definition", "references", "hover", "symbols", "diagnostics", "rename", "symbol_column", "context_lines"},
+		"lsp_batch":      {"shared_server", "partial_success", "input_order"},
 		"web_fetch":      {"url_safety", "reader", "render", "cache"},
 		"web_search":     {"brave", "exa", "domain_filters", "result_limit"},
 	}
@@ -70,7 +72,7 @@ func TestToolRegistryFeatureMap(t *testing.T) {
 		t.Fatalf("feature map = %#v, want %#v", got, want)
 	}
 	if got["run_plan"] == nil {
-		t.Fatal("run_plan features must be a non-nil empty slice")
+		t.Fatal("run_plan features must be non-nil")
 	}
 	got["run_shell"][0] = "changed"
 	gotAgain := registeredToolFeatures()
@@ -117,6 +119,7 @@ func TestToolRegistryDispatcherCompleteness(t *testing.T) {
 		"memory":         args("action", "invalid"),
 		"undo":           args("action", "invalid"),
 		"lsp_query":      args("action", "invalid", "path", "missing.go"),
+		"lsp_batch":      args("queries", []interface{}{}),
 		"diff_files":     args("path_a", "missing-a", "path_b", "missing-b"),
 		"search_replace": args("pattern", "x", "replacement", "y", "files", []interface{}{"missing.txt"}, "dry_run", true),
 		"web_fetch":      args("url", "http://127.0.0.1/"),

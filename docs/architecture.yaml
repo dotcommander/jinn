@@ -69,23 +69,24 @@ phases:
             - { condition: "run_plan", label: "runPlan", subtitle: "condition-gated plan tree · mutation authorization stays invocation-specific", wide: true }
             - { condition: "web_fetch", label: "webService", subtitle: "lazy public-network service · URL/redirect guard · cache/render/providers", wide: true }
             - { condition: "web_search", label: "webService", subtitle: "lazy public-network service · URL/redirect guard · cache/render/providers", wide: true }
-            - { condition: "read_file", label: "readFile", subtitle: "50 MB guard · MIME detect · windowed lines · truncate strategy" }
-            - { condition: "multi_read", label: "multiRead", subtitle: "batch ≤20 files · per-file errors", wide: true }
+            - { condition: "read_file", label: "readFile", subtitle: "50 MB guard · windowed lines · exact continuation" }
+            - { condition: "multi_read", label: "multiRead", subtitle: "batch ≤20 files · partial success · continuations", wide: true }
             - { condition: "write_file", label: "writeFile", subtitle: "stale check → atomic write → rename" }
             - { condition: "edit_file", label: "editFile", subtitle: "exact match · fuzzy fallback · atomic write" }
             - { condition: "multi_edit", label: "multiEdit", subtitle: "validate-all-then-apply-all batch", wide: true }
             - { condition: "apply_patch", label: "applyPatch", subtitle: "Codex-style patch · add/delete/update" }
             - { condition: "diff_files", label: "diffFiles", subtitle: "unified diff between two files" }
-            - { condition: "search_files", label: "searchFiles", subtitle: "rg preferred · grep fallback · 3 formats" }
+            - { condition: "search_files", label: "searchFiles", subtitle: "rg preferred · JSON offsets · exact continuation" }
             - { condition: "search_replace", label: "searchReplace", subtitle: "regex multi-file replace · ≤50 files", wide: true }
             - { condition: "stat_file", label: "statFile", subtitle: "type + size + lines + mtime" }
-            - { condition: "list_dir", label: "listDir", subtitle: "find → sort · hidden excluded" }
-            - { condition: "find_files", label: "findFiles", subtitle: "native bounded walker · glob pattern" }
+            - { condition: "list_dir", label: "listDir", subtitle: "bounded walk · stable offset · continuation" }
+            - { condition: "find_files", label: "findFiles", subtitle: "native bounded walker · offset continuation" }
             - { condition: "list_tools", label: "listTools", subtitle: "registry-backed capability metadata" }
             - { condition: "detect_project", label: "detectProject", subtitle: "language · framework · build/test/lint" }
             - { condition: "memory", label: "memoryTool", subtitle: "save · recall · list · forget · per-project scope" }
             - { condition: "undo", label: "undoTool", subtitle: "list · preview · restore · clear" }
             - { condition: "lsp_query", label: "lspQuery", subtitle: "8 language servers · symbol auto-detect", wide: true }
+            - { condition: "lsp_batch", label: "lspBatch", subtitle: "≤20 queries · one startup per server type", wide: true }
       - fork:
           gate: "edit match count"
           branches:

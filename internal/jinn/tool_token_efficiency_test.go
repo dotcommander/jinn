@@ -321,16 +321,15 @@ func TestTokenEfficiency_ListDir_EntryCap(t *testing.T) {
 		t.Errorf("expected TRUNCATED hint, got prefix: %s", result[:min(200, len(result))])
 	}
 
-	// Extract hint and verify it's concise
-	hintStart := strings.Index(result, "[TRUNCATED")
-	if hintStart < 0 {
-		t.Fatal("TRUNCATED hint not found")
+	var output listDirResult
+	if err := json.Unmarshal([]byte(result), &output); err != nil {
+		t.Fatalf("decode list_dir result: %v", err)
 	}
-	hint := result[hintStart:]
-	// Trim any trailing newline
-	hint = strings.TrimSpace(hint)
-	if len(hint) > 100 {
-		t.Errorf("truncation hint is %d chars, expected < 100: %q", len(hint), hint)
+	if len(output.Hint) > 100 {
+		t.Errorf("truncation hint is %d chars, expected < 100: %q", len(output.Hint), output.Hint)
+	}
+	if output.NextCall == nil {
+		t.Error("truncated list_dir result has no next_call")
 	}
 }
 

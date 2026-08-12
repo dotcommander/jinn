@@ -62,8 +62,8 @@ exec-policy rules, disables documented native tool families and discovered skill
 instructions, and uses the exact `AGENTS.md` bytes as Codex's
 `model_instructions_file` replacement while suppressing a duplicate project-doc
 read. Only the configured Jinn route tool remains available as far as Codex's
-host controls permit. The shared instruction caps each lookup at
-`max_tools=1`. The gate requires:
+host controls permit. The shared instruction omits `max_tools`, exercising
+adaptive routing. The gate requires:
 
 - One route lookup for each of two distinct capability decisions.
 - No Jinn call for an unrelated arithmetic question.

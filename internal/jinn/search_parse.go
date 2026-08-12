@@ -22,8 +22,10 @@ type searchFilesResult struct {
 	Truncated       bool           `json:"truncated"`
 	TotalCount      int            `json:"total_count"`
 	TotalCountExact bool           `json:"total_count_exact"`
+	Offset          int            `json:"offset"`
 	Hint            string         `json:"hint,omitempty"`
 	ZeroMatchReason string         `json:"zero_match_reason,omitempty"`
+	NextCall        *NextCall      `json:"next_call,omitempty"`
 }
 
 // parseSearchResults parses grep/rg output into structured results.

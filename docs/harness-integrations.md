@@ -2,7 +2,7 @@
 
 If you run an agent harness — Claude Code, Codex CLI, pi, or your own loop — you already have a tool executor. jinn does not compete with your harness's built-in read/edit/shell tools. It fills the gaps harnesses leave open:
 
-- **Semantic code queries without an MCP server.** [`lsp_query`](tool-reference.md#lsp_query) answers definition/references/hover/diagnostics as a one-shot subprocess. No daemon to babysit, no long-lived server entry in your config.
+- **Semantic code queries without an MCP server.** [`lsp_query`](tool-reference.md#lsp_query) answers one question; [`lsp_batch`](tool-reference.md#lsp_batch) amortizes startup across up to 20 questions. No daemon or long-lived server entry is required.
 - **Risk classification without execution.** `run_shell` with `dry_run: true` classifies a command as `safe`/`caution`/`dangerous` and returns without running it — exactly the signal a permission hook needs.
 - **Memory that can expire.** Markdown memory files grow forever. jinn's [`memory`](tool-reference.md#memory) tool is a project-scoped SQLite store with `kind`, `pin`, `expires_in`, and `gc`.
 - **A uniform tool layer for the rest of your fleet.** Subagents, cron jobs, and cheap worker models don't inherit your harness's tooling. jinn gives any model that can emit JSON the same sandboxed surface.
@@ -11,7 +11,7 @@ Pick your depth:
 
 | Depth | Mechanism | Best for |
 | :--- | :--- | :--- |
-| One-shot calls | `echo '{...}' \| jinn` from the harness's shell tool | `lsp_query`, `memory`, `detect_project` from inside a session |
+| One-shot calls | `echo '{...}' \| jinn` from the harness's shell tool | `lsp_batch`, `memory`, `detect_project` from inside a session |
 | Permission hook | `run_shell` + `dry_run` risk classifier | semantic guard on shell commands |
 | MCP broker | `jinn --mcp` → `jinn_route` | tool discovery at minimal context cost |
 | Full executor | `--schema` + one subprocess per call | custom loops, subagent fleets, worker models |
@@ -130,7 +130,8 @@ approval_mode = "approve"
 ```
 
 The host-level rule reinforces Jinn's route-first server metadata for cold
-prompts. The router returns ranked exact names and optional compact signatures.
+prompts. The router adaptively returns one confident match or two close matches
+and can include an executable call template.
 `jinn_call` is intentionally unavailable on this compatibility path; use the
 exact recommendation with Codex's built-in tools or a one-shot Jinn CLI call
 instead of widening legacy execution authority. Merge the shown route-first

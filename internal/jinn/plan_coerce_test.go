@@ -150,6 +150,36 @@ func TestCoercePlan(t *testing.T) {
 	})
 }
 
+func TestCoercePlanStepsShorthand(t *testing.T) {
+	t.Parallel()
+	raw := map[string]any{
+		"steps": []any{
+			map[string]any{"tool": "read_file", "args": map[string]any{"path": "README.md"}},
+			map[string]any{"tool": "stat_file", "args": map[string]any{"path": "README.md"}},
+		},
+		"parallel": true,
+		"mutates":  false,
+	}
+	tree, err := coercePlan(raw)
+	if err != nil {
+		t.Fatalf("coercePlan: %v", err)
+	}
+	if tree.Root != "steps" || len(tree.Nodes) != 1 || len(tree.Nodes[0].Commands) != 2 || !tree.Nodes[0].Parallel || tree.Nodes[0].Mutates {
+		t.Fatalf("expanded tree = %#v", tree)
+	}
+}
+
+func TestCoercePlanStepsRejectsCanonicalFields(t *testing.T) {
+	t.Parallel()
+	_, err := coercePlan(map[string]any{
+		"root":  "root",
+		"steps": []any{map[string]any{"tool": "read_file"}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "cannot accompany") {
+		t.Fatalf("conflict error = %v", err)
+	}
+}
+
 func TestCoercePlanMalformedNestedShapes(t *testing.T) {
 	t.Parallel()
 	badCondition := map[string]any{"when": []any{"always"}, "to": "n2"}

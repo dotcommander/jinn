@@ -253,6 +253,10 @@ func (e *Engine) runLSPSession(client *lspClient, req lspRequest) (string, error
 	if err := client.handshake(e.workDir); err != nil {
 		return "", err
 	}
+	return e.runLSPQueryInSession(client, req)
+}
+
+func (e *Engine) runLSPQueryInSession(client *lspClient, req lspRequest) (string, error) {
 	data, _, err := e.readRegularFile(req.absPath, maxLSPFileSize)
 	if err != nil {
 		return "", fmt.Errorf("lsp didOpen read: %w", err)
@@ -260,6 +264,7 @@ func (e *Engine) runLSPSession(client *lspClient, req lspRequest) (string, error
 	if err := client.didOpenText(req.absPath, langIDForExt(req.ext), data); err != nil {
 		return "", err
 	}
+	defer func() { _ = client.didClose(req.absPath) }()
 	// Symbol-only position actions: resolve line+char from document symbols now
 	// that the document is open, then dispatch at the resolved position.
 	if req.needsSymbolResolution() {
@@ -322,7 +327,6 @@ func (e *Engine) lspQueryWithLauncher(ctx context.Context, args map[string]inter
 		// (defer fires at closure exit, post-send) — preserving the original
 		// ordering relative to the select/timeout consumer.
 		defer func() {
-			client.didClose(req.absPath) //nolint:errcheck
 			client.shutdownBounded()
 			client.stop()
 		}()

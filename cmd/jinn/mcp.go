@@ -4,6 +4,9 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/rand"
+	_ "embed"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -26,6 +29,9 @@ const (
 )
 
 const mcpProbeMaxLineBytes = 16 << 20
+
+//go:embed mcp_instructions.json
+var mcpInstructionsData []byte
 
 type mcpProfile string
 
@@ -277,13 +283,11 @@ func mcpCallDescription(profile mcpProfile) string {
 }
 
 func mcpInstructions(profile mcpProfile) string {
-	if profile == mcpProfileReadOnly {
-		return "Before naming, selecting, recommending, or using any development capability or tool, call jinn_route with the user's task in need, even when a tool name seems obvious; never infer Jinn tool names from memory. Use max_tools=3 and include_signature=true when execution arguments are needed, then use jinn_call with the exact recommendation. For unrelated questions, do not call Jinn. This profile never mutates files or state and never executes shell commands."
+	var values map[mcpProfile]string
+	if err := json.Unmarshal(mcpInstructionsData, &values); err != nil {
+		return "Call jinn_route first."
 	}
-	if profile == mcpProfileNetwork {
-		return "Before naming, selecting, recommending, or using any development capability or tool, call jinn_route with the user's task in need, even when a tool name seems obvious; never infer Jinn tool names from memory. Use max_tools=3 and include_signature=true when execution arguments are needed, then use jinn_call with the exact recommendation. For unrelated questions, do not call Jinn. web_fetch and web_search leave this machine and may consume provider quota; mutation and shell execution are unavailable."
-	}
-	return "Before naming, selecting, recommending, or using any development capability or tool, call jinn_route with the user's task in need, even when a tool name seems obvious; never infer Jinn tool names from memory. Use max_tools=3 and include_signature=true when arguments are needed. For unrelated questions, do not call Jinn. This route-only profile is read-only and never executes tools."
+	return values[profile]
 }
 
 type mcpRouteArguments struct {
@@ -291,6 +295,7 @@ type mcpRouteArguments struct {
 	MaxTools         *int   `json:"max_tools,omitempty"`
 	IncludeSchema    bool   `json:"include_schema,omitempty"`
 	IncludeSignature bool   `json:"include_signature,omitempty"`
+	IncludeCall      bool   `json:"include_call,omitempty"`
 	IncludeMutating  *bool  `json:"include_mutating,omitempty"`
 	IncludeNetwork   *bool  `json:"include_network,omitempty"`
 }
@@ -361,12 +366,18 @@ func mcpRouteHandlerForProfile(mode jinn.ShellMode, profile mcpProfile) func(con
 			MaxTools:         maxTools,
 			IncludeSchema:    args.IncludeSchema,
 			IncludeSignature: args.IncludeSignature,
+			IncludeCall:      args.IncludeCall,
 			IncludeMutating:  includeMutating,
 			IncludeNetwork:   includeNetwork,
 		}, mode)
 		if err != nil {
 			return protocol.NewToolResultError(err.Error()), nil
 		}
+		routeID, err := newMCPRouteID()
+		if err != nil {
+			return protocol.NewToolResultError("jinn_route: create route id"), nil
+		}
+		route.RouteID = routeID
 		return protocol.NewToolResultStructured(route)
 	}
 }
@@ -375,6 +386,7 @@ type mcpCallArguments struct {
 	Tool      string         `json:"tool"`
 	Arguments map[string]any `json:"arguments,omitempty"`
 	Compress  *bool          `json:"compress,omitempty"`
+	RouteID   string         `json:"route_id,omitempty"`
 }
 
 type mcpCallOutput struct {
@@ -382,6 +394,7 @@ type mcpCallOutput struct {
 	Result  string              `json:"result,omitempty"`
 	Content []jinn.ContentBlock `json:"content,omitempty"`
 	Meta    map[string]any      `json:"meta,omitempty"`
+	RouteID string              `json:"route_id,omitempty"`
 }
 
 //nolint:gocognit,gocyclo,goconst,revive // Keeping validation, allowlisting, dispatch, and projection together makes the security boundary auditable.
@@ -413,9 +426,16 @@ func mcpCallHandler(engine *jinn.Engine, profile mcpProfile) func(context.Contex
 		if args.Arguments == nil {
 			args.Arguments = make(map[string]any)
 		}
+		if !validMCPRouteID(args.RouteID) {
+			return newMCPCallError(args.Tool, "", args.Arguments, &jinn.ErrWithSuggestion{
+				Err:        errors.New("jinn_call: route_id must be 32 lowercase hexadecimal characters"),
+				Suggestion: "use the route_id returned by jinn_route, or omit route_id",
+				Code:       jinn.ErrCodeInvalidArgs,
+			}), nil
+		}
 		result, meta, dispatchErr := engine.Dispatch(ctx, args.Tool, args.Arguments)
 		if dispatchErr != nil {
-			return protocol.NewToolResultError(dispatchErr.Error()), nil
+			return newMCPCallError(args.Tool, args.RouteID, args.Arguments, dispatchErr), nil
 		}
 		compress := mcpCallCompressionEnabled(args.Tool, args.Compress)
 		applyCompression(jinn.Request{Tool: args.Tool, Args: args.Arguments, Compress: compress}, result)
@@ -424,6 +444,7 @@ func mcpCallHandler(engine *jinn.Engine, profile mcpProfile) func(context.Contex
 			Result:  result.Text,
 			Content: result.Content,
 			Meta:    mergeMCPResultMeta(result.Meta, meta),
+			RouteID: args.RouteID,
 		}
 		response, responseErr := protocol.NewToolResultStructured(output)
 		if responseErr != nil {
@@ -439,6 +460,25 @@ func mcpCallHandler(engine *jinn.Engine, profile mcpProfile) func(context.Contex
 		}
 		return response, nil
 	}
+}
+
+func newMCPRouteID() (string, error) {
+	data := make([]byte, 16)
+	if _, err := rand.Read(data); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(data), nil
+}
+
+func validMCPRouteID(routeID string) bool {
+	if routeID == "" {
+		return true
+	}
+	if len(routeID) != 32 || routeID != strings.ToLower(routeID) {
+		return false
+	}
+	_, err := hex.DecodeString(routeID)
+	return err == nil
 }
 
 //nolint:goconst // Tool names are the explicit compression-default contract.
@@ -475,10 +515,9 @@ var mcpRouteInputSchema = map[string]any{
 		},
 		"max_tools": map[string]any{
 			"type":        "integer",
-			"description": fmt.Sprintf("Recommendation limit; default %d, maximum %d.", jinn.RouteDefaultMaxTools, jinn.RouteMaxTools),
+			"description": "Maximum recommendations; omitted enables adaptive one-or-two routing.",
 			"minimum":     1,
 			"maximum":     jinn.RouteMaxTools,
-			"default":     jinn.RouteDefaultMaxTools,
 		},
 		"include_schema": map[string]any{
 			"type":        "boolean",
@@ -488,6 +527,11 @@ var mcpRouteInputSchema = map[string]any{
 		"include_signature": map[string]any{
 			"type":        "boolean",
 			"description": "Include compact input signatures only for returned tools.",
+			"default":     false,
+		},
+		"include_call": map[string]any{
+			"type":        "boolean",
+			"description": "Include one minimal argument template.",
 			"default":     false,
 		},
 		"include_mutating": map[string]any{
@@ -559,6 +603,11 @@ var mcpCallInputSchema = map[string]any{
 			"description": "Apply Jinn's deterministic context compression to text output.",
 			"default":     true,
 		},
+		"route_id": map[string]any{
+			"type":        "string",
+			"description": "Route identifier returned by jinn_route.",
+			"pattern":     "^[0-9a-f]{32}$",
+		},
 	},
 	"required":             []string{"tool"},
 	"additionalProperties": false,
@@ -625,9 +674,26 @@ var mcpCallOutputSchema = map[string]any{
 			"type":                 "object",
 			"additionalProperties": true,
 		},
+		"route_id":   map[string]any{"type": "string"},
+		"error":      map[string]any{"type": "string"},
+		"error_code": map[string]any{"type": "string"},
+		"suggestion": map[string]any{"type": "string"},
+		"retryable":  map[string]any{"type": "boolean"},
+		"next_call":  map[string]any{"$ref": "#/$defs/next_call"},
 	},
 	"required":             []string{"tool"},
 	"additionalProperties": false,
+	"$defs": map[string]any{
+		"next_call": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"tool":      map[string]any{"type": "string"},
+				"arguments": map[string]any{"type": "object"},
+			},
+			"required":             []string{"tool", "arguments"},
+			"additionalProperties": false,
+		},
+	},
 }
 
 //nolint:goconst // JSON Schema maps retain canonical wire keys beside their constraints.
@@ -636,6 +702,7 @@ var mcpRouteOutputSchema = map[string]any{
 	"title":   "jinn_route output",
 	"type":    "object",
 	"properties": map[string]any{
+		"route_id": map[string]any{"type": "string"},
 		"query": map[string]any{
 			"type": "string",
 		},
@@ -647,8 +714,11 @@ var mcpRouteOutputSchema = map[string]any{
 			"type":  "array",
 			"items": map[string]any{"type": "string"},
 		},
+		"confidence":   map[string]any{"type": "string", "enum": []string{"none", "low", "ambiguous", "high"}},
+		"score_margin": map[string]any{"type": "integer"},
+		"adaptive":     map[string]any{"type": "boolean"},
 	},
-	"required":             []string{"query", "matches", "notes"},
+	"required":             []string{"query", "confidence", "adaptive", "matches", "notes"},
 	"additionalProperties": false,
 	"$defs": map[string]any{
 		"route_match": map[string]any{
@@ -665,6 +735,16 @@ var mcpRouteOutputSchema = map[string]any{
 				},
 				"schema":    map[string]any{},
 				"signature": map[string]any{"type": "string"},
+				"call": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"tool":      map[string]any{"type": "string"},
+						"arguments": map[string]any{"type": "object"},
+						"replace":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+					},
+					"required":             []string{"tool", "arguments"},
+					"additionalProperties": false,
+				},
 			},
 			"required":             []string{"name", "description", "reason", "mutating", "risk"},
 			"additionalProperties": false,

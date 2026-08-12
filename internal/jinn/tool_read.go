@@ -29,6 +29,7 @@ type readContentResult struct {
 	Truncated   bool   // true if content was truncated in any way
 	ByteHint    string // truncation hint appended after Content (byte or window)
 	TempFile    string // path to spilled remainder file, if any
+	NextLine    int    // exact next 1-based source line, when sequential continuation is safe
 	Checksum    string // SHA-256 checksum of full file bytes when requested
 }
 
@@ -85,12 +86,13 @@ func (e *Engine) readFileContent(resolved string, args map[string]interface{}, n
 	// Apply byte-size truncation: if the numbered output exceeds 50KB,
 	// keep the head portion that fits and write the full remainder to a
 	// temp file so the agent can pick up where it left off.
-	if res := byteTruncateResult(tr.Content, resolved, lines, startLine, total); res != nil {
+	sequential := truncateMode == "head" || truncateMode == "none" || truncateMode == "smart"
+	if res := byteTruncateResult(tr.Content, resolved, lines, startLine, total, sequential); res != nil {
 		res.Checksum = checksum
 		return res, nil
 	}
 
-	result := assembleReadResult(resolved, lines, readWindow{startLine: startLine, endLine: endLine, total: total}, tr)
+	result := assembleReadResult(resolved, lines, readWindow{startLine: startLine, endLine: endLine, total: total}, tr, truncateMode)
 	result.Checksum = checksum
 	return result, nil
 }

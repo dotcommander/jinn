@@ -263,7 +263,7 @@ recommendation-only: it does not execute `read_file`, `run_shell`, or any other
 jinn tool. It maps a natural-language need to the most relevant existing jinn
 tools, risk/mutation notes, and optional lean schemas for only the matched
 tools. Keeping one tool in the default MCP surface avoids prompt bloat from
-listing all 21 executor schemas.
+listing all 22 executor schemas.
 
 For agents that need bounded inspection without granting mutation or shell
 access, use the opt-in read-only profile:
@@ -359,7 +359,9 @@ Example client config:
 ```
 
 Routing is deterministic and local; weak matches are dropped rather than
-guessed, and a vague `need` returns a corrective note. See
+guessed. Omit `max_tools` for one confident recommendation or two close matches,
+and use `include_call:true` for an executable argument template. A vague `need`
+returns a corrective note. See
 [tool-reference.md](tool-reference.md#mcp-jinn_route) for the input table, a
 captured response, and `need` phrasing guidance.
 
@@ -398,7 +400,9 @@ echo '{"tool":"memory","args":{"action":"gc"}}' | jinn
 
 ## Language Server Queries
 
-The `lsp_query` tool connects to a running language server to answer semantic questions about source code. The server is auto-selected from the file extension:
+The `lsp_query` tool starts a language server for one semantic question. Use
+`lsp_batch` for up to 20 questions with one startup per server type. The server
+is auto-selected from the file extension:
 
 ```bash
 # Jump to definition at line 12, character 5
@@ -412,6 +416,10 @@ echo '{"tool":"lsp_query","args":{"action":"diagnostics","path":"main.go"}}' | j
 ```
 
 Supported actions: `definition`, `references`, `hover`, `symbols`, `diagnostics`, and `rename` preview. Supported extensions include Go, Rust, Python, TypeScript/JavaScript, C/C++, Java, Lua, and Zig. The server binary must be on `PATH`; if missing, the response includes a `suggestion` with the install command.
+
+```bash
+echo '{"tool":"lsp_batch","args":{"queries":[{"action":"symbols","path":"internal/jinn/engine.go"},{"action":"diagnostics","path":"main.go"}]}}' | jinn
+```
 
 ## What's Next
 

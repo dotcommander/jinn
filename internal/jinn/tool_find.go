@@ -22,13 +22,15 @@ var findTimeout = 60 * time.Second
 var findExcludeDirs = []string{".git", ".ssh", ".aws", ".gnupg", "node_modules", "vendor", "__pycache__", ".cache", "dist", "build"}
 
 type findFilesResult struct {
-	Files           []string `json:"files"`
-	Truncated       bool     `json:"truncated"`
-	TotalCount      int      `json:"total_count"`
-	TotalCountExact bool     `json:"total_count_exact"`
-	LimitUsed       int      `json:"limit_used"`
-	Backend         string   `json:"backend"`
-	Hint            string   `json:"hint,omitempty"`
+	Files           []string  `json:"files"`
+	Truncated       bool      `json:"truncated"`
+	TotalCount      int       `json:"total_count"`
+	TotalCountExact bool      `json:"total_count_exact"`
+	LimitUsed       int       `json:"limit_used"`
+	Offset          int       `json:"offset"`
+	Backend         string    `json:"backend"`
+	Hint            string    `json:"hint,omitempty"`
+	NextCall        *NextCall `json:"next_call,omitempty"`
 }
 
 func (e *Engine) findFiles(ctx context.Context, args map[string]interface{}) (string, error) {
@@ -41,18 +43,24 @@ func (e *Engine) findFiles(ctx context.Context, args map[string]interface{}) (st
 		searchPath = "."
 	}
 	limit := intArg(args, "limit", findDefaultLimit)
+	offset := max(0, min(intArg(args, "offset", 0), findVisitLimit))
 	ctx, cancel := context.WithTimeout(ctx, findTimeout)
 	defer cancel()
-	files, total, exact, err := e.walkNativeFiles(ctx, pattern, searchPath, limit)
+	files, total, exact, err := e.walkNativeFiles(ctx, pattern, searchPath, offset, limit)
 	if err != nil {
 		return "", classifyNativeFindErr(err)
 	}
 	result := findFilesResult{
-		Files: files, Truncated: !exact || total > limit, TotalCount: total,
-		TotalCountExact: exact, LimitUsed: limit, Backend: "native",
+		Files: files, Truncated: !exact || total > offset+len(files), TotalCount: total,
+		TotalCountExact: exact, LimitUsed: limit, Offset: offset, Backend: "native",
 	}
 	if result.Truncated {
 		result.Hint = "TRUNCATED: use a more specific pattern or increase limit"
+		if len(files) > 0 {
+			result.NextCall = &NextCall{Tool: "find_files", Arguments: map[string]any{
+				"pattern": pattern, "path": searchPath, "limit": limit, "offset": offset + len(files),
+			}}
+		}
 	}
 	data, err := json.Marshal(result)
 	if err != nil {
@@ -62,7 +70,7 @@ func (e *Engine) findFiles(ctx context.Context, args map[string]interface{}) (st
 }
 
 //nolint:funlen,gocognit,gocyclo,revive // traversal policy checks are deliberately co-located with WalkDir control flow and result shape.
-func (e *Engine) walkNativeFiles(ctx context.Context, pattern, searchPath string, limit int) ([]string, int, bool, error) {
+func (e *Engine) walkNativeFiles(ctx context.Context, pattern, searchPath string, offset, limit int) ([]string, int, bool, error) {
 	resolved, err := e.checkPath(searchPath)
 	if err != nil {
 		return nil, 0, false, err
@@ -74,7 +82,7 @@ func (e *Engine) walkNativeFiles(ctx context.Context, pattern, searchPath string
 	if !info.IsDir() {
 		return nil, 0, false, &ErrWithSuggestion{Err: fmt.Errorf("not a directory: %s", searchPath), Suggestion: "choose a directory for path", Code: ErrCodeInvalidArgs}
 	}
-	stopAfter := limit + 1
+	stopAfter := offset + limit + 1
 	if stopAfter > findVisitLimit {
 		stopAfter = findVisitLimit
 	}
@@ -130,7 +138,7 @@ func (e *Engine) walkNativeFiles(ctx context.Context, pattern, searchPath string
 			return nil
 		}
 		total++
-		if len(files) < limit {
+		if total > offset && len(files) < limit {
 			files = append(files, relWork)
 		}
 		if total >= stopAfter {

@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	// RouteDefaultMaxTools is used when a route request omits its result limit.
+	// RouteDefaultMaxTools is the unambiguous adaptive result limit.
 	RouteDefaultMaxTools = 1
 	// RouteMaxTools bounds the number of recommendations returned by a route request.
 	RouteMaxTools = 8
@@ -24,27 +24,40 @@ type RouteRequest struct {
 	MaxTools         int    `json:"max_tools,omitempty"`
 	IncludeSchema    bool   `json:"include_schema,omitempty"`
 	IncludeSignature bool   `json:"include_signature,omitempty"`
+	IncludeCall      bool   `json:"include_call,omitempty"`
 	IncludeMutating  *bool  `json:"include_mutating,omitempty"`
 	IncludeNetwork   *bool  `json:"include_network,omitempty"`
 }
 
 // RouteResponse contains the deterministic recommendations for a route request.
 type RouteResponse struct {
-	Query   string       `json:"query"`
-	Matches []RouteMatch `json:"matches"`
-	Notes   []string     `json:"notes"`
+	RouteID     string       `json:"route_id,omitempty"`
+	Query       string       `json:"query"`
+	Confidence  string       `json:"confidence"`
+	ScoreMargin *int         `json:"score_margin,omitempty"`
+	Adaptive    bool         `json:"adaptive"`
+	Matches     []RouteMatch `json:"matches"`
+	Notes       []string     `json:"notes"`
 }
 
 // RouteMatch describes one recommended tool.
 type RouteMatch struct {
-	Name        string   `json:"name"`
-	Description string   `json:"description"`
-	Reason      string   `json:"reason"`
-	Mutating    bool     `json:"mutating"`
-	Risk        string   `json:"risk"`
-	Features    []string `json:"features,omitempty"`
-	Schema      any      `json:"schema,omitempty"`
-	Signature   string   `json:"signature,omitempty"`
+	Name        string             `json:"name"`
+	Description string             `json:"description"`
+	Reason      string             `json:"reason"`
+	Mutating    bool               `json:"mutating"`
+	Risk        string             `json:"risk"`
+	Features    []string           `json:"features,omitempty"`
+	Schema      any                `json:"schema,omitempty"`
+	Signature   string             `json:"signature,omitempty"`
+	Call        *RouteCallTemplate `json:"call,omitempty"`
+}
+
+// RouteCallTemplate is the smallest argument skeleton for one recommendation.
+type RouteCallTemplate struct {
+	Tool      string         `json:"tool"`
+	Arguments map[string]any `json:"arguments"`
+	Replace   []string       `json:"replace,omitempty"`
 }
 
 type schemaTool struct {
@@ -77,7 +90,7 @@ func RouteTools(req RouteRequest) (RouteResponse, error) {
 //nolint:gocognit,gocyclo,revive // ranking filters are intentionally linear and ordered to keep routing deterministic.
 func RouteToolsForMode(req RouteRequest, mode ShellMode) (RouteResponse, error) {
 	need := strings.TrimSpace(req.Need)
-	resp := RouteResponse{Query: req.Need, Matches: []RouteMatch{}}
+	resp := RouteResponse{Query: req.Need, Confidence: "none", Adaptive: req.MaxTools <= 0, Matches: []RouteMatch{}}
 	if need == "" {
 		resp.Notes = []string{"No need was provided; pass a concrete task to get recommendations."}
 		return resp, nil
@@ -128,6 +141,10 @@ func RouteToolsForMode(req RouteRequest, mode ShellMode) (RouteResponse, error) 
 		}
 		return candidates[i].score > candidates[j].score
 	})
+	resp.Confidence, resp.ScoreMargin = classifyRouteConfidence(candidates)
+	if resp.Adaptive && resp.Confidence == "ambiguous" {
+		maxTools = min(2, RouteMaxTools)
+	}
 	if len(candidates) > maxTools {
 		candidates = candidates[:maxTools]
 	}
@@ -146,6 +163,9 @@ func RouteToolsForMode(req RouteRequest, mode ShellMode) (RouteResponse, error) 
 		}
 		if req.IncludeSignature {
 			match.Signature = toolschema.Render(c.tool.Function.Name, c.tool.Function.Parameters)
+		}
+		if req.IncludeCall {
+			match.Call = routeCallTemplate(c.tool)
 		}
 		resp.Matches = append(resp.Matches, match)
 	}
@@ -170,6 +190,7 @@ func DecodeRouteRequest(data []byte) (RouteRequest, error) {
 		MaxTools         int    `json:"max_tools"`
 		IncludeSchema    bool   `json:"include_schema"`
 		IncludeSignature bool   `json:"include_signature"`
+		IncludeCall      bool   `json:"include_call"`
 		IncludeMutating  *bool  `json:"include_mutating"`
 		IncludeNetwork   *bool  `json:"include_network"`
 	}
@@ -183,6 +204,7 @@ func DecodeRouteRequest(data []byte) (RouteRequest, error) {
 		MaxTools:         raw.MaxTools,
 		IncludeSchema:    raw.IncludeSchema,
 		IncludeSignature: raw.IncludeSignature,
+		IncludeCall:      raw.IncludeCall,
 		IncludeMutating:  raw.IncludeMutating,
 		IncludeNetwork:   raw.IncludeNetwork,
 	}
@@ -218,7 +240,28 @@ func scoreRouteCandidate(tool schemaTool, descriptor toolDescriptor, queryTokens
 	c.score += weightedOverlap(queryTokens, enumTokens, 4, &c.reasonParts, "enum values")
 	c.score += weightedOverlap(queryTokens, featureTokens, 3, &c.reasonParts, "features")
 	c.score += intentBoost(fn.Name, queryTokens, queryLower, &c.reasonParts)
+	c.score += cardinalityBoost(fn.Name, queryLower, &c.reasonParts)
 	return c
+}
+
+func classifyRouteConfidence(candidates []routeCandidate) (string, *int) {
+	if len(candidates) == 0 {
+		return "none", nil
+	}
+	if len(candidates) == 1 {
+		if candidates[0].score >= 16 {
+			return "high", nil
+		}
+		return "low", nil
+	}
+	margin := candidates[0].score - candidates[1].score
+	if margin <= 3 {
+		return "ambiguous", &margin
+	}
+	if candidates[0].score >= 16 {
+		return "high", &margin
+	}
+	return "low", &margin
 }
 
 func routeReason(parts []string) string {
@@ -370,6 +413,7 @@ var intentRules = []intentRule{
 	{"apply_patch", []string{"patch", "apply patch"}, nil, 12},
 	{"run_shell", []string{"test", "build", "command", "shell", "run", "exec"}, nil, 8},
 	{"lsp_query", []string{"rename", "symbol", "definition", "reference", "diagnostic", "hover"}, nil, 10},
+	{"lsp_batch", []string{"batch", "multiple", "several"}, []string{"lsp", "symbol", "definition", "reference", "diagnostic", "hover"}, 12},
 	{"search_replace", []string{"replace", "regex", "rename"}, []string{"across", "bulk", "many", "repo", "files"}, 8},
 	{"list_dir", []string{"list", "directory", "dir", "folder"}, nil, 8},
 	{"stat_file", []string{"stat", "metadata", "size", "encoding"}, nil, 8},
@@ -380,6 +424,30 @@ var intentRules = []intentRule{
 	{"diff_files", []string{"compare", "difference", "differ"}, nil, 9},
 	{"undo", []string{"undo", "revert", "rollback", "roll back", "restore", "snapshot"}, nil, 11},
 	{"detect_project", []string{"framework", "language", "linter", "stack", "project type", "build tool"}, nil, 8},
+}
+
+func cardinalityBoost(name, query string, reasons *[]string) int {
+	readIntent := (strings.Contains(query, "read") || strings.Contains(query, "content")) &&
+		!strings.Contains(query, "without read")
+	if !readIntent {
+		return 0
+	}
+	switch name {
+	case "read_file":
+		if strings.Contains(query, "a file") || strings.Contains(query, "one file") || strings.Contains(query, "single file") ||
+			(strings.Contains(query, " file") && !strings.Contains(query, " files")) {
+			*reasons = append(*reasons, "single-item intent")
+			return 6
+		}
+	case "multi_read":
+		for _, phrase := range []string{" files", "multiple", "several", "many", "batch", "two ", "three ", "four ", "five ", "six "} {
+			if strings.Contains(query, phrase) {
+				*reasons = append(*reasons, "batch intent")
+				return 6
+			}
+		}
+	}
+	return 0
 }
 
 func intentBoost(name string, query map[string]bool, lower string, reasons *[]string) int {

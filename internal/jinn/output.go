@@ -7,9 +7,9 @@ import (
 
 // Default limits for tool output truncation, matching pi conventions.
 const (
-	DefaultMaxLines         = 2000
-	DefaultMaxBytes         = 50 * 1024            // 50KB
-	PlanTranscriptMaxBytes  = 200 * 1024           // aggregate transcript cap for run_plan, oldest-node-first trim
+	DefaultMaxLines        = 2000
+	DefaultMaxBytes        = 50 * 1024  // 50KB
+	PlanTranscriptMaxBytes = 200 * 1024 // aggregate transcript cap for run_plan, oldest-node-first trim
 )
 
 // formatSize returns a human-readable byte size (e.g. "50.0KB").
@@ -49,9 +49,10 @@ type truncateResult struct {
 
 // truncationInfo describes how output was truncated.
 type truncationInfo struct {
-	Truncated   bool `json:"truncated"`
-	TotalLines  int  `json:"totalLines"`
-	OutputLines int  `json:"outputLines"`
+	Truncated   bool      `json:"truncated"`
+	TotalLines  int       `json:"totalLines"`
+	OutputLines int       `json:"outputLines"`
+	NextCall    *NextCall `json:"next_call,omitempty"`
 }
 
 // truncateOutputDetailed truncates output and returns both the content

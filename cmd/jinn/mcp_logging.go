@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dotcommander/jinn/internal/jinn"
 	"github.com/voocel/mcp-sdk-go/protocol"
 	"github.com/voocel/mcp-sdk-go/server"
 )
@@ -38,14 +39,23 @@ type mcpLogger struct {
 }
 
 type mcpLogRecord struct {
-	Timestamp string `json:"timestamp"`
-	Level     string `json:"level"`
-	Method    string `json:"method"`
-	RequestID string `json:"requestId"`
-	Duration  int64  `json:"durationMs"`
-	Outcome   string `json:"outcome"`
-	ToolName  string `json:"toolName,omitempty"`
-	ErrorCode string `json:"errorCode,omitempty"`
+	V               int      `json:"v,omitempty"`
+	Timestamp       string   `json:"timestamp"`
+	Level           string   `json:"level"`
+	Method          string   `json:"method"`
+	RequestID       string   `json:"requestId"`
+	Duration        int64    `json:"durationMs"`
+	Outcome         string   `json:"outcome"`
+	ToolName        string   `json:"toolName,omitempty"`
+	ErrorCode       string   `json:"errorCode,omitempty"`
+	RouteID         string   `json:"routeId,omitempty"`
+	JinnTool        string   `json:"jinnTool,omitempty"`
+	Recommendations []string `json:"recommendations,omitempty"`
+	Confidence      string   `json:"confidence,omitempty"`
+	ScoreMargin     *int     `json:"scoreMargin,omitempty"`
+	ResultBytes     int      `json:"resultBytes,omitempty"`
+	Truncated       bool     `json:"truncated,omitempty"`
+	Retryable       *bool    `json:"retryable,omitempty"`
 }
 
 func newMCPLoggerFromEnv() (*mcpLogger, error) {
@@ -135,7 +145,7 @@ func mcpRecoveryMiddleware(logger *mcpLogger) server.Middleware {
 				if recover() != nil {
 					if logger != nil {
 						method, requestID := mcpRequestMetadata(req)
-						logger.record(mcpLogRecord{Timestamp: time.Now().UTC().Format(time.RFC3339Nano), Level: string(mcpLogError), Method: method, RequestID: requestID, Outcome: "panic", ErrorCode: "internal_error"})
+						logger.record(mcpLogRecord{V: 2, Timestamp: time.Now().UTC().Format(time.RFC3339Nano), Level: string(mcpLogError), Method: method, RequestID: requestID, Outcome: "panic", ErrorCode: "internal_error"})
 					}
 					result, err = nil, protocol.Errorf(protocol.CodeInternal, "internal error")
 				}
@@ -153,17 +163,131 @@ func mcpLoggingMiddleware(logger *mcpLogger) server.Middleware {
 			result, err := next(ctx, req)
 			if logger != nil {
 				method, requestID := mcpRequestMetadata(req)
-				outcome, code, level := "ok", "", mcpLogInfo
+				record := mcpLogRecord{V: 2, Timestamp: time.Now().UTC().Format(time.RFC3339Nano), Level: string(mcpLogInfo), Method: method, RequestID: requestID, Duration: time.Since(started).Milliseconds(), Outcome: "ok", ToolName: mcpRequestToolName(req)}
+				enrichMCPLogRecord(&record, req, result)
 				if err != nil {
-					outcome, code, level = "error", "protocol_error", mcpLogError
+					record.Outcome, record.ErrorCode, record.Level = "error", "protocol_error", string(mcpLogError)
 				} else if call, ok := result.(*protocol.CallToolResult); ok && call.IsError {
-					outcome, code, level = "tool_error", "tool_error", mcpLogError
+					record.Outcome, record.Level = "tool_error", string(mcpLogError)
+					if record.ErrorCode == "" {
+						record.ErrorCode = "tool_error"
+					}
 				}
-				logger.record(mcpLogRecord{Timestamp: time.Now().UTC().Format(time.RFC3339Nano), Level: string(level), Method: method, RequestID: requestID, Duration: time.Since(started).Milliseconds(), Outcome: outcome, ToolName: mcpRequestToolName(req), ErrorCode: code})
+				logger.record(record)
 			}
 			return result, err
 		}
 	}
+}
+
+func enrichMCPLogRecord(record *mcpLogRecord, req *server.Request, result protocol.Result) {
+	var params struct {
+		Name      string `json:"name"`
+		Arguments struct {
+			RouteID string `json:"route_id"`
+			Tool    string `json:"tool"`
+		} `json:"arguments"`
+	}
+	if req != nil {
+		_ = json.Unmarshal(req.RawParams(), &params)
+	}
+	record.RouteID = params.Arguments.RouteID
+	record.JinnTool = params.Arguments.Tool
+	call, ok := result.(*protocol.CallToolResult)
+	if !ok || call.StructuredContent == nil {
+		return
+	}
+	if data, err := json.Marshal(call.StructuredContent); err == nil {
+		record.ResultBytes = len(data)
+	}
+	switch output := call.StructuredContent.(type) {
+	case jinn.RouteResponse:
+		record.RouteID = output.RouteID
+		record.Confidence = output.Confidence
+		record.ScoreMargin = output.ScoreMargin
+		record.Recommendations = make([]string, 0, len(output.Matches))
+		for _, match := range output.Matches {
+			record.Recommendations = append(record.Recommendations, match.Name)
+		}
+	case mcpCallOutput:
+		record.RouteID = output.RouteID
+		record.JinnTool = output.Tool
+		record.Truncated = mcpOutputTruncated(output.Meta, output.Result)
+	case mcpCallErrorOutput:
+		record.RouteID = output.RouteID
+		record.JinnTool = output.Tool
+		record.ErrorCode = output.ErrorCode
+		retryable := output.Retryable
+		record.Retryable = &retryable
+	default:
+		enrichMCPLogMap(record, call.StructuredContent)
+	}
+}
+
+func enrichMCPLogMap(record *mcpLogRecord, value any) {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return
+	}
+	var object map[string]any
+	if json.Unmarshal(data, &object) != nil {
+		return
+	}
+	if text, ok := object["route_id"].(string); ok {
+		record.RouteID = text
+	}
+	if text, ok := object["tool"].(string); ok {
+		record.JinnTool = text
+	}
+	if text, ok := object["confidence"].(string); ok {
+		record.Confidence = text
+	}
+	if number, ok := object["score_margin"].(float64); ok {
+		margin := int(number)
+		record.ScoreMargin = &margin
+	}
+	if text, ok := object["error_code"].(string); ok {
+		record.ErrorCode = text
+	}
+	if flag, ok := object["retryable"].(bool); ok {
+		record.Retryable = &flag
+	}
+	if matches, ok := object["matches"].([]any); ok {
+		for _, raw := range matches {
+			match, _ := raw.(map[string]any)
+			if name, ok := match["name"].(string); ok {
+				record.Recommendations = append(record.Recommendations, name)
+			}
+		}
+	}
+	if result, ok := object["result"].(string); ok {
+		meta, _ := object["meta"].(map[string]any)
+		record.Truncated = mcpOutputTruncated(meta, result)
+	}
+}
+
+func mcpOutputTruncated(meta map[string]any, text string) bool {
+	if value, ok := meta["truncation"]; ok && jsonFlag(value, "truncated") {
+		return true
+	}
+	var value any
+	if json.Unmarshal([]byte(text), &value) == nil {
+		return jsonFlag(value, "truncated") || jsonFlag(value, "truncated_global")
+	}
+	return false
+}
+
+func jsonFlag(value any, key string) bool {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return false
+	}
+	var object map[string]any
+	if json.Unmarshal(data, &object) != nil {
+		return false
+	}
+	flag, _ := object[key].(bool)
+	return flag
 }
 
 func mcpRequestMetadata(req *server.Request) (method, requestID string) {

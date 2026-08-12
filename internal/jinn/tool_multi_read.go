@@ -21,6 +21,7 @@ type multiReadResult struct {
 	Errors          map[string]multiReadError `json:"errors,omitempty"`
 	Truncation      map[string]truncationInfo `json:"truncation,omitempty"`
 	TruncatedGlobal bool                      `json:"truncated_global,omitempty"`
+	NextCalls       []NextCall                `json:"next_calls,omitempty"`
 }
 
 // multiReadError describes a per-file failure within a multi_read call.
@@ -45,7 +46,7 @@ func (e *Engine) multiRead(args map[string]interface{}) (*ToolResult, error) {
 
 	var totalBytes int
 	var sourceBytes int64
-	for _, raw := range rawFiles {
+	for index, raw := range rawFiles {
 		entry, ok := raw.(map[string]interface{})
 		if !ok {
 			continue
@@ -70,6 +71,10 @@ func (e *Engine) multiRead(args map[string]interface{}) (*ToolResult, error) {
 				ErrorCode:  "global_cap_exceeded",
 			}
 			result.TruncatedGlobal = true
+			result.NextCalls = append(result.NextCalls, NextCall{
+				Tool:      "multi_read",
+				Arguments: map[string]any{"files": rawFiles[index:]},
+			})
 			break
 		}
 		totalBytes += len(content)
@@ -77,6 +82,9 @@ func (e *Engine) multiRead(args map[string]interface{}) (*ToolResult, error) {
 
 		if trunc != nil {
 			result.Truncation[path] = *trunc
+			if trunc.NextCall != nil {
+				result.NextCalls = append(result.NextCalls, *trunc.NextCall)
+			}
 		}
 	}
 
@@ -174,6 +182,7 @@ func (e *Engine) readMultiReadEntry(path string, entry map[string]interface{}, r
 			Truncated:   true,
 			TotalLines:  cr.TotalLines,
 			OutputLines: cr.OutputLines,
+			NextCall:    readNextCall(entry, cr.NextLine),
 		}
 	}
 	return content, trunc, info.Size(), nil

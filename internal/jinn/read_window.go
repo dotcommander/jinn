@@ -33,7 +33,7 @@ func oversizedLineResult(resolved string, lines []string, startLine, total int) 
 // assembleReadResult builds the final readContentResult, attaching a
 // continuation hint and remainder temp file when the window or the truncation
 // strategy dropped lines.
-func assembleReadResult(resolved string, lines []string, w readWindow, tr truncateResult) *readContentResult {
+func assembleReadResult(resolved string, lines []string, w readWindow, tr truncateResult, truncateMode string) *readContentResult {
 	// Determine if the file itself is longer than the window requested.
 	windowTruncated := w.total > w.endLine
 
@@ -53,6 +53,16 @@ func assembleReadResult(resolved string, lines []string, w readWindow, tr trunca
 		if !tr.Truncated {
 			totalShown = w.endLine - w.startLine + 1
 		}
+		nextLine := 0
+		switch {
+		case tr.Truncated && (truncateMode == "head" || truncateMode == "smart"):
+			nextLine = w.startLine + tr.ShownLines
+		case !tr.Truncated && windowTruncated:
+			nextLine = w.endLine + 1
+		}
+		if nextLine > w.total {
+			nextLine = 0
+		}
 		return &readContentResult{
 			Content:     tr.Content,
 			TotalLines:  w.total,
@@ -60,6 +70,7 @@ func assembleReadResult(resolved string, lines []string, w readWindow, tr trunca
 			Truncated:   true,
 			ByteHint:    hint,
 			TempFile:    tmpPath,
+			NextLine:    nextLine,
 		}
 	}
 

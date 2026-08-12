@@ -21,17 +21,20 @@ const (
 var listTimeout = 60 * time.Second
 
 type listDirResult struct {
-	Entries         []string `json:"entries"`
-	Truncated       bool     `json:"truncated"`
-	TotalCount      int      `json:"total_count"`
-	TotalCountExact bool     `json:"total_count_exact"`
-	Hint            string   `json:"hint,omitempty"`
+	Entries         []string  `json:"entries"`
+	Truncated       bool      `json:"truncated"`
+	TotalCount      int       `json:"total_count"`
+	TotalCountExact bool      `json:"total_count_exact"`
+	Offset          int       `json:"offset"`
+	Hint            string    `json:"hint,omitempty"`
+	NextCall        *NextCall `json:"next_call,omitempty"`
 }
 
 type listParams struct {
 	listPath     string
 	depth        int
 	maxEntries   int
+	offset       int
 	changedAfter time.Time
 }
 
@@ -45,6 +48,7 @@ func parseListArgs(args map[string]interface{}) (listParams, error) {
 	}
 	p.depth = max(1, min(p.depth, 10))
 	p.maxEntries = min(p.maxEntries, listCapMax)
+	p.offset = max(0, min(intArg(args, "offset", 0), listVisitMax))
 	if raw, ok := args["changed_since"].(float64); ok && raw > 0 {
 		seconds := int64(raw)
 		nanos := int64((raw - float64(seconds)) * float64(time.Second))
@@ -86,12 +90,15 @@ func (e *Engine) listDirContext(ctx context.Context, args map[string]interface{}
 	if err != nil {
 		return "", err
 	}
-	result := listDirResult{Entries: entries, Truncated: !exact || total > p.maxEntries, TotalCount: total, TotalCountExact: exact}
+	result := listDirResult{Entries: entries, Truncated: !exact || total > p.offset+len(entries), TotalCount: total, TotalCountExact: exact, Offset: p.offset}
 	if result.Entries == nil {
 		result.Entries = []string{}
 	}
 	if result.Truncated {
 		result.Hint = "[TRUNCATED: narrow path or depth, or increase max_entries]"
+		if len(entries) > 0 {
+			result.NextCall = listDirNextCall(args, p, p.offset+len(entries))
+		}
 	}
 	data, err := json.Marshal(result)
 	if err != nil {
@@ -156,10 +163,10 @@ func (e *Engine) collectListEntries(ctx context.Context, resolved string, p list
 			value += "/"
 		}
 		total++
-		if len(entries) < p.maxEntries {
+		if total > p.offset && len(entries) < p.maxEntries {
 			entries = append(entries, value)
 		}
-		if total > p.maxEntries {
+		if total > p.offset+p.maxEntries {
 			exact = false
 			return fs.SkipAll
 		}
@@ -176,4 +183,19 @@ func (e *Engine) collectListEntries(ctx context.Context, resolved string, p list
 	}
 	slices.Sort(entries)
 	return entries, total, exact, nil
+}
+
+func listDirNextCall(args map[string]interface{}, p listParams, offset int) *NextCall {
+	arguments := map[string]any{
+		"path":        p.listPath,
+		"depth":       p.depth,
+		"max_entries": p.maxEntries,
+		"offset":      offset,
+	}
+	for _, key := range []string{"changed_since", "changed_after"} {
+		if value, ok := args[key]; ok {
+			arguments[key] = value
+		}
+	}
+	return &NextCall{Tool: "list_dir", Arguments: arguments}
 }

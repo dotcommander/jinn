@@ -1,6 +1,7 @@
 package jinn
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -48,6 +49,51 @@ func TestRouteToolsDefaultReturnsOne(t *testing.T) {
 	}
 	if len(resp.Matches) != 1 {
 		t.Fatalf("default match count = %d, want 1: %+v", len(resp.Matches), resp.Matches)
+	}
+	if !resp.Adaptive || resp.Confidence != "high" {
+		t.Fatalf("adaptive confidence = %v/%q", resp.Adaptive, resp.Confidence)
+	}
+}
+
+func TestRouteToolsAdaptiveAmbiguity(t *testing.T) {
+	t.Parallel()
+	resp, err := RouteTools(RouteRequest{Need: "read source", IncludeMutating: boolPtr(true)})
+	if err != nil {
+		t.Fatalf("RouteTools: %v", err)
+	}
+	if resp.Confidence != "ambiguous" || resp.ScoreMargin == nil || len(resp.Matches) != 2 {
+		t.Fatalf("adaptive route = confidence:%q margin:%v matches:%+v", resp.Confidence, resp.ScoreMargin, resp.Matches)
+	}
+	explicit, err := RouteTools(RouteRequest{Need: "read source", MaxTools: 1, IncludeMutating: boolPtr(true)})
+	if err != nil {
+		t.Fatalf("RouteTools explicit: %v", err)
+	}
+	if explicit.Adaptive || len(explicit.Matches) != 1 {
+		t.Fatalf("explicit route = adaptive:%v matches:%+v", explicit.Adaptive, explicit.Matches)
+	}
+}
+
+func TestRouteToolsCallTemplate(t *testing.T) {
+	t.Parallel()
+	resp, err := RouteTools(RouteRequest{Need: "read a file", MaxTools: 1, IncludeCall: true})
+	if err != nil {
+		t.Fatalf("RouteTools: %v", err)
+	}
+	call := resp.Matches[0].Call
+	if call == nil || call.Tool != "read_file" || call.Arguments["path"] != "<required>" || !slices.Equal(call.Replace, []string{"path"}) {
+		t.Fatalf("call template = %#v", call)
+	}
+}
+
+func TestRouteToolsCallTemplateMarksConditionalObjectRequired(t *testing.T) {
+	t.Parallel()
+	resp, err := RouteTools(RouteRequest{Need: "run a plan", MaxTools: RouteMaxTools, IncludeCall: true})
+	if err != nil {
+		t.Fatalf("RouteTools: %v", err)
+	}
+	match, ok := routeMatchNamed(resp.Matches, "run_plan")
+	if !ok || match.Call == nil || match.Call.Arguments["plan"] != "<required>" || !slices.Contains(match.Call.Replace, "plan") {
+		t.Fatalf("run_plan call template = %#v", match.Call)
 	}
 }
 
@@ -194,6 +240,7 @@ func TestRouteToolsCorpus(t *testing.T) {
 		{"direct diff_files", "diff files and show changes", []string{"diff_files"}, false},
 		{"direct run_shell", "run shell command", []string{"run_shell"}, false},
 		{"direct lsp_query", "lsp query for symbol references", []string{"lsp_query"}, false},
+		{"direct lsp_batch", "lsp batch semantic queries", []string{"lsp_batch"}, false},
 		{"direct memory", "memory store a key value pair", []string{"memory"}, false},
 		{"direct undo", "undo the last file change", []string{"undo"}, false},
 		{"direct detect_project", "detect project language and framework", []string{"detect_project"}, false},
@@ -214,6 +261,7 @@ func TestRouteToolsCorpus(t *testing.T) {
 		{"paraphrase apply_patch", "apply this patch to the working tree", []string{"apply_patch"}, false},
 		{"paraphrase run_shell", "execute the build", []string{"run_shell"}, false},
 		{"paraphrase lsp_query", "where is this symbol defined", []string{"lsp_query"}, false},
+		{"paraphrase lsp_batch", "check several symbol definitions together", []string{"lsp_batch", "lsp_query"}, false},
 		{"paraphrase memory", "remember this value for the next session", []string{"memory"}, false},
 		{"paraphrase undo", "revert my last change", []string{"undo"}, false},
 		{"paraphrase detect_project", "what framework and language is this codebase", []string{"detect_project"}, false},

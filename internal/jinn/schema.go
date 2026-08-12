@@ -40,6 +40,12 @@ type ContentBlock struct {
 	MimeType string `json:"mimeType,omitempty"` // e.g. "image/png", for type="image"
 }
 
+// NextCall is an exact, machine-readable follow-up invocation.
+type NextCall struct {
+	Tool      string         `json:"tool"`
+	Arguments map[string]any `json:"arguments"`
+}
+
 // UnmarshalJSON strictly decodes the request envelope. Compatibility coercion
 // is intentionally rejected at this trust boundary.
 func (r *Request) UnmarshalJSON(data []byte) error {

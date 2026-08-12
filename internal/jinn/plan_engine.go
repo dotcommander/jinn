@@ -22,6 +22,7 @@ var planPhase1ToolAllowlist = map[string]bool{
 	"find_files":   true,
 	"stat_file":    true,
 	"lsp_query":    true,
+	"lsp_batch":    true,
 }
 
 type planExecutionContextKey struct{}

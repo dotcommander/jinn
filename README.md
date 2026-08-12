@@ -109,9 +109,11 @@ Use MCP discovery mode:
 
 `jinn --mcp` speaks MCP 2026-07-28 through the official Go SDK and exposes one
 MCP tool, `jinn_route`. It recommends matching jinn tools for a task and can
-return lean schemas for only those tools. It does not execute filesystem or
-shell operations itself. The one-tool surface is intentional: it keeps model
-context bounded. Discovery exposes 20 tools by default and 21 with an explicit
+return lean schemas or executable call templates for only those tools. When
+`max_tools` is omitted, it returns one confident match or two close matches.
+It does not execute filesystem or shell operations itself. The one-tool surface
+is intentional: it keeps model context bounded. Discovery exposes 21 tools by
+default and 22 with an explicit
 `sandboxed` or `unsafe` shell mode.
 
 MCP hosts that accept only an executable path may launch `jinn` with no
@@ -149,7 +151,9 @@ jinn mcp call http://127.0.0.1:8788/mcp jinn_route -a need '"read source"'
 The explorer follows paginated tool lists, has a `30s` default deadline, and
 uses explicit subprocess argv (no shell). HTTP tokens default from
 `JINN_MCP_HTTP_TOKEN` and are never printed. `JINN_MCP_LOG_LEVEL=off|error|info|debug`
-controls capped, redacted JSONL records under `jinn/logs/mcp.jsonl`.
+controls capped, private JSONL records under `jinn/logs/mcp.jsonl`. Version 2
+records link route and call outcomes by `routeId` and retain only bounded
+effectiveness metadata; prompts, arguments, paths, and content are never logged.
 
 Current MCP requests use `server/discover`, `tools/list`, and `tools/call` with
 `_meta.io.modelcontextprotocol/protocolVersion` set to `2026-07-28` plus
@@ -196,8 +200,8 @@ the real endpoint.
 Claude Code, Codex, pi, and similar tools already have native read/edit/shell
 surfaces. Add jinn for gaps that are useful as one-shot subprocesses:
 
-- `lsp_query` for definition, references, hover, diagnostics, symbols, and
-  rename previews without running an MCP server.
+- `lsp_query` for one semantic query, or `lsp_batch` for up to 20 queries while
+  reusing one language-server process per server type.
 - `run_shell` with `dry_run: true` for permission hooks that need semantic risk
   classification before a shell command runs.
 - `memory` for scoped SQLite-backed facts, directives, and lessons with optional
@@ -213,29 +217,30 @@ Recipes for Claude Code, Codex CLI, pi, and custom loops:
 
 ## Toolset
 
-`jinn` exposes 20 tools by default, or 21 with an enabled shell mode:
+`jinn` exposes 21 tools by default, or 22 with an enabled shell mode:
 
 | Tool | Description |
 | :--- | :--- |
-| `read_file` | Read windowed chunks of a file with line numbers (max 50MB). Supports `tail`, `line_numbers`, and a `truncate` strategy (`head`/`tail`/`middle`/`none`). Images detected by content; PDFs return a structured error. |
-| `multi_read` | Read up to 20 files in one call with per-file windows, partial success, and structured per-file errors. |
+| `read_file` | Read windowed chunks of a file with line numbers (max 50MB). Supports truncation strategies and an exact `next_call` when sequential continuation is safe. Images detected by content; PDFs return a structured error. |
+| `multi_read` | Read up to 20 files in one call with per-file windows, partial success, structured per-file errors, and `next_calls` for unfinished input. |
 | `write_file` | Atomic full-file write. Creates parent directories automatically. |
 | `edit_file` | Targeted text replacement. Handles fuzzy whitespace/quotes, CRLF/BOM preservation, `dry_run` diff preview. Rejects empty `old_text` and no-op edits. |
 | `multi_edit` | Apply batch edits with validate-first semantics and per-file atomic writes. Detects overlapping regions, rejects empty or no-op entries. |
 | `apply_patch` | Apply a Codex-style patch (`*** Begin Patch … *** End Patch`) to create, delete, or update files. Validates all operations first; writes are per-file atomic. |
-| `search_files` | Fast grep/regex search with glob filtering, context lines, and a `literal` flag for fixed-string matching. |
+| `search_files` | Fast grep/regex search with glob filtering, context lines, fixed-string matching, and JSON result continuations. |
 | `search_replace` | Regex search-and-replace across explicit files or glob patterns. Supports capture groups, dry runs, and per-file atomic writes. |
 | `run_shell` | Controlled bash execution with risk classification. Process-group kill ensures background children are also terminated on timeout. Dangerous commands blocked unless `force: true`. |
-| `run_plan` | Execute a condition-gated plan tree of tool/shell operations in one deterministic engine walk. Read-only nodes by default; mutating nodes are risk-gated behind plan- and node-level `force`. |
+| `run_plan` | Execute a condition-gated plan tree or compact tool-step batch in one deterministic engine walk. Read-only nodes by default; mutations remain risk-gated. |
 | `stat_file` | Get metadata (size, lines, mtime) without reading contents. |
-| `list_dir` | Recursive directory tree exploration (skips hidden files). Directories suffixed with `/` in output. |
-| `find_files` | Native bounded glob traversal. Basename patterns match anywhere; slash patterns match normalized relative paths; `**` spans segments. It does not interpret `.gitignore`. |
+| `list_dir` | Recursive directory tree exploration with stable offsets and `next_call` continuation. Hidden files are skipped. |
+| `find_files` | Native bounded glob traversal with stable offsets and `next_call` continuation. It does not interpret `.gitignore`. |
 | `diff_files` | Unified diff between two files with `is_identical` and `first_changed_line` metadata. |
 | `detect_project` | Auto-detect language, frameworks, and build/test/lint commands. |
 | `list_tools` | Programmatic tool capability metadata; can include the compact schema on request. |
 | `memory` | Persistent, project-scoped key/value store across sessions. Actions: `save`, `recall`, `list`, `forget`. |
 | `undo` | Browse, preview, and restore file snapshots captured automatically before every mutation. Existing files over 5 MiB are rejected before mutation so the undo guarantee is preserved. |
 | `lsp_query` | Query a language server for `definition`, `references`, `hover`, `symbols`, `diagnostics`, or `rename`. |
+| `lsp_batch` | Run up to 20 semantic queries with input-order partial results and one server startup per language-server type. |
 
 ---
 

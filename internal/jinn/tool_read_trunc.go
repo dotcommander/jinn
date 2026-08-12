@@ -8,12 +8,10 @@ import (
 	"strings"
 )
 
-// byteTruncateResult applies byte-size truncation: if the numbered output
-// exceeds the byte cap, it keeps the head portion that fits and writes the full
-// remainder to a temp file so the agent can pick up where it left off. It
-// returns the truncated readContentResult, or nil when the output is within the
-// byte cap and no truncation is needed.
-func byteTruncateResult(content, resolved string, lines []string, startLine, total int) *readContentResult {
+// byteTruncateResult applies byte-size truncation. Sequential strategies also
+// receive an exact source continuation; reordered strategies receive only the
+// bounded content and a narrower-window hint.
+func byteTruncateResult(content, resolved string, lines []string, startLine, total int, sequential bool) *readContentResult {
 	if len(content) <= readMaxBytes {
 		return nil
 	}
@@ -33,16 +31,20 @@ func byteTruncateResult(content, resolved string, lines []string, startLine, tot
 		keptBytes += extra
 	}
 
-	// Collect source lines beyond the kept output lines for the remainder.
-	remainingStart := startLine + len(kept)
-	var srcRemainder []string
-	for i := remainingStart - 1; i < total && i < len(lines); i++ {
-		srcRemainder = append(srcRemainder, lines[i])
+	nextLine := 0
+	tmpPath := ""
+	if sequential {
+		nextLine = startLine + len(kept)
+		var srcRemainder []string
+		for i := nextLine - 1; i < total && i < len(lines); i++ {
+			srcRemainder = append(srcRemainder, lines[i])
+		}
+		tmpPath, _ = writeTruncationRemainder(resolved, nextLine, srcRemainder)
 	}
-	tmpPath, _ := writeTruncationRemainder(resolved, remainingStart, srcRemainder)
-
-	nextLine := startLine + len(kept)
-	hint := buildReadHint(startLine, startLine+len(kept)-1, total, nextLine, tmpPath)
+	hint := "\n[Output truncated by byte limit. Re-run with a narrower window.]"
+	if sequential {
+		hint = buildReadHint(startLine, startLine+len(kept)-1, total, nextLine, tmpPath)
+	}
 
 	return &readContentResult{
 		Content:     strings.Join(kept, "\n"),
@@ -51,13 +53,16 @@ func byteTruncateResult(content, resolved string, lines []string, startLine, tot
 		Truncated:   true,
 		ByteHint:    hint,
 		TempFile:    tmpPath,
+		NextLine:    nextLine,
 	}
 }
 
 // buildReadHint formats the windowed-read continuation hint.
 func buildReadHint(startLine, endLine, total, nextLine int, tmpPath string) string {
-	hint := fmt.Sprintf("\n[Showing lines %d-%d of %d. Use start_line=%d to continue.",
-		startLine, endLine, total, nextLine)
+	hint := fmt.Sprintf("\n[Showing lines %d-%d of %d.", startLine, endLine, total)
+	if nextLine > 0 {
+		hint += fmt.Sprintf(" Use start_line=%d to continue.", nextLine)
+	}
 	if tmpPath != "" {
 		hint += fmt.Sprintf(" Remainder saved to %s.", tmpPath)
 	}

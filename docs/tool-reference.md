@@ -1,6 +1,6 @@
 # Tool Reference
 
-jinn exposes 20 tools by default, or 21 when started with
+jinn exposes 21 tools by default, or 22 when started with
 `--shell-mode=sandboxed` or `--shell-mode=unsafe`. The protocol accepts exactly
 one JSON object of at most 16 MiB and rejects duplicate keys, trailing values,
 unknown fields, invalid types, and unknown tool arguments.
@@ -104,7 +104,7 @@ echo '{"tool":"read_file","args":{"path":"main.go"}}' | jinn
 - **PDF files** return `ok: false` with `suggestion: "convert the PDF to text first (pdftotext, pdftk, or a cloud OCR service) and read the text file"`. Content is never returned.
 - **Image files** are detected by content rather than extension — a `.png` renamed without an extension is still identified as an image. Detected images return a base64-encoded content block with the correct MIME type (`image/png`, `image/jpeg`, etc.). SVG files return `image/svg+xml`. Pass the result directly to a vision model.
 - Binary files (null byte in first 512 bytes) return `[binary file: N bytes — use stat_file for metadata or skip content reads]` as a success result (not an error).
-- When output is truncated, jinn appends: `[Showing lines X-Y of Z. Use start_line=N to continue. Remainder saved to <path>.]`. The remainder file lets you pick up exactly where the window ended.
+- Sequentially truncated output appends: `[Showing lines X-Y of Z. Use start_line=N to continue. Remainder saved to <path>.]`. It also returns an exact `next_call`. Tail and middle truncation omit unsafe continuations and recommend a narrower window.
 - `include_checksum:true` returns the SHA-256 required by secure mutation calls. See [Security: Mutation Preconditions](security.md#mutation-preconditions-and-locking).
 
 Read lines 10 through 20:
@@ -153,7 +153,7 @@ Each file entry:
 
 **Notes:**
 
-- Returns JSON with three maps: `files` (path→content), `errors` (path→error detail), and `truncation` (path→metadata).
+- Returns JSON with `files` (path→content), `errors` (path→error detail), `truncation` (path→metadata), and `next_calls` for any truncated file or unprocessed tail of the input batch.
 - **Partial success:** if some files fail, they appear in `errors` while successful reads still return in `files`.
 - Only returns `ok: false` if ALL files fail.
 - Binary/image files are reported in `errors` with `error_code: "binary_file"` — use `read_file` for single-image viewing.
@@ -399,6 +399,7 @@ echo '{"tool":"search_files","args":{"pattern":"func main"}}' | jinn
 | `include` | string | No | -- | Glob filter on filenames (e.g., `"*.go"`) |
 | `literal` | bool | No | `false` | Treat `pattern` as a fixed string rather than a regex. Passes `-F` to grep / `--fixed-strings` to rg. |
 | `max_matches` | int | No | `500` | Maximum number of matches to return. When exceeded, response includes `truncated: true` and `total_count`. |
+| `offset` | int | No | `0` | Zero-based result offset. Requires `format: "json"`. |
 | `context_lines` | int | No | `0` | Surrounding lines to include per match |
 | `case_insensitive` | bool | No | `false` | Case-insensitive matching |
 
@@ -415,7 +416,10 @@ Structured results for programmatic use:
 echo '{"tool":"search_files","args":{"pattern":"func \\w+Handler","format":"json","include":"*.go"}}' | jinn
 ```
 
-`format: "json"` returns an array of objects with `file`, `line`, `column`, `text`, and optional `context_before`/`context_after` fields.
+`format: "json"` returns an object with `results`, `offset`, count and
+truncation fields, and an exact `next_call` when another page exists. Each match
+contains `file`, `line`, `column`, `text`, and optional
+`context_before`/`context_after` fields.
 
 List files with match counts:
 
@@ -438,12 +442,13 @@ echo '{"tool":"find_files","args":{"pattern":"*.go","path":"internal"}}' | jinn
 | `pattern` | string | Yes | -- | Glob pattern such as `*.go`, `**/*.json`, or `src/**/*_test.go` |
 | `path` | string | No | `"."` | Directory to search in |
 | `limit` | int | No | `1000` | Maximum number of results before truncation |
+| `offset` | int | No | `0` | Zero-based result offset for continuation |
 
 **Notes:**
 
 - Uses a native bounded walker; `.gitignore` is not interpreted.
 - Patterns without `/` match basenames. Slash patterns match normalized relative paths; `*` stays within one segment and `**` spans segments.
-- Returns one JSON document with `files`, `truncated`, `total_count`, `total_count_exact`, `limit_used`, `backend`, and an optional `hint`.
+- Returns one JSON document with `files`, `offset`, `truncated`, `total_count`, `total_count_exact`, `limit_used`, `backend`, and optional `hint` and exact `next_call` fields.
 - Excludes hidden paths, `.git`, `.ssh`, `.aws`, `.gnupg`, `.env` variants, `node_modules`, `vendor`, `__pycache__`, `.cache`, `dist`, and `build` at every depth.
 
 ### search_replace
@@ -514,6 +519,7 @@ echo '{"tool":"list_dir","args":{"path":".","depth":2}}' | jinn
 | `path` | string | No | `"."` | Directory to list |
 | `depth` | int | No | `3` | Maximum recursion depth (clamped to 1--10) |
 | `max_entries` | int | No | `500` | Maximum number of entries to return (cap: 10000). When exceeded, response includes `truncated: true` and `total_count`. |
+| `offset` | int | No | `0` | Zero-based result offset for continuation |
 | `changed_since` | number | No | `0` | Unix epoch seconds, including fractions. Only list entries modified strictly after it. |
 | `changed_after` | string | No | -- | RFC3339Nano timestamp. Only list entries modified strictly after it. |
 
@@ -522,7 +528,7 @@ echo '{"tool":"list_dir","args":{"path":".","depth":2}}' | jinn
 - Hidden files and directories (names starting with `.`) are excluded.
 - Output is sorted alphabetically.
 - Directory entries are suffixed with `/` to distinguish them from files.
-- Returns one JSON object with `entries`, `truncated`, `total_count`, and `total_count_exact`; an early traversal stop makes the total inexact.
+- Returns one JSON object with `entries`, `offset`, `truncated`, `total_count`, and `total_count_exact`; an early traversal stop makes the total inexact. A truncated result includes an exact `next_call`.
 
 ---
 
@@ -586,14 +592,18 @@ The `plan` object:
 
 | Name | Type | Required | Default | Description |
 |------|------|----------|---------|-------------|
-| `root` | string | Yes | -- | ID of the starting node |
-| `nodes` | array | Yes | -- | Non-empty plan nodes, each with non-empty `commands` and optional `edges` |
+| `root` | string | Canonical form | -- | ID of the starting node |
+| `nodes` | array | Canonical form | -- | Non-empty plan nodes, each with non-empty `commands` and optional `edges` |
+| `steps` | array | Compact form | -- | One to 16 tool operations, expanded into a single plan node; shell steps are not accepted |
+| `parallel` | bool | No | `false` | Run compact-form steps concurrently |
+| `mutates` | bool | No | `false` | Enable normal Phase 2 mutation gating for compact-form steps |
 | `cwd` | string | No | working dir | Existing directory inside the engine workdir; all shell, tool, and cwd-relative condition paths use it |
 | `max_depth` | int | No | `8` | Maximum execution depth before the walk stops, including nested `run_plan` calls |
 | `force` | bool | No | `false` | Plan-level gate; with a node's own `force`, permits `dangerous` mutations |
 
 **Notes:**
 
+- Use either `root` plus `nodes`, or `steps`; combining both forms is rejected. Compact steps preserve the same read-only default, operation budget, and mutation classifier as canonical plans. They cannot set node-level `force`, so dangerous mutations remain blocked.
 - Each command sets exactly one of a non-empty `shell` or a known `tool`. Unknown tools, empty nodes, and malformed conditions are rejected before the walk starts.
 - One shared budget permits at most 256 operations across the outer plan and all nested `run_plan` calls. Exhausting it stops the walk with `stopped_reason: "resource_limit"`.
 - Read-only by default: a node without `mutates: true` allows only `safe` shell commands and read-only tools. This includes `memory` actions `recall`/`list` and `undo` actions `list`/`preview`; their mutating actions remain blocked. A `mutates: true` node runs `caution` operations automatically; `dangerous` ones require both `plan.force` and the node's `force`, including nested `tool: "run_shell"` and `tool: "run_plan"` commands. Nested plans inherit the parent's remaining depth and dangerous-mutation authority. A nested `force` argument cannot bypass those gates.
@@ -634,7 +644,7 @@ existing jinn tools for a coding-agent task and never executes them.
 
 ```jsonl
 {"jsonrpc":"2.0","id":1,"method":"server/discover","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}
-{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}},"name":"jinn_route","arguments":{"need":"regex replace across many files","max_tools":2}}}
+{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}},"name":"jinn_route","arguments":{"need":"regex replace across many files","include_call":true}}}
 ```
 
 An MCP client sends those lines over the long-lived `jinn --mcp` stdin pipe and
@@ -644,7 +654,7 @@ reads one response per request. Do not close stdin until the responses arrive.
 <!-- equivalent shell payload, without closing the client pipe -->
 printf '%s\n' \
   '{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}' \
-  '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}},"name":"jinn_route","arguments":{"need":"regex replace across many files","max_tools":2}}}'
+  '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}},"name":"jinn_route","arguments":{"need":"regex replace across many files","include_call":true}}}'
 
 The shell payload above is illustrative only; piping it directly to `jinn --mcp`
 closes stdin too early for an in-flight response. Use the checked
@@ -656,12 +666,13 @@ long-lived driver in [mcp-smoke-test.md](mcp-smoke-test.md).
 | Name | Type | Required | Default | Description |
 |------|------|----------|---------|-------------|
 | `need` | string | Yes | -- | Natural-language task or capability request |
-| `max_tools` | integer | No | `1` | Maximum recommendations, capped at `8` |
+| `max_tools` | integer | No | adaptive | Explicit maximum recommendations, capped at `8`; omit for adaptive cardinality |
 | `include_schema` | boolean | No | `false` | Include lean schemas only for returned tools |
+| `include_call` | boolean | No | `false` | Include the smallest executable `jinn_call` argument template and replacement paths relative to its `arguments` object |
 | `include_mutating` | boolean | No | `true` | Allow recommendations for mutating tools |
 
-The default returns only the highest-ranked match. Set `max_tools` explicitly
-when comparing alternatives or resolving an ambiguous request.
+With `max_tools` omitted, a high-confidence route returns one match and a close
+score returns the top two. Set it explicitly to override that cardinality.
 
 `mutating` is a maximum-capability classification: it is true when at least one
 valid invocation of the tool may mutate files or persistent state. Therefore,
@@ -670,11 +681,15 @@ caller intends to submit would be read-only.
 
 **Returns:** the tool result contains structured `structuredContent` route JSON
 and a mirrored text content block for clients that only consume text.
-The request above returns (second match abbreviated):
+The request above returns:
 
 ```json
 {
+  "route_id": "<32 lowercase hex characters>",
   "query": "regex replace across many files",
+  "confidence": "high",
+  "score_margin": 23,
+  "adaptive": true,
   "matches": [
     {
       "name": "search_replace",
@@ -682,13 +697,12 @@ The request above returns (second match abbreviated):
       "reason": "Matched name tokens, description, parameters, features, task intent.",
       "mutating": true,
       "risk": "mutating",
-      "features": ["regex", "capture_groups", "multi_file", "glob_patterns", "replace_all", "dry_run", "case_insensitive", "multiline"]
-    },
-    {
-      "name": "search_files",
-      "reason": "Matched name tokens, description, parameters.",
-      "mutating": false,
-      "risk": "read_only"
+      "features": ["regex", "capture_groups", "multi_file", "glob_patterns", "replace_all", "dry_run", "case_insensitive", "multiline"],
+      "call": {
+        "tool": "search_replace",
+        "arguments": {"files":"<required>","pattern":"<required>","replacement":"<required>"},
+        "replace": ["files","pattern","replacement"]
+      }
     }
   ],
   "notes": [
@@ -701,7 +715,8 @@ The request above returns (second match abbreviated):
 **Notes:**
 
 - Routing is deterministic and fully local -- no LLM, no network, no persistent
-  state. The same `need` always returns the same recommendations.
+  state. The same inputs return the same recommendations, confidence, and score
+  margin. The MCP broker adds a fresh opaque `route_id` for call linkage.
 - Tools are scored by lexical overlap between the `need` and each tool's name,
   description, parameter names, enum values, and feature tags, plus curated
   task-intent rules -- "revert my last change" routes to `undo` without naming
@@ -744,16 +759,26 @@ recommendations.
 | `tool` | string | Yes | -- | One of the advertised read-only jinn tools |
 | `arguments` | object | No | `{}` | Arguments for the selected tool |
 | `compress` | boolean | No | `true` | Apply deterministic context compression to text output |
+| `route_id` | string | No | -- | Opaque 32-character lowercase hex identifier returned by `jinn_route`; echo it unchanged to link route and call effectiveness records |
 
 Example call:
 
 ```jsonl
-{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}},"name":"jinn_call","arguments":{"tool":"read_file","arguments":{"path":"README.md"},"compress":false}}}
+{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}},"name":"jinn_call","arguments":{"tool":"read_file","arguments":{"path":"README.md"},"compress":false,"route_id":"<32 lowercase hex characters>"}}}
 ```
 
-The result has structured `structuredContent` with the selected `tool`, text
-`result`, optional jinn `content` blocks, and merged `meta`. A mutation attempt
-is a tool error with `isError: true`; it does not reach the engine dispatcher.
+The result has structured `structuredContent` with the selected `tool`, optional
+`route_id`, text `result`, optional jinn `content` blocks, and merged `meta`.
+Errors use `isError: true` plus structured `error`, `error_code`, `suggestion`,
+`retryable`, and an exact `next_call` when a safe deterministic recovery exists.
+A mutation attempt never reaches the engine dispatcher.
+
+Set `JINN_MCP_LOG_LEVEL=error|info|debug` to enable the private, capped JSONL
+effectiveness ledger at `$JINN_CONFIG_DIR/jinn/logs/mcp.jsonl` or the platform
+user-config equivalent. Version 2 records may include route/call linkage,
+recommendations, confidence, score margin, result size, truncation, and retry
+classification. They never include prompts, tool arguments, paths, or content.
+Logging is best effort and does not affect request results.
 The read-only profile requires current stateless request metadata. Its legacy
 initialize-based traffic is handled by the current SDK and rejected before route
 or tool dispatch; only the default profile retains the route-only compatibility
@@ -1005,6 +1030,23 @@ echo '{"tool":"lsp_query","args":{"action":"hover","path":"main.go","line":12,"c
 - Hard timeout: 10 seconds per query. Slow server startups may cause timeouts on cold runs.
 - If the server binary is not on `PATH`, `ok: false` is returned with a `suggestion` containing the install command.
 - Path must be inside the working directory (normal path security applies).
+
+### lsp_batch
+
+Run up to 20 semantic queries while starting each required language server only
+once. Results preserve input order and report per-item success or structured
+failure, so one bad query does not discard the others.
+
+```bash
+echo '{"tool":"lsp_batch","args":{"queries":[{"action":"symbols","path":"internal/jinn/engine.go"},{"action":"diagnostics","path":"main.go"}]}}' | jinn
+```
+
+Each query accepts the same fields as `lsp_query`. The JSON result contains
+`results`, `succeeded`, `failed`, and `server_starts`; every result item contains
+its zero-based `index`, `ok`, and either `result` or `error` with
+`error_code`/`suggestion`. Queries sharing a server binary reuse one initialized
+session. The total batch budget is the per-query timeout multiplied by its group
+size, capped at two minutes.
 
 Get definition:
 

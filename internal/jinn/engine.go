@@ -266,6 +266,9 @@ func (e *Engine) dispatchSearchOps(ctx context.Context, args map[string]interfac
 	case "lsp_query":
 		result, err := e.lspQuery(ctx, args)
 		return textResult(result), true, err
+	case "lsp_batch":
+		result, err := e.lspBatch(ctx, args)
+		return textResult(result), true, err
 	case "search_replace":
 		result, err := e.searchReplace(ctx, args)
 		return result, true, err
@@ -294,8 +297,19 @@ func (e *Engine) dispatchMemoryMeta(ctx context.Context, args map[string]interfa
 // intArg reads an int-valued argument from the JSON args map.
 // Returns def when the key is absent, non-numeric, or <= 0.
 func intArg(args map[string]interface{}, key string, def int) int {
-	if v, ok := args[key].(float64); ok && int(v) > 0 {
-		return int(v)
+	switch value := args[key].(type) {
+	case float64:
+		if value > 0 {
+			return int(value)
+		}
+	case int:
+		if value > 0 {
+			return value
+		}
+	case int64:
+		if value > 0 {
+			return int(value)
+		}
 	}
 	return def
 }

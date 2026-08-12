@@ -80,19 +80,39 @@ func (e *Engine) readTextFile(resolved string, args map[string]interface{}) (*To
 
 	// Wrap in ToolResult with truncation metadata when applicable.
 	if result.Truncated {
+		nextCall := readNextCall(args, result.NextLine)
+		meta := map[string]any{
+			"truncation": truncationInfo{
+				Truncated:   true,
+				TotalLines:  result.TotalLines,
+				OutputLines: result.OutputLines,
+				NextCall:    nextCall,
+			},
+		}
+		if nextCall != nil {
+			meta["next_call"] = nextCall
+		}
 		return withChecksum(&ToolResult{
 			Text: text,
-			Meta: map[string]any{
-				"truncation": truncationInfo{
-					Truncated:   true,
-					TotalLines:  result.TotalLines,
-					OutputLines: result.OutputLines,
-				},
-			},
+			Meta: meta,
 		}, result.Checksum), nil
 	}
 
 	return withChecksum(textResult(text), result.Checksum), nil
+}
+
+func readNextCall(args map[string]interface{}, nextLine int) *NextCall {
+	if nextLine <= 0 {
+		return nil
+	}
+	path := strArg(args, "path")
+	arguments := map[string]any{"path": path, "start_line": nextLine}
+	for _, key := range []string{"end_line", "line_numbers", "truncate"} {
+		if value, ok := args[key]; ok {
+			arguments[key] = value
+		}
+	}
+	return &NextCall{Tool: "read_file", Arguments: arguments}
 }
 
 // readImageFile reads an image file and returns it as a base64 image block,

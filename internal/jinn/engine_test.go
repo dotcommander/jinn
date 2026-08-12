@@ -15,7 +15,7 @@ var expectedSchemaToolNames = []string{
 	"run_plan", "run_shell", "read_file", "multi_read", "write_file",
 	"edit_file", "multi_edit", "apply_patch", "search_files", "stat_file",
 	"list_dir", "find_files", "list_tools", "detect_project", "memory",
-	"undo", "lsp_query", "diff_files", "search_replace", "web_fetch", "web_search",
+	"undo", "lsp_query", "lsp_batch", "diff_files", "search_replace", "web_fetch", "web_search",
 }
 
 func TestSchema_Valid(t *testing.T) {
@@ -139,7 +139,7 @@ func TestModeSpecificDiscoveryExcludesNestedShellOperations(t *testing.T) {
 	for _, tc := range []struct {
 		mode ShellMode
 		want int
-	}{{ShellModeDisabled, 20}, {ShellModeUnsafe, 21}} {
+	}{{ShellModeDisabled, 21}, {ShellModeUnsafe, 22}} {
 		raw, err := LeanSchemaForMode(tc.mode)
 		if err != nil {
 			t.Fatal(err)

@@ -14,6 +14,9 @@ func coercePlan(raw any) (*PlanTree, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := expandPlanStepsShorthand(m); err != nil {
+		return nil, err
+	}
 	if err := decodeEncodedPlanNodes(m); err != nil {
 		return nil, err
 	}
@@ -21,6 +24,43 @@ func coercePlan(raw any) (*PlanTree, error) {
 		return nil, err
 	}
 	return decodeCoercedPlan(m)
+}
+
+func expandPlanStepsShorthand(plan map[string]any) error {
+	steps, present := plan["steps"]
+	if !present {
+		return nil
+	}
+	if _, hasRoot := plan["root"]; hasRoot {
+		return planShorthandConflict()
+	}
+	if _, hasNodes := plan["nodes"]; hasNodes {
+		return planShorthandConflict()
+	}
+	commands, ok := steps.([]any)
+	if !ok || len(commands) == 0 {
+		return &ErrWithSuggestion{Err: errors.New("plan.steps must be a non-empty array"), Suggestion: "provide at least one step", Code: ErrCodePlanCoerceFailed}
+	}
+	node := map[string]any{
+		"id":       "steps",
+		"commands": commands,
+	}
+	if parallel, ok := plan["parallel"].(bool); ok {
+		node["parallel"] = parallel
+	}
+	if mutates, ok := plan["mutates"].(bool); ok {
+		node["mutates"] = mutates
+	}
+	delete(plan, "steps")
+	delete(plan, "parallel")
+	delete(plan, "mutates")
+	plan["root"] = "steps"
+	plan["nodes"] = []any{node}
+	return nil
+}
+
+func planShorthandConflict() error {
+	return &ErrWithSuggestion{Err: errors.New("plan.steps cannot accompany root or nodes"), Suggestion: "choose steps or root with nodes", Code: ErrCodePlanCoerceFailed}
 }
 
 func normalizePlanInput(raw any) (map[string]any, error) {

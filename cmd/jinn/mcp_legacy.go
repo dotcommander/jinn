@@ -199,13 +199,22 @@ func mcpRouteToolDefinition() map[string]any {
 				},
 				"max_tools": map[string]any{
 					"type":        "integer",
-					"description": "Maximum recommendations to return.",
-					"default":     jinn.RouteDefaultMaxTools,
+					"description": "Maximum recommendations; omit for adaptive routing.",
 					"maximum":     jinn.RouteMaxTools,
 				},
 				"include_schema": map[string]any{
 					"type":        "boolean",
 					"description": "Include lean schemas only for returned tools.",
+					"default":     false,
+				},
+				"include_signature": map[string]any{
+					"type":        "boolean",
+					"description": "Include compact input signatures.",
+					"default":     false,
+				},
+				"include_call": map[string]any{
+					"type":        "boolean",
+					"description": "Include one minimal argument template.",
 					"default":     false,
 				},
 				"include_mutating": map[string]any{

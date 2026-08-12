@@ -195,6 +195,31 @@ func TestRunPlanSchemaRequiresOneNonEmptyCommand(t *testing.T) {
 	}
 }
 
+func TestRunPlanSchemaOffersCompactSteps(t *testing.T) {
+	t.Parallel()
+	tools, err := parseSchemaTools()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range tools {
+		if tool.Function.Name != "run_plan" {
+			continue
+		}
+		plan := tool.Function.Parameters["properties"].(map[string]any)["plan"].(map[string]any)
+		properties := plan["properties"].(map[string]any)
+		steps := properties["steps"].(map[string]any)
+		if minimum, _ := steps["minItems"].(float64); minimum != 1 {
+			t.Fatalf("steps.minItems = %v", steps["minItems"])
+		}
+		forms, _ := plan["oneOf"].([]any)
+		if len(forms) != 2 {
+			t.Fatalf("plan.oneOf = %#v", plan["oneOf"])
+		}
+		return
+	}
+	t.Fatal("run_plan schema not found")
+}
+
 func TestWebFetchSchemaProjectionContract(t *testing.T) {
 	t.Parallel()
 	tools, err := parseSchemaTools()

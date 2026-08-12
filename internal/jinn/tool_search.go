@@ -54,6 +54,10 @@ func (e *Engine) searchFilesContext(ctx context.Context, args map[string]interfa
 	if f, ok := args["format"].(string); ok && f != "" {
 		format = f
 	}
+	offset := max(0, intArg(args, "offset", 0))
+	if offset > 0 && format != "json" {
+		return "", &ErrWithSuggestion{Err: errors.New("offset requires format=json"), Suggestion: "set format to json", Code: ErrCodeInvalidArgs}
+	}
 
 	req := searchRequest{
 		pattern:    pattern,
@@ -61,6 +65,7 @@ func (e *Engine) searchFilesContext(ctx context.Context, args map[string]interfa
 		literal:    literal,
 		// max_matches: default 500, 0 means use the default (not unlimited).
 		maxMatches: intArg(args, "max_matches", searchDefaultMax),
+		offset:     offset,
 	}
 	req.cmd, req.cmdArgs = e.buildSearchArgs(args, literal)
 
@@ -77,7 +82,7 @@ func (e *Engine) searchFilesContext(ctx context.Context, args map[string]interfa
 	}
 
 	if format == "json" {
-		return e.formatSearchJSON(raw, req)
+		return e.formatSearchJSON(raw, req, args)
 	}
 	return e.formatSearchText(raw, req), nil
 }
@@ -112,6 +117,7 @@ type searchRequest struct {
 	searchPath string
 	literal    bool
 	maxMatches int
+	offset     int
 }
 
 // runSearch appends the -m safety cap plus positional args, runs grep/rg, and
@@ -124,7 +130,7 @@ func (e *Engine) runSearch(ctx context.Context, req searchRequest, maxResults in
 	// break total_count accuracy when all matches reside in a single file.
 	// The post-hoc Go cap is still needed for an accurate total_count.
 	if req.maxMatches > 0 {
-		safetyCap := req.maxMatches * 2
+		safetyCap := (req.maxMatches + req.offset) * 2
 		if safetyCap < searchDefaultMax {
 			safetyCap = searchDefaultMax
 		}
@@ -215,22 +221,36 @@ func (e *Engine) searchFilenamesOnly(ctx context.Context, req searchRequest) (st
 }
 
 // formatSearchJSON renders search output as the searchFilesResult JSON shape.
-func (e *Engine) formatSearchJSON(raw string, req searchRequest) (string, error) {
-	shown, total := parseSearchResults(raw, req.maxMatches)
-	truncated := total > req.maxMatches
+func (e *Engine) formatSearchJSON(raw string, req searchRequest, args map[string]interface{}) (string, error) {
+	window, total := parseSearchResults(raw, req.offset+req.maxMatches)
+	start := min(req.offset, len(window))
+	shown := window[start:]
+	truncated := total > req.offset+len(shown)
 
-	resp := searchFilesResult{Results: shown, Truncated: truncated, TotalCount: total, TotalCountExact: !truncated}
+	resp := searchFilesResult{Results: shown, Truncated: truncated, TotalCount: total, TotalCountExact: !truncated, Offset: req.offset}
 	if total == 0 {
 		resp.ZeroMatchReason = e.classifyZeroMatch(req.pattern, req.searchPath, req.literal)
 	}
 	if truncated {
 		resp.Hint = "TRUNCATED: use max_matches or a more specific pattern"
+		resp.NextCall = searchNextCall(args, req.offset+len(shown), req.maxMatches)
 	}
 	jsonBytes, err := json.Marshal(resp)
 	if err != nil {
 		return "", fmt.Errorf("marshal search results: %w", err)
 	}
 	return string(jsonBytes), nil
+}
+
+func searchNextCall(args map[string]interface{}, offset, maxMatches int) *NextCall {
+	arguments := make(map[string]any, len(args)+2)
+	for key, value := range args {
+		arguments[key] = cloneJSONValue(value)
+	}
+	arguments["format"] = "json"
+	arguments["max_matches"] = maxMatches
+	arguments["offset"] = offset
+	return &NextCall{Tool: "search_files", Arguments: arguments}
 }
 
 // formatSearchText renders search output as plain text with a line cap.

@@ -122,8 +122,11 @@ func TestMCPCurrentToolsListKeepsOneToolAndUsesJSONSchema202012(t *testing.T) {
 	}
 	inputProperties := inputSchema["properties"].(map[string]any)
 	maxTools := inputProperties["max_tools"].(map[string]any)
-	if maxTools["default"] != float64(1) {
-		t.Fatalf("max_tools default = %v, want 1", maxTools["default"])
+	if _, hasDefault := maxTools["default"]; hasDefault {
+		t.Fatalf("max_tools unexpectedly advertises a fixed default: %#v", maxTools)
+	}
+	if _, ok := inputProperties["include_call"]; !ok {
+		t.Fatalf("include_call missing: %#v", inputProperties)
 	}
 	outputSchema := tool["outputSchema"].(map[string]any)
 	if outputSchema["$schema"] != "https://json-schema.org/draft/2020-12/schema" {

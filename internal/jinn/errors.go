@@ -1,5 +1,7 @@
 package jinn
 
+import "errors"
+
 // Error code constants for structured error reporting.
 const (
 	ErrCodePathOutsideSandbox = "path_outside_sandbox"
@@ -35,3 +37,12 @@ type ErrWithSuggestion struct {
 
 func (e *ErrWithSuggestion) Error() string { return e.Err.Error() }
 func (e *ErrWithSuggestion) Unwrap() error { return e.Err }
+
+// ErrorDetails extracts the stable code and corrective suggestion from err.
+func ErrorDetails(err error) (code, suggestion string) {
+	var detailed *ErrWithSuggestion
+	if errors.As(err, &detailed) {
+		return detailed.Code, detailed.Suggestion
+	}
+	return "", ""
+}
