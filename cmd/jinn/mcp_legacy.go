@@ -131,7 +131,7 @@ func handleMCPToolCall(params json.RawMessage, mode jinn.ShellMode) (any, error)
 	if len(call.Arguments) == 0 || string(call.Arguments) == "null" {
 		return nil, errors.New("missing jinn_route arguments")
 	}
-	req, err := jinn.DecodeRouteRequest(call.Arguments)
+	req, err := decodeLegacyMCPRouteRequest(call.Arguments)
 	if err != nil {
 		return nil, fmt.Errorf("invalid jinn_route arguments: %w", err)
 	}
@@ -152,6 +152,28 @@ func handleMCPToolCall(params json.RawMessage, mode jinn.ShellMode) (any, error)
 		},
 		"isError": false,
 	}, nil
+}
+
+func decodeLegacyMCPRouteRequest(rawArgs json.RawMessage) (jinn.RouteRequest, error) {
+	req, err := jinn.DecodeRouteRequest(rawArgs)
+	if err == nil || !isMCPHostOnlyUnknownField(err) {
+		return req, err
+	}
+
+	var arguments map[string]any
+	if unmarshalErr := json.Unmarshal(rawArgs, &arguments); unmarshalErr != nil {
+		return jinn.RouteRequest{}, unmarshalErr
+	}
+	cleaned, marshalErr := json.Marshal(withoutMCPHostOnlyArguments(arguments))
+	if marshalErr != nil {
+		return jinn.RouteRequest{}, marshalErr
+	}
+	return jinn.DecodeRouteRequest(cleaned)
+}
+
+func isMCPHostOnlyUnknownField(err error) bool {
+	return err.Error() == `json: unknown field "intent"` ||
+		err.Error() == `json: unknown field "accept_large_output"`
 }
 
 func mcpResult(id json.RawMessage, result any) mcpResponse {

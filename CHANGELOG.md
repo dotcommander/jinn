@@ -11,6 +11,9 @@ and jinn adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Add an opt-in provider-backed Codex discoverability smoke covering cold
   routing for two distinct tasks and an unrelated negative control.
+- Add an equivalent opt-in JCode discoverability smoke with a temporary
+  project configuration, exact MCP tool allowlist, NDJSON lifecycle checks,
+  and per-case token usage.
 
 ### Changed
 
@@ -21,6 +24,12 @@ and jinn adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the side-effect-free route lookup works in non-interactive sessions without
   widening legacy execution authority, including the host-level route-first
   instruction needed by cold Codex prompts.
+
+### Fixed
+
+- Ignore the known `intent` and `accept_large_output` controls injected by
+  agent hosts at current and legacy MCP boundaries while retaining strict
+  rejection of other unknown tool arguments.
 
 ## [0.13.0] - 2026-08-11
 

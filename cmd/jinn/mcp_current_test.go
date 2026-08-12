@@ -282,6 +282,19 @@ func TestMCPCurrentRouteReturnsStructuredContent(t *testing.T) {
 	}
 }
 
+func TestMCPCurrentRouteIgnoresAgentHostControlArguments(t *testing.T) {
+	t.Parallel()
+	resp := handleCurrentMCPTestLine(t, `{"jsonrpc":"2.0","id":"call","method":"tools/call","params":{`+currentMCPMeta+`,"name":"jinn_route","arguments":{"need":"run tests","intent":"choose a capability","accept_large_output":true}}}`)
+	result := resp["result"].(map[string]any)
+	if result["isError"] == true {
+		t.Fatalf("route rejected agent host control arguments: %#v", result)
+	}
+	structured := result["structuredContent"].(map[string]any)
+	if structured["query"] != "run tests" {
+		t.Fatalf("query = %v", structured["query"])
+	}
+}
+
 func TestMCPCurrentRouteRejectsSchemaViolations(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

@@ -69,6 +69,41 @@ requires:
 Use `--case route-only`, `--case ambiguous-route`, or
 `--case negative-control` to isolate a failure without rerunning passing cases.
 
+## JCode discoverability smoke (provider-backed)
+
+This opt-in gate invokes JCode up to three times and consumes the configured
+provider's quota. Build the task-owned binary, authenticate JCode, and pin the
+provider and model used in production:
+
+```bash
+go build -o "${TMPDIR:-/tmp}/jinn-jcode-discovery" ./cmd/jinn
+python3 scripts/jcode-discoverability-smoke-test.py \
+  --binary "${TMPDIR:-/tmp}/jinn-jcode-discovery" \
+  --provider "$JCODE_PROVIDER" \
+  --model "$JCODE_MODEL"
+```
+
+The harness creates a temporary project containing `.jcode/mcp.json` and a
+route-first `AGENTS.md`. It exposes only `mcp__jinn__jinn_route`, disables
+JCode's built-in tools and automatic follow-up turns, and reads JCode's NDJSON
+tool lifecycle plus final usage record. The temporary project is removed after
+the run. JCode still writes its normal session records and may update its MCP
+schema cache under the active JCode home; the output includes each session ID.
+
+The cold prompts and acceptance criteria match the Codex gate:
+
+- Exactly one completed route lookup for each capability decision.
+- No tool call and the exact answer `42` for the arithmetic negative control.
+- No other tool, failed or incomplete tool lifecycle, auto-poke turn, or
+  malformed NDJSON event.
+- A final provider, model, session ID, and token-usage record for every case.
+
+Omit `--provider` or `--model` to use JCode's configured selection, but that is
+not a repeatable certification. Use `--case route-only`,
+`--case ambiguous-route`, or `--case negative-control` to isolate a failure.
+`--mcp-wait-ms` defaults to `10000` for a cold MCP schema cache, and `--timeout`
+defaults to `180` seconds per provider call.
+
 ## Streamable HTTP smoke test
 
 The HTTP smoke test starts a real subprocess on a temporary loopback port. It

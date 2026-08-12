@@ -142,6 +142,45 @@ or Codex integration behavior. It checks two distinct cold routing choices and
 an unrelated negative control. See
 [MCP smoke tests](mcp-smoke-test.md#codex-discoverability-smoke-provider-backed).
 
+#### JCode MCP configuration
+
+JCode reads project-local MCP servers from `.jcode/mcp.json`. Configure the
+route-only server with the canonical `mcpServers` key:
+
+```json
+{
+  "mcpServers": {
+    "jinn": {
+      "command": "jinn",
+      "args": ["--mcp"],
+      "shared": false
+    }
+  }
+}
+```
+
+Add the route-first rule from the Codex example to the project's `AGENTS.md`,
+using JCode's external tool name `mcp__jinn__jinn_route`. For a bounded
+headless check, expose only that tool:
+
+```bash
+JCODE_RUN_AUTO_POKE=0 JCODE_RUN_MCP_WAIT_MS=10000 \
+jcode --no-update --no-selfdev --disable-base-tools \
+  --tools mcp__jinn__jinn_route --disabled-tools "" \
+  --provider "$JCODE_PROVIDER" --model "$JCODE_MODEL" \
+  run --ndjson "Choose the safest capability for previewing a symbol rename."
+```
+
+JCode merges project-local and global MCP configuration. A project entry named
+`jinn` overrides a same-named global entry; the exact tool allowlist keeps other
+servers and built-in tools out of the model-visible surface. Headless runs
+persist normal JCode sessions and may refresh the MCP schema cache.
+
+The opt-in provider-backed JCode gate creates this project configuration only
+inside a temporary directory and verifies two cold routing choices plus an
+unrelated negative control. See
+[MCP smoke tests](mcp-smoke-test.md#jcode-discoverability-smoke-provider-backed).
+
 For public-web work, use a distinct network-profile server entry. It still has two MCP tools (`jinn_route`, `jinn_call`) and `jinn_call` permits only the local read-only allowlist plus `web_fetch` and `web_search`; it never permits shell or mutation.
 
 These web requests leave the machine and may consume provider quota.

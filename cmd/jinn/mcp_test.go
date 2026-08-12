@@ -133,6 +133,24 @@ func TestMCPToolsCallRouteDoesNotExecute(t *testing.T) {
 	}
 }
 
+func TestMCPLegacyRouteIgnoresAgentHostControlArguments(t *testing.T) {
+	t.Parallel()
+	resp := handleMCPTestLine(t, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"jinn_route","arguments":{"need":"run tests","intent":"choose a capability","accept_large_output":true}}}`)
+	if errResponse, ok := resp["error"]; ok {
+		t.Fatalf("route rejected agent host control arguments: %v", errResponse)
+	}
+}
+
+func TestMCPLegacyRouteStillRejectsUnknownArguments(t *testing.T) {
+	t.Parallel()
+	resp := handleMCPTestLine(t, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"jinn_route","arguments":{"need":"run tests","unexpected":true}}}`)
+	errResponse, ok := resp["error"].(map[string]any)
+	message, _ := errResponse["message"].(string)
+	if !ok || !strings.Contains(message, "unknown field") {
+		t.Fatalf("unknown argument response = %#v", resp)
+	}
+}
+
 func TestMCPRouteRunPlanClassification(t *testing.T) {
 	t.Parallel()
 	resp := handleMCPTestLine(t, `{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"jinn_route","arguments":{"need":"run plan","include_mutating":true,"max_tools":8}}}`)

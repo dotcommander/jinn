@@ -129,10 +129,11 @@ allowlist. File/state mutation, shell execution, `memory`, and `undo` are not
 available, and the profile forces shell execution off regardless of the
 `--shell-mode` flag. The default `--mcp` profile remains route-only.
 
-For Codex, use the default route-only profile and preapprove only the
-side-effect-free route lookup so the model can discover tools without an
-interactive approval.
-See the [Codex CLI MCP configuration](docs/harness-integrations.md#codex-mcp-configuration).
+For Codex or JCode, use the default route-only profile and expose only the
+side-effect-free route lookup so the model can discover tools without widening
+execution authority. See the
+[Codex CLI configuration](docs/harness-integrations.md#codex-mcp-configuration)
+and [JCode configuration](docs/harness-integrations.md#jcode-mcp-configuration).
 
 `--mcp-profile=network` keeps this compact routed surface while allowing only
 local read-only tools plus `web_fetch` and `web_search`. Network calls leave the

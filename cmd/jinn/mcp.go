@@ -296,6 +296,7 @@ type mcpRouteArguments struct {
 }
 
 func decodeMCPArguments(label string, rawArgs map[string]any, target any) error {
+	rawArgs = withoutMCPHostOnlyArguments(rawArgs)
 	raw, err := json.Marshal(rawArgs)
 	if err != nil {
 		return fmt.Errorf("%s arguments must be a JSON object: %w", label, err)
@@ -306,6 +307,24 @@ func decodeMCPArguments(label string, rawArgs map[string]any, target any) error 
 		return fmt.Errorf("%s arguments must be an object: %w", label, err)
 	}
 	return nil
+}
+
+// withoutMCPHostOnlyArguments keeps application arguments strict while
+// removing control fields injected by agent hosts after schema discovery.
+func withoutMCPHostOnlyArguments(rawArgs map[string]any) map[string]any {
+	_, hasIntent := rawArgs["intent"]
+	_, hasLargeOutput := rawArgs["accept_large_output"]
+	if !hasIntent && !hasLargeOutput {
+		return rawArgs
+	}
+
+	cleaned := make(map[string]any, len(rawArgs))
+	for key, value := range rawArgs {
+		cleaned[key] = value
+	}
+	delete(cleaned, "intent")
+	delete(cleaned, "accept_large_output")
+	return cleaned
 }
 
 func mcpRouteHandlerForProfile(mode jinn.ShellMode, profile mcpProfile) func(context.Context, *server.CallRequest) (protocol.ToolResponse, error) {
