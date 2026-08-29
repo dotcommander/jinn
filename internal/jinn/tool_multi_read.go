@@ -141,7 +141,7 @@ func (e *Engine) readMultiReadEntry(path string, entry map[string]interface{}, r
 	}
 
 	// Sandbox validation.
-	resolved, err := e.checkPath(path)
+	resolved, err := e.checkPathForRead(path)
 	if err != nil {
 		mrErr := errToMultiRead(err)
 		return "", nil, 0, &mrErr

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 )
@@ -45,6 +46,67 @@ func TestMultiReadHappyPath(t *testing.T) {
 	}
 	if len(mr.Errors) != 0 {
 		t.Errorf("expected 0 errors, got %d: %v", len(mr.Errors), mr.Errors)
+	}
+}
+
+func TestMultiReadRegisteredShellSpill(t *testing.T) {
+	t.Setenv("JINN_CONFIG_DIR", t.TempDir())
+	e, _ := testEngine(t)
+	capture := newShellOutputCapture(4)
+	if _, err := capture.Write([]byte("registered spill content")); err != nil {
+		t.Fatal(err)
+	}
+	spill := capture.EnsureSpill()
+	capture.Close()
+	t.Cleanup(func() { _ = os.Remove(spill) })
+
+	result, _, err := e.Dispatch(context.Background(), "multi_read", args("files", []interface{}{
+		map[string]interface{}{"path": spill},
+	}))
+	if err != nil {
+		t.Fatalf("multi_read registered spill: %v", err)
+	}
+	var decoded multiReadResult
+	if err := json.Unmarshal([]byte(result.Text), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if got := decoded.Files[spill]; !strings.Contains(got, "registered spill content") {
+		t.Fatalf("registered spill content = %q", got)
+	}
+}
+
+func TestMultiReadRejectsReplacedRegisteredShellSpill(t *testing.T) {
+	t.Setenv("JINN_CONFIG_DIR", t.TempDir())
+	e, dir := testEngine(t)
+	writeTestFile(t, dir, "good.txt", "workspace content")
+	capture := newShellOutputCapture(4)
+	if _, err := capture.Write([]byte("original spill content")); err != nil {
+		t.Fatal(err)
+	}
+	spill := capture.EnsureSpill()
+	capture.Close()
+	t.Cleanup(func() { _ = os.Remove(spill) })
+	if err := os.WriteFile(spill, []byte("replacement"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	result, _, err := e.Dispatch(context.Background(), "multi_read", args("files", []interface{}{
+		map[string]interface{}{"path": "good.txt"},
+		map[string]interface{}{"path": spill},
+	}))
+	if err != nil {
+		t.Fatalf("multi_read partial result: %v", err)
+	}
+	var decoded multiReadResult
+	if err := json.Unmarshal([]byte(result.Text), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(decoded.Files["good.txt"], "workspace content") {
+		t.Fatalf("workspace content = %q", decoded.Files["good.txt"])
+	}
+	spillErr, ok := decoded.Errors[spill]
+	if !ok || spillErr.ErrorCode != ErrCodePathOutsideSandbox || !strings.Contains(spillErr.Error, "unregistered shell spill file") {
+		t.Fatalf("replaced spill error = %+v", spillErr)
 	}
 }
 
