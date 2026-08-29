@@ -7,6 +7,12 @@ and jinn adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.14.1] - 2026-08-29
+
+### Fixed
+
+- Allow reading registered shell spill files in `multi_read`.
+
 ## [0.13.1] - 2026-08-12
 
 ### Added
