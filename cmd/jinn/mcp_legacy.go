@@ -12,13 +12,30 @@ import (
 	"github.com/dotcommander/jinn/internal/jinn"
 )
 
-const mcpProtocolVersion = "2025-06-18"
+const (
+	mcpProtocolVersion  = "2025-06-18"
+	mcpMethodInitialize = "initialize"
+	mcpMethodToolsCall  = "tools/call"
+	mcpResultType       = "type"
+	mcpResultContent    = "content"
+	mcpResultText       = "text"
+	mcpResultIsError    = "isError"
+)
 
 type mcpMessage struct {
 	JSONRPC string          `json:"jsonrpc"`
 	ID      json.RawMessage `json:"id,omitempty"`
 	Method  string          `json:"method,omitempty"`
 	Params  json.RawMessage `json:"params,omitempty"`
+	Result  json.RawMessage `json:"result,omitempty"`
+	Error   *mcpError       `json:"error,omitempty"`
+}
+
+type mcpRequest struct {
+	JSONRPC string          `json:"jsonrpc"`
+	ID      json.RawMessage `json:"id"`
+	Method  string          `json:"method"`
+	Params  any             `json:"params"`
 }
 
 type mcpResponse struct {
@@ -39,10 +56,19 @@ type mcpToolCallParams struct {
 	Arguments json.RawMessage `json:"arguments"`
 }
 
+type legacyMCPRunner struct {
+	scanner                   *bufio.Scanner
+	encoder                   *json.Encoder
+	ldVersion                 string
+	mode                      jinn.ShellMode
+	clientSupportsElicitation bool
+	elicitationSequence       int
+}
+
 func runLegacyMCP(ctx context.Context, in io.Reader, out io.Writer, ldVersion string, mode jinn.ShellMode) error {
 	scanner := bufio.NewScanner(in)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	enc := json.NewEncoder(out)
+	runner := legacyMCPRunner{scanner: scanner, encoder: json.NewEncoder(out), ldVersion: ldVersion, mode: mode}
 	for scanner.Scan() {
 		select {
 		case <-ctx.Done():
@@ -53,11 +79,11 @@ func runLegacyMCP(ctx context.Context, in io.Reader, out io.Writer, ldVersion st
 		if line == "" {
 			continue
 		}
-		resp, respond := handleMCPLine([]byte(line), ldVersion, mode)
+		resp, respond := runner.handleLine(ctx, []byte(line))
 		if !respond {
 			continue
 		}
-		if err := enc.Encode(resp); err != nil {
+		if err := runner.encoder.Encode(resp); err != nil {
 			return fmt.Errorf("write mcp response: %w", err)
 		}
 	}
@@ -65,6 +91,20 @@ func runLegacyMCP(ctx context.Context, in io.Reader, out io.Writer, ldVersion st
 		return fmt.Errorf("read mcp stdin: %w", err)
 	}
 	return nil
+}
+
+func (r *legacyMCPRunner) handleLine(ctx context.Context, line []byte) (mcpResponse, bool) {
+	var msg mcpMessage
+	if err := json.Unmarshal(line, &msg); err == nil {
+		if msg.Method == mcpMethodInitialize {
+			r.clientSupportsElicitation = legacyMCPClientSupportsElicitation(msg.Params)
+		}
+		if msg.Method == mcpMethodToolsCall && legacyMCPToolName(msg.Params) == mcpAskUserTool {
+			r.elicitationSequence++
+			return r.handleAskUser(ctx, msg), true
+		}
+	}
+	return handleMCPLine(line, r.ldVersion, r.mode)
 }
 
 //nolint:goconst // legacy JSON-RPC payloads intentionally retain canonical wire literals.
@@ -82,7 +122,7 @@ func handleMCPLine(line []byte, ldVersion string, mode jinn.ShellMode) (mcpRespo
 		return mcpResponse{}, false
 	}
 	switch msg.Method {
-	case "initialize":
+	case mcpMethodInitialize:
 		return mcpResult(msg.ID, map[string]any{
 			"protocolVersion": mcpProtocolVersion,
 			"instructions":    mcpInstructions(mcpProfileDiscover),
@@ -98,8 +138,8 @@ func handleMCPLine(line []byte, ldVersion string, mode jinn.ShellMode) (mcpRespo
 	case "ping":
 		return mcpResult(msg.ID, map[string]any{}), true
 	case "tools/list":
-		return mcpResult(msg.ID, map[string]any{"tools": []any{mcpRouteToolDefinition()}}), true
-	case "tools/call":
+		return mcpResult(msg.ID, map[string]any{"tools": []any{mcpRouteToolDefinition(), mcpAskUserToolDefinition()}}), true
+	case mcpMethodToolsCall:
 		result, err := handleMCPToolCall(msg.Params, mode)
 		if err != nil {
 			return mcpProtocolError(msg.ID, -32602, err.Error(), nil), true
@@ -107,6 +147,121 @@ func handleMCPLine(line []byte, ldVersion string, mode jinn.ShellMode) (mcpRespo
 		return mcpResult(msg.ID, result), true
 	default:
 		return mcpProtocolError(msg.ID, -32601, "Method not found", map[string]string{"method": msg.Method}), true
+	}
+}
+
+func legacyMCPClientSupportsElicitation(params json.RawMessage) bool {
+	var initialize struct {
+		Capabilities struct {
+			Elicitation struct {
+				Form map[string]any `json:"form"`
+			} `json:"elicitation"`
+		} `json:"capabilities"`
+	}
+	return json.Unmarshal(params, &initialize) == nil && initialize.Capabilities.Elicitation.Form != nil
+}
+
+func legacyMCPToolName(params json.RawMessage) string {
+	var call mcpToolCallParams
+	if json.Unmarshal(params, &call) != nil {
+		return ""
+	}
+	return call.Name
+}
+
+func (r *legacyMCPRunner) handleAskUser(ctx context.Context, msg mcpMessage) mcpResponse {
+	if !r.clientSupportsElicitation {
+		return mcpProtocolError(msg.ID, -32602, "ask_user_question requires an MCP client with form elicitation support", nil)
+	}
+	var call mcpToolCallParams
+	if err := json.Unmarshal(msg.Params, &call); err != nil {
+		return mcpProtocolError(msg.ID, -32602, fmt.Sprintf("invalid tools/call params: %v", err), nil)
+	}
+	questionnaire, err := jinn.DecodeQuestionnaire(call.Arguments)
+	if err != nil {
+		return mcpProtocolError(msg.ID, -32602, err.Error(), nil)
+	}
+
+	requestID := json.RawMessage(fmt.Sprintf("%q", fmt.Sprintf("jinn-elicitation-%d", r.elicitationSequence)))
+	request := mcpRequest{
+		JSONRPC: "2.0",
+		ID:      requestID,
+		Method:  "elicitation/create",
+		Params: map[string]any{
+			"mode":            "form",
+			"message":         "Answer the structured questions",
+			"requestedSchema": jinn.QuestionnaireElicitationSchema(questionnaire),
+		},
+	}
+	if writeErr := r.encoder.Encode(request); writeErr != nil {
+		return mcpProtocolError(msg.ID, -32603, fmt.Sprintf("write elicitation request: %v", writeErr), nil)
+	}
+
+	result, err := readLegacyMCPElicitationResult(ctx, r.scanner, requestID)
+	if err != nil {
+		return mcpProtocolError(msg.ID, -32603, err.Error(), nil)
+	}
+	return mcpResult(msg.ID, legacyMCPQuestionnaireToolResult(questionnaire, result))
+}
+
+func readLegacyMCPElicitationResult(ctx context.Context, scanner *bufio.Scanner, requestID json.RawMessage) (map[string]any, error) {
+	for scanner.Scan() {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+		var msg mcpMessage
+		if err := json.Unmarshal(scanner.Bytes(), &msg); err != nil {
+			return nil, fmt.Errorf("decode elicitation response: %w", err)
+		}
+		if string(msg.ID) != string(requestID) || msg.Method != "" {
+			continue
+		}
+		if msg.Error != nil {
+			return nil, fmt.Errorf("elicitation failed: %s", msg.Error.Message)
+		}
+		var result map[string]any
+		if err := json.Unmarshal(msg.Result, &result); err != nil {
+			return nil, fmt.Errorf("decode elicitation result: %w", err)
+		}
+		return result, nil
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("read elicitation response: %w", err)
+	}
+	return nil, errors.New("MCP client closed before returning elicitation input")
+}
+
+func legacyMCPQuestionnaireToolResult(questionnaire jinn.Questionnaire, elicitation map[string]any) map[string]any {
+	action, _ := elicitation["action"].(string)
+	result := jinn.QuestionnaireResult{Answers: []jinn.QuestionnaireAnswer{}, Cancelled: true}
+	if action == "accept" {
+		content, ok := elicitation[mcpResultContent].(map[string]any)
+		if !ok {
+			return legacyMCPToolError("elicitation accepted without questionnaire content")
+		}
+		answers, err := jinn.QuestionnaireAnswers(questionnaire, content)
+		if err != nil {
+			return legacyMCPToolError(err.Error())
+		}
+		result = answers
+	}
+	data, err := json.Marshal(result)
+	if err != nil {
+		return legacyMCPToolError(fmt.Sprintf("marshal questionnaire result: %v", err))
+	}
+	return map[string]any{
+		mcpResultContent:    []map[string]string{{mcpResultType: mcpResultText, mcpResultText: string(data)}},
+		"structuredContent": result,
+		mcpResultIsError:    false,
+	}
+}
+
+func legacyMCPToolError(message string) map[string]any {
+	return map[string]any{
+		mcpResultContent: []map[string]string{{mcpResultType: mcpResultText, mcpResultText: message}},
+		mcpResultIsError: true,
 	}
 }
 
@@ -148,7 +303,7 @@ func handleMCPToolCall(params json.RawMessage, mode jinn.ShellMode) (any, error)
 	}
 	return map[string]any{
 		"content": []map[string]string{
-			{"type": "text", "text": string(data)},
+			{mcpResultType: mcpResultText, mcpResultText: string(data)},
 		},
 		"isError": false,
 	}, nil
@@ -225,5 +380,15 @@ func mcpRouteToolDefinition() map[string]any {
 			},
 			"required": []string{"need"},
 		},
+	}
+}
+
+func mcpAskUserToolDefinition() map[string]any {
+	return map[string]any{
+		"name":        mcpAskUserTool,
+		"title":       "Ask the user structured questions",
+		"description": "Ask 1-4 structured questions through MCP form elicitation instead of guessing. Requires an elicitation-capable client.",
+		"inputSchema": mcpAskUserInputSchema,
+		"annotations": map[string]any{"readOnlyHint": true, "destructiveHint": false},
 	}
 }

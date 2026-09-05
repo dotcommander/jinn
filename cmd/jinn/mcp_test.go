@@ -3,9 +3,12 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
+	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dotcommander/jinn/internal/jinn"
 )
@@ -36,13 +39,13 @@ func TestMCPInitialize(t *testing.T) {
 	}
 }
 
-func TestMCPToolsListOnlyRouteTool(t *testing.T) {
+func TestMCPToolsListIncludesCompactQuestionnaireSurface(t *testing.T) {
 	t.Parallel()
 	resp := handleMCPTestLine(t, `{"jsonrpc":"2.0","id":"tools","method":"tools/list"}`)
 	result := resp["result"].(map[string]any)
 	tools := result["tools"].([]any)
-	if len(tools) != 1 {
-		t.Fatalf("tool count = %d, want 1", len(tools))
+	if len(tools) != 2 {
+		t.Fatalf("tool count = %d, want 2", len(tools))
 	}
 	tool := tools[0].(map[string]any)
 	if tool["name"] != "jinn_route" {
@@ -54,9 +57,104 @@ func TestMCPToolsListOnlyRouteTool(t *testing.T) {
 	if description, _ := tool["description"].(string); !strings.Contains(description, "development task") || !strings.Contains(description, "side-effect-free") {
 		t.Fatalf("tool description does not make discovery behavior explicit: %q", description)
 	}
+	questionnaire := tools[1].(map[string]any)
+	if questionnaire["name"] != mcpAskUserTool {
+		t.Fatalf("questionnaire tool name = %v", questionnaire["name"])
+	}
+	inputSchema := questionnaire["inputSchema"].(map[string]any)
+	required := inputSchema["required"].([]any)
+	if len(required) != 1 || required[0] != "questions" {
+		t.Fatalf("questionnaire required fields = %#v", required)
+	}
 	data, _ := json.Marshal(resp)
-	if len(data) > 1500 {
+	if len(data) > 3000 {
 		t.Fatalf("tools/list response too large: %d bytes", len(data))
+	}
+}
+
+func TestLegacyMCPRequiresFormElicitation(t *testing.T) {
+	t.Parallel()
+	if legacyMCPClientSupportsElicitation(json.RawMessage(`{"capabilities":{"elicitation":{"url":{}}}}`)) {
+		t.Fatal("URL-only elicitation capability was accepted as form support")
+	}
+	if !legacyMCPClientSupportsElicitation(json.RawMessage(`{"capabilities":{"elicitation":{"form":{}}}}`)) {
+		t.Fatal("form elicitation capability was rejected")
+	}
+}
+
+func TestMCPLegacyAskUserElicitationRoundTrip(t *testing.T) {
+	t.Parallel()
+	inputReader, inputWriter := io.Pipe()
+	outputReader, outputWriter := io.Pipe()
+	t.Cleanup(func() {
+		_ = inputReader.Close()
+		_ = inputWriter.Close()
+		_ = outputReader.Close()
+		_ = outputWriter.Close()
+	})
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	t.Cleanup(cancel)
+	runErr := make(chan error, 1)
+	go func() {
+		runErr <- runLegacyMCP(ctx, inputReader, outputWriter, "test", jinn.ShellModeDisabled)
+	}()
+	decoder := json.NewDecoder(outputReader)
+
+	writeLegacyMCPTestLine(t, inputWriter, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{"elicitation":{"form":{}}}}}`)
+	var initialize map[string]any
+	if err := decoder.Decode(&initialize); err != nil {
+		t.Fatalf("decode initialize response: %v", err)
+	}
+	writeLegacyMCPTestLine(t, inputWriter, `{"jsonrpc":"2.0","method":"notifications/initialized"}`)
+	writeLegacyMCPTestLine(t, inputWriter, `{"jsonrpc":"2.0","id":"call","method":"tools/call","params":{"name":"ask_user_question","arguments":{"questions":[{"question":"Did the form render?","header":"MCP smoke","options":[{"value":"pass","label":"Pass","description":"Rendered","recommended":true},{"value":"fail","label":"Fail","description":"Did not render"}]}]}}}`)
+
+	var elicitation map[string]any
+	if err := decoder.Decode(&elicitation); err != nil {
+		t.Fatalf("decode elicitation request: %v", err)
+	}
+	if elicitation["method"] != "elicitation/create" {
+		t.Fatalf("elicitation method = %v, response = %#v", elicitation["method"], elicitation)
+	}
+	params := elicitation["params"].(map[string]any)
+	if params["mode"] != "form" {
+		t.Fatalf("elicitation mode = %v", params["mode"])
+	}
+	schema := params["requestedSchema"].(map[string]any)
+	properties := schema["properties"].(map[string]any)
+	choice := properties["question_1_choice"].(map[string]any)
+	if choice["default"] != "Pass" {
+		t.Fatalf("recommended default = %v", choice["default"])
+	}
+	id, err := json.Marshal(elicitation["id"])
+	if err != nil {
+		t.Fatalf("marshal elicitation id: %v", err)
+	}
+	writeLegacyMCPTestLine(t, inputWriter, `{"jsonrpc":"2.0","id":`+string(id)+`,"result":{"action":"accept","content":{"question_1_choice":"Pass"}}}`)
+
+	var call map[string]any
+	if err := decoder.Decode(&call); err != nil {
+		t.Fatalf("decode tool response: %v", err)
+	}
+	result := call["result"].(map[string]any)
+	structured := result["structuredContent"].(map[string]any)
+	answers := structured["answers"].([]any)
+	choices := answers[0].(map[string]any)["choices"].([]any)
+	if value := choices[0].(map[string]any)["value"]; value != "pass" {
+		t.Fatalf("selected stable value = %v", value)
+	}
+
+	if err := inputWriter.Close(); err != nil {
+		t.Fatalf("close MCP input: %v", err)
+	}
+	if err := <-runErr; err != nil {
+		t.Fatalf("runLegacyMCP: %v", err)
+	}
+}
+
+func writeLegacyMCPTestLine(t *testing.T, writer io.Writer, line string) {
+	t.Helper()
+	if _, err := io.WriteString(writer, line+"\n"); err != nil {
+		t.Fatalf("write MCP line: %v", err)
 	}
 }
 

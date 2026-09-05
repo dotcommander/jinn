@@ -16,7 +16,7 @@ import (
 
 var version = "dev"
 
-const helpText = `Usage: jinn [--shell-mode=disabled|sandboxed|unsafe] [--mcp-profile=discover|read-only|network] [mcp ... | web fetch [flags] URL | web search [flags] QUERY | --schema | --inspect [addr] | --mcp [--mcp-profile] | --mcp-http [addr] [--mcp-profile] | --version | --help]
+const helpText = `Usage: jinn [--shell-mode=disabled|sandboxed|unsafe] [--mcp-profile=discover|read-only|network] [ask [--validate] | mcp ... | web fetch [flags] URL | web search [flags] QUERY | --schema | --inspect [addr] | --mcp [--mcp-profile] | --mcp-http [addr] [--mcp-profile] | --version | --help]
 
 Sandboxed tool executor for AI coding agents.
 Reads a JSON tool request from stdin, writes a JSON response to stdout.
@@ -25,9 +25,10 @@ Flags:
 	--shell-mode  Shell execution policy: disabled, sandboxed, or unsafe (default: disabled)
 	--schema      Print tool definitions (OpenAI function-calling format)
 	--inspect     Start a local browser inspector UI (default: 127.0.0.1:8787)
-	--mcp        Start MCP 2026-07-28 stdio broker (default profile: jinn_route only)
+	--mcp        Start MCP 2026-07-28 stdio broker (default: routing + user elicitation)
 	--mcp-http   Start MCP 2026-07-28 Streamable HTTP at /mcp (default: 127.0.0.1:8788)
 	--mcp-profile MCP surface: discover, read-only, or network (default: discover)
+	ask          Ask a structured terminal questionnaire from JSON stdin; --validate checks only
 	mcp          Explore an MCP endpoint or explicit-argv subprocess; run "jinn mcp --help"
 	HTTP auth    Set JINN_MCP_HTTP_TOKEN and JINN_MCP_HTTP_ORIGINS for non-loopback binds
   --version  Print version
@@ -124,6 +125,9 @@ func run(ctx context.Context) error {
 		return fail(jinn.Response{Error: err.Error(), ErrorCode: jinn.ErrCodeInvalidArgs})
 	}
 	if len(positional) > 0 {
+		if positional[0] == "ask" {
+			return runQuestionnaireCLI(positional[1:], os.Stdin, os.Stdout)
+		}
 		if positional[0] == "mcp" {
 			if len(positional) == 1 || positional[1] == "--help" || positional[1] == "-h" || positional[1] == "help" {
 				_, writeErr := fmt.Fprint(os.Stdout, mcpExplorerHelp)
@@ -237,7 +241,7 @@ func parseCLIArgs(arguments []string) (jinn.ShellMode, mcpProfile, []string, err
 	positional := make([]string, 0, len(arguments))
 	for i := 0; i < len(arguments); i++ {
 		arg := arguments[i]
-		if len(positional) == 0 && (arg == "mcp" || arg == "web") {
+		if len(positional) == 0 && (arg == "ask" || arg == "mcp" || arg == "web") {
 			positional = append(positional, arguments[i:]...)
 			break
 		}

@@ -98,18 +98,15 @@ func TestMCPCurrentDiscoverAdvertises2026(t *testing.T) {
 	}
 }
 
-func TestMCPCurrentToolsListKeepsOneToolAndUsesJSONSchema202012(t *testing.T) {
+func TestMCPCurrentToolsListKeepsCompactSurfaceAndUsesJSONSchema202012(t *testing.T) {
 	t.Parallel()
 	resp := handleCurrentMCPTestLine(t, `{"jsonrpc":"2.0","id":"tools","method":"tools/list","params":{`+currentMCPMeta+`}}`)
 	result := resp["result"].(map[string]any)
 	tools := result["tools"].([]any)
-	if len(tools) != 1 {
-		t.Fatalf("tool count = %d, want 1", len(tools))
+	if len(tools) != 2 {
+		t.Fatalf("tool count = %d, want 2", len(tools))
 	}
-	tool := tools[0].(map[string]any)
-	if tool["name"] != mcpRouteTool {
-		t.Fatalf("tool name = %v", tool["name"])
-	}
+	tool := mcpToolByName(t, tools, mcpRouteTool)
 	if title, _ := tool["title"].(string); !strings.Contains(strings.ToLower(title), "call first") {
 		t.Fatalf("tool title does not make discovery order explicit: %q", title)
 	}
@@ -146,9 +143,21 @@ func TestMCPCurrentToolsListKeepsOneToolAndUsesJSONSchema202012(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal tools/list response: %v", err)
 	}
-	if len(data) > 3000 {
+	if len(data) > 6000 {
 		t.Fatalf("current tools/list response too large: %d bytes", len(data))
 	}
+}
+
+func mcpToolByName(t *testing.T, tools []any, name string) map[string]any {
+	t.Helper()
+	for _, raw := range tools {
+		candidate := raw.(map[string]any)
+		if candidate["name"] == name {
+			return candidate
+		}
+	}
+	t.Fatalf("%s missing from tools: %#v", name, tools)
+	return nil
 }
 
 //nolint:gocognit,gocyclo,revive // One end-to-end test intentionally validates the complete profile contract.
@@ -164,15 +173,15 @@ func TestMCPReadOnlyProfileAddsCallToolWithReadOnlyAllowlist(t *testing.T) {
 	resp := handleMCPServerTestLine(t, newMCPServerWithProfile("test", jinn.ShellModeDisabled, mcpProfileReadOnly, engine), `{"jsonrpc":"2.0","id":"tools","method":"tools/list","params":{`+currentMCPMeta+`}}`)
 	result := resp["result"].(map[string]any)
 	tools := result["tools"].([]any)
-	if len(tools) != 2 {
-		t.Fatalf("tool count = %d, want 2: %#v", len(tools), tools)
+	if len(tools) != 3 {
+		t.Fatalf("tool count = %d, want 3: %#v", len(tools), tools)
 	}
 	seen := make(map[string]bool, len(tools))
 	for _, rawTool := range tools {
 		tool := rawTool.(map[string]any)
 		name := tool["name"].(string)
 		seen[name] = true
-		if name != mcpRouteTool && name != mcpCallTool {
+		if name != mcpRouteTool && name != mcpCallTool && name != mcpAskUserTool {
 			t.Fatalf("unexpected profile tool: %q", name)
 		}
 		if name == mcpRouteTool {
@@ -198,7 +207,7 @@ func TestMCPReadOnlyProfileAddsCallToolWithReadOnlyAllowlist(t *testing.T) {
 			}
 		}
 	}
-	if !seen[mcpRouteTool] || !seen[mcpCallTool] {
+	if !seen[mcpRouteTool] || !seen[mcpCallTool] || !seen[mcpAskUserTool] {
 		t.Fatalf("profile tools = %#v", seen)
 	}
 }

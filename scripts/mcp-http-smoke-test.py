@@ -167,7 +167,7 @@ def finish(proc: subprocess.Popen[str], host_port: str, label: str) -> None:
         fail(f"{label} stderr = {stderr!r}, want {expected_stderr!r}")
 
 
-def route_only_smoke(binary: str) -> None:
+def compact_smoke(binary: str) -> None:
     proc, url, host_port = start(binary)
     try:
         discover = require_ok(post(url, "server/discover", dict(META)), "HTTP server/discover")
@@ -177,8 +177,9 @@ def route_only_smoke(binary: str) -> None:
 
         tools = require_ok(post(url, "tools/list", dict(META)), "HTTP tools/list")
         listed = tools.get("result", {}).get("tools", [])
-        if len(listed) != 1 or listed[0].get("name") != "jinn_route":
-            fail(f"expected route-only HTTP tool surface: {listed!r}")
+        names = {tool.get("name") for tool in listed}
+        if names != {"jinn_route", "ask_user_question"}:
+            fail(f"expected compact HTTP tool surface: {listed!r}")
 
         call_params = {
             **META,
@@ -203,7 +204,7 @@ def route_only_smoke(binary: str) -> None:
         if status != 403:
             fail(f"unconfigured origins allowed browser localhost: {status}/{body!r}")
     finally:
-        finish(proc, host_port, "route-only HTTP smoke")
+        finish(proc, host_port, "compact HTTP smoke")
 
 
 def readonly_smoke(binary: str) -> None:
@@ -225,7 +226,7 @@ def readonly_smoke(binary: str) -> None:
         )
         listed = tools.get("result", {}).get("tools", [])
         names = {tool.get("name") for tool in listed}
-        if names != {"jinn_route", "jinn_call"}:
+        if names != {"jinn_route", "jinn_call", "ask_user_question"}:
             fail(f"unexpected read-only HTTP tools: {listed!r}")
         call_tool = next(tool for tool in listed if tool.get("name") == "jinn_call")
         enum = call_tool.get("inputSchema", {}).get("properties", {}).get("tool", {}).get("enum", [])
@@ -292,12 +293,12 @@ def main() -> int:
     parser.add_argument("--binary", default="jinn", help="path to the Jinn binary")
     args = parser.parse_args()
     try:
-        route_only_smoke(args.binary)
+        compact_smoke(args.binary)
         readonly_smoke(args.binary)
     except RuntimeError as exc:
         print(f"mcp_http_smoke_failed: {exc}", file=sys.stderr)
         return 1
-    print("mcp_http_route_only_smoke=passed")
+    print("mcp_http_compact_smoke=passed")
     print("mcp_http_readonly_auth_smoke=passed")
     return 0
 

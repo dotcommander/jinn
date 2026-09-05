@@ -74,6 +74,21 @@ Errors use the same envelope and often include a next-step hint:
 {"ok": false, "error": "file not found: missing.go", "suggestion": "verify the path exists with list_dir on the parent, or check for typos"}
 ```
 
+## Ask structured questions
+
+Jinn includes a shared questionnaire contract for interactive terminals and MCP
+elicitation. Validate JSON without opening a terminal:
+
+```bash
+printf '%s\n' '{"questions":[{"question":"Proceed?","header":"Approval","options":[{"value":"proceed","label":"Yes","description":"Continue.","recommended":true},{"value":"stop","label":"No","description":"Stop."}]}]}' | jinn ask --validate
+```
+
+Run `jinn ask` with the same JSON on stdin to open the terminal questionnaire.
+It returns structured JSON answers with stable option values and supports
+recommended choices, custom text, multi-select, and cancellation. MCP clients
+with form elicitation can call `ask_user_question`
+directly; clients without that capability receive a clear tool error.
+
 ## Discover tools
 
 Print the OpenAI-compatible function schema:
@@ -107,11 +122,11 @@ Use MCP discovery mode:
 }
 ```
 
-`jinn --mcp` speaks MCP 2026-07-28 through the official Go SDK and exposes one
-MCP tool, `jinn_route`. It recommends matching jinn tools for a task and can
+`jinn --mcp` speaks MCP 2026-07-28 through the official Go SDK and exposes two
+compact MCP tools: `jinn_route` and `ask_user_question`. It recommends matching jinn tools for a task and can
 return lean schemas or executable call templates for only those tools. When
 `max_tools` is omitted, it returns one confident match or two close matches.
-It does not execute filesystem or shell operations itself. The one-tool surface
+It does not execute filesystem or shell operations itself. The compact surface
 is intentional: it keeps model context bounded. Discovery exposes 21 tools by
 default and 22 with an explicit
 `sandboxed` or `unsafe` shell mode.
@@ -129,11 +144,11 @@ work, start `jinn --mcp-profile=read-only --mcp`. It keeps `jinn_route` and adds
 `jinn_call`, whose schema enum is generated from the canonical read-only tool
 allowlist. File/state mutation, shell execution, `memory`, and `undo` are not
 available, and the profile forces shell execution off regardless of the
-`--shell-mode` flag. The default `--mcp` profile remains route-only.
+`--shell-mode` flag. The default `--mcp` profile remains non-executing: it routes tools and supports user elicitation.
 
-For Codex or JCode, use the default route-only profile and expose only the
-side-effect-free route lookup so the model can discover tools without widening
-execution authority. See the
+For Codex or JCode, use the default compact profile and preapprove only the
+side-effect-free route lookup; `ask_user_question` remains available when the
+host supports elicitation, without widening execution authority. See the
 [Codex CLI configuration](docs/harness-integrations.md#codex-mcp-configuration)
 and [JCode configuration](docs/harness-integrations.md#jcode-mcp-configuration).
 
@@ -158,8 +173,9 @@ effectiveness metadata; prompts, arguments, paths, and content are never logged.
 Current MCP requests use `server/discover`, `tools/list`, and `tools/call` with
 `_meta.io.modelcontextprotocol/protocolVersion` set to `2026-07-28` plus
 `_meta.io.modelcontextprotocol/clientCapabilities`. Existing clients that send
-the older `initialize` handshake are routed through a compatibility path; that
-legacy path remains route-only.
+the older `initialize` handshake are routed through a compatibility path that
+retains the compact `jinn_route` and `ask_user_question` surface without exposing
+execution tools.
 The deterministic black-box checks are documented in
 [docs/mcp-smoke-test.md](docs/mcp-smoke-test.md).
 
@@ -170,7 +186,7 @@ jinn --mcp-http
 # POST http://127.0.0.1:8788/mcp
 ```
 
-The HTTP endpoint is stateless, uses the same route-only profile by default,
+The HTTP endpoint is stateless and uses the same compact routing/elicitation profile by default,
 and accepts the MCP 2026-07-28 request headers. Use
 `jinn --mcp-profile=read-only --mcp-http` for the bounded `jinn_route` plus
 `jinn_call` surface. Requests need `Accept: application/json, text/event-stream`,
@@ -262,7 +278,7 @@ The fetch CLI supports human output and flat `--json` success shapes. Human outp
 
 The CLI uses `JINN_WEB_*` configuration only: `JINN_WEB_READER`, `JINN_WEB_SEARCH_PROVIDER`, `JINN_WEB_CACHE_TTL`, `JINN_WEB_CACHE_DIR`, `JINN_WEB_TIMEOUT`, `JINN_WEB_CHROME_PATH`, render limits, endpoint overrides, and `JINN_WEB_ALLOW_PRIVATE_NETWORKS`. Search credentials remain `JINA_API_KEY`, `BRAVE_API_KEY`, and `EXA_API_KEY`. Reader cache files default to `$XDG_CACHE_HOME/jinn/web/urls`, falling back to `~/.cache/jinn/web/urls`; temporary cache writes use the `.jinn-web-cache-` prefix.
 
-MCP stays route-only by default. `--mcp-profile=read-only` exposes local read-only execution only; `--mcp-profile=network` exposes the same two MCP tools but permits only local read-only tools plus `web_fetch` and `web_search`. In the network profile, local read-only tools default to compression while `web_fetch` and `web_search` default to uncompressed output; `compress` explicitly overrides either default.
+MCP stays non-executing by default: `jinn_route` discovers capabilities and `ask_user_question` uses form elicitation. `--mcp-profile=read-only` exposes local read-only execution only; `--mcp-profile=network` exposes the same compact tools but permits only local read-only tools plus `web_fetch` and `web_search`. In the network profile, local read-only tools default to compression while `web_fetch` and `web_search` default to uncompressed output; `compress` explicitly overrides either default.
 
 1. **Rooted File Access:** File operations use a workspace `os.Root`; traversal attempts and special-file reads are blocked. Recursive tools never follow directory symlinks.
 2. **Sensitive Blocklist:** Direct access to `.git`, `.ssh`, `.aws`, `.env`, and `.gnupg` is always denied.

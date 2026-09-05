@@ -634,11 +634,24 @@ echo '{"tool":"list_tools","args":{}}' | jinn
 
 Use `include_schema: true` only when the calling agent needs to discover schemas at runtime.
 
+### MCP `ask_user_question`
+
+The default MCP surface includes `ask_user_question` for 1-4 structured
+questions. Each question requires a header (max 16 characters) and 2-4 unique
+options with unique stable values, labels (max 60 characters), and descriptions.
+Options may mark recommended choices; Jinn maps them to form defaults and
+retains their value, label, and recommendation status in structured answer
+choices. Labels `Other`, `Type something.`, and `Next` are reserved. MCP clients
+must advertise form elicitation; unsupported clients receive a clear error. Results contain
+`answers` and `cancelled`, with option, custom, and multi-select answer kinds.
+The same contract is available in terminals through `jinn ask` and can be
+validated non-interactively with `jinn ask --validate`.
+
 ### MCP `jinn_route`
 
-The default `jinn --mcp` profile intentionally exposes only one MCP tool,
-`jinn_route`, to avoid prompt bloat from listing every jinn tool directly. It
-uses the official Go SDK for MCP 2026-07-28. Requests are stateless and carry
+The default `jinn --mcp` profile intentionally exposes only the compact
+`jinn_route` and `ask_user_question` tools, avoiding prompt bloat from listing
+every executor tool directly. It uses the official Go SDK for MCP 2026-07-28. Requests are stateless and carry
 the protocol version and client capabilities in `_meta`. `jinn_route` recommends
 existing jinn tools for a coding-agent task and never executes them.
 
@@ -747,8 +760,8 @@ jinn --mcp-profile=read-only --mcp
 The profile keeps `jinn_route` and adds `jinn_call`, a generic executor whose
 `tool` enum is generated from the canonical read-only tool registry. It forces
 shell execution off and rejects mutation-capable tools, `memory`, and `undo`
-before dispatch. The default `jinn --mcp` profile remains route-only, so adding
-this profile does not change existing MCP clients. Its `jinn_route` schema
+before dispatch. The default `jinn --mcp` profile remains non-executing, with
+only routing and structured elicitation, so this profile does not widen it. Its `jinn_route` schema
 defaults `include_mutating` to false and runtime always excludes mutating
 recommendations.
 
@@ -781,12 +794,12 @@ classification. They never include prompts, tool arguments, paths, or content.
 Logging is best effort and does not affect request results.
 The read-only profile requires current stateless request metadata. Its legacy
 initialize-based traffic is handled by the current SDK and rejected before route
-or tool dispatch; only the default profile retains the route-only compatibility
-path.
+or tool dispatch; only the default profile retains the legacy routing and
+structured-user-input compatibility surface.
 
 ### MCP Streamable HTTP
 
-Start the opt-in HTTP transport with the route-only profile:
+Start the HTTP transport with the compact routing/elicitation profile:
 
 ```bash
 jinn --mcp-http

@@ -227,7 +227,7 @@ Each line in `requests.jsonl` is a complete JSON request object. jinn processes 
 |------|-------------|
 | `--schema` | Print all tool definitions as JSON and exit |
 | `--inspect [addr]` | Start the local browser inspector UI. Defaults to `127.0.0.1:8787` |
-| `--mcp` | Start the MCP 2026-07-28 stdio broker in the route-only discovery profile |
+| `--mcp` | Start the MCP 2026-07-28 stdio broker with compact routing and structured user elicitation |
 | `--mcp-http [addr]` | Start the stateless MCP 2026-07-28 Streamable HTTP broker at `/mcp`. Defaults to `127.0.0.1:8788` |
 | `--mcp-profile=discover\|read-only\|network` | Select the MCP profile. `read-only` adds guarded local inspection; `network` adds guarded web execution. Requires `--mcp` or `--mcp-http` |
 | `JINN_MCP_HTTP_TOKEN` | Optional loopback bearer token, required for non-loopback HTTP binds |
@@ -258,12 +258,13 @@ When an MCP host accepts only an executable path, it may launch `jinn` without
 arguments. Jinn auto-detects MCP JSON-RPC on piped stdin and otherwise retains
 the one-shot `{tool,args}` protocol. Interactive `jinn` still prints help.
 
-The default broker exposes one MCP tool, `jinn_route`. The tool is
+The default broker exposes two compact MCP tools: `jinn_route` and
+`ask_user_question`. The route tool is
 recommendation-only: it does not execute `read_file`, `run_shell`, or any other
 jinn tool. It maps a natural-language need to the most relevant existing jinn
 tools, risk/mutation notes, and optional lean schemas for only the matched
-tools. Keeping one tool in the default MCP surface avoids prompt bloat from
-listing all 22 executor schemas.
+tools. Keeping the default surface to routing plus structured user questions avoids prompt bloat from
+listing all executor schemas.
 
 For agents that need bounded inspection without granting mutation or shell
 access, use the opt-in read-only profile:
@@ -283,10 +284,11 @@ This profile exposes `jinn_route` and `jinn_call`. `jinn_call` dispatches only
 the canonical read-only tool allowlist, while file/state mutation, shell
 execution, `memory`, and `undo` are rejected before dispatch. It also forces
 shell execution off. The profile uses the current stateless 2026-07-28 request
-metadata; older initialize-based clients remain on the route-only compatibility
-path.
+metadata. Older initialize-based clients retain the default routing and
+structured-user-input surface, while executor profiles still require the current
+protocol.
 
-The `network` profile retains only these two MCP tools and adds `web_fetch` and
+The `network` profile retains the compact MCP tools and adds `web_fetch` and
 `web_search` through `jinn_call`. Those requests leave the machine and may
 consume provider quota.
 
@@ -312,7 +314,7 @@ jinn --mcp-http
 # POST http://127.0.0.1:8788/mcp
 ```
 
-The default HTTP profile exposes only `jinn_route`. Add
+The default HTTP profile exposes the compact routing and questionnaire tools. Add
 `--mcp-profile=read-only` to expose the same guarded `jinn_call` profile
 described above. HTTP requests are stateless and use one JSON-RPC request per
 POST. They must include `Accept: application/json, text/event-stream`,

@@ -115,11 +115,13 @@ def current_smoke(binary: str) -> None:
         }
         response = receive_after_send(proc, tools_list, "tools/list")
         tools = response.get("result", {}).get("tools", [])
-        if len(tools) != 1 or tools[0].get("name") != "jinn_route":
-            fail(f"expected one jinn_route tool: {tools!r}")
-        require_route_metadata(tools[0], "current")
-        input_schema = tools[0].get("inputSchema", {})
-        output_schema = tools[0].get("outputSchema", {})
+        names = {tool.get("name") for tool in tools}
+        if names != {"jinn_route", "ask_user_question"}:
+            fail(f"unexpected compact MCP tools: {tools!r}")
+        route_tool = next(tool for tool in tools if tool.get("name") == "jinn_route")
+        require_route_metadata(route_tool, "current")
+        input_schema = route_tool.get("inputSchema", {})
+        output_schema = route_tool.get("outputSchema", {})
         if input_schema.get("$schema") != "https://json-schema.org/draft/2020-12/schema":
             fail(f"input schema is not JSON Schema 2020-12: {input_schema!r}")
         if output_schema.get("$schema") != "https://json-schema.org/draft/2020-12/schema":
@@ -203,9 +205,11 @@ def legacy_smoke(binary: str) -> None:
         )
         response = receive(proc, "legacy tools/list")
         tools = response.get("result", {}).get("tools", [])
-        if len(tools) != 1 or tools[0].get("name") != "jinn_route":
-            fail(f"legacy route tool missing: {tools!r}")
-        require_route_metadata(tools[0], "legacy")
+        names = {tool.get("name") for tool in tools}
+        if names != {"jinn_route", "ask_user_question"}:
+            fail(f"unexpected legacy compact tools: {tools!r}")
+        route_tool = next(tool for tool in tools if tool.get("name") == "jinn_route")
+        require_route_metadata(route_tool, "legacy")
     finally:
         finish(proc, "legacy MCP smoke")
 
@@ -269,7 +273,7 @@ def readonly_smoke(binary: str) -> None:
         response = receive_after_send(proc, tools_list, "read-only tools/list")
         tools = response.get("result", {}).get("tools", [])
         names = {tool.get("name") for tool in tools}
-        if names != {"jinn_route", "jinn_call"}:
+        if names != {"jinn_route", "jinn_call", "ask_user_question"}:
             fail(f"unexpected read-only tools: {tools!r}")
         route_tool = next(tool for tool in tools if tool.get("name") == "jinn_route")
         require_route_metadata(route_tool, "read-only")
@@ -338,7 +342,7 @@ def network_smoke(binary: str) -> None:
         response = receive_after_send(proc, request, "network tools/list")
         tools = response.get("result", {}).get("tools", [])
         names = {tool.get("name") for tool in tools}
-        if names != {"jinn_route", "jinn_call"}:
+        if names != {"jinn_route", "jinn_call", "ask_user_question"}:
             fail(f"unexpected network tools: {tools!r}")
         call_tool = next(tool for tool in tools if tool.get("name") == "jinn_call")
         enum = call_tool.get("inputSchema", {}).get("properties", {}).get("tool", {}).get("enum", [])
@@ -367,7 +371,8 @@ def explorer_smoke(binary: str) -> None:
     except json.JSONDecodeError as exc:
         fail(f"explorer output was not JSON: {exc}: {result.stdout!r}")
     tools = value.get("tools", []) if isinstance(value, dict) else []
-    if len(tools) != 1 or tools[0].get("name") != "jinn_route":
+    names = {tool.get("name") for tool in tools}
+    if names != {"jinn_route", "ask_user_question"}:
         fail(f"explorer tools changed: {tools!r}")
 
 

@@ -24,6 +24,7 @@ import (
 const (
 	mcpRouteTool        = "jinn_route"
 	mcpCallTool         = "jinn_call"
+	mcpAskUserTool      = "ask_user_question"
 	mcpRouteTitle       = "Call first: choose the correct development tool"
 	mcpRouteDescription = "Mandatory first step whenever a development task asks which capability or tool to choose, name, recommend, or use—even when the answer seems obvious. Returns ranked exact Jinn tool names and optional input signatures; read-only and side-effect-free."
 )
@@ -213,7 +214,7 @@ func newMCPServer(ldVersion string, mode jinn.ShellMode) *server.Server {
 	return newMCPServerWithProfile(ldVersion, mode, mcpProfileDiscover, nil)
 }
 
-// Keep the default route-only registration and the opt-in executor policy
+// Keep the default compact routing/elicitation registration and opt-in executor policy
 // together for auditability.
 //
 //nolint:gocognit // profile-specific registration keeps the default surface and
@@ -258,6 +259,13 @@ func newMCPServerWithProfileAndLogger(ldVersion string, mode jinn.ShellMode, pro
 			DestructiveHint: &destructive,
 		},
 	}, mcpRouteHandlerForProfile(routeMode, profile))
+	srv.AddTool(&protocol.Tool{
+		Name:        mcpAskUserTool,
+		Title:       "Ask the user structured questions",
+		Description: "Ask 1-4 structured questions through MCP form elicitation instead of guessing. Requires an elicitation-capable client.",
+		InputSchema: protocol.JSONSchema(mcpAskUserInputSchema),
+		Annotations: &protocol.ToolAnnotations{ReadOnlyHint: &readOnly, DestructiveHint: &destructive},
+	}, mcpAskUserHandler)
 	if (readOnlyProfile || networkProfile) && engine != nil {
 		srv.AddTool(&protocol.Tool{
 			Name:         mcpCallTool,
@@ -273,6 +281,65 @@ func newMCPServerWithProfileAndLogger(ldVersion string, mode jinn.ShellMode, pro
 		}, mcpCallHandler(engine, profile))
 	}
 	return srv
+}
+
+//nolint:goconst // Questionnaire schema keys are intentionally explicit for MCP clients.
+var mcpAskUserInputSchema = map[string]any{
+	"type": "object",
+	"properties": map[string]any{
+		"questions": map[string]any{
+			"type": "array", "minItems": 1, "maxItems": jinn.MaxQuestions,
+			"items": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"question":    map[string]any{"type": "string", "minLength": 1},
+					"header":      map[string]any{"type": "string", "minLength": 1, "maxLength": jinn.MaxHeaderLength},
+					"options":     map[string]any{"type": "array", "minItems": jinn.MinOptions, "maxItems": jinn.MaxOptions, "items": map[string]any{"type": "object", "properties": map[string]any{"value": map[string]any{"type": "string", "minLength": 1}, "label": map[string]any{"type": "string", "maxLength": jinn.MaxLabelLength}, "description": map[string]any{"type": "string", "minLength": 1}, "recommended": map[string]any{"type": "boolean"}}, "required": []string{"value", "label", "description"}, "additionalProperties": false}},
+					"multiSelect": map[string]any{"type": "boolean"},
+				},
+				"required": []string{"question", "header", "options"}, "additionalProperties": false,
+			},
+		},
+	},
+	"required": []string{"questions"}, "additionalProperties": false,
+}
+
+func mcpAskUserHandler(_ context.Context, req *server.CallRequest) (protocol.ToolResponse, error) {
+	if req == nil || req.Params == nil {
+		return protocol.NewToolResultError("ask_user_question arguments are required"), nil
+	}
+	var questionnaire jinn.Questionnaire
+	if err := decodeMCPArguments(mcpAskUserTool, req.Params.Arguments, &questionnaire); err != nil {
+		return protocol.NewToolResultError(err.Error()), nil
+	}
+	if err := jinn.ValidateQuestionnaire(questionnaire); err != nil {
+		return protocol.NewToolResultError(err.Error()), nil
+	}
+	if len(req.Params.InputResponses) > 0 {
+		response, err := req.Params.InputResponses.Elicit("questionnaire")
+		if err != nil {
+			return protocol.NewToolResultError(fmt.Sprintf("invalid questionnaire response: %v", err)), nil
+		}
+		return mcpQuestionnaireResponse(questionnaire, response)
+	}
+	form, _ := req.SupportsElicitation()
+	if !form {
+		return protocol.NewToolResultError("ask_user_question requires an MCP client with form elicitation support"), nil
+	}
+	return protocol.RequireInput(protocol.InputRequests{
+		"questionnaire": protocol.NewElicitFormRequest("Answer the structured questions", protocol.JSONSchema(jinn.QuestionnaireElicitationSchema(questionnaire))),
+	}, ""), nil
+}
+
+func mcpQuestionnaireResponse(questionnaire jinn.Questionnaire, response *protocol.ElicitResult) (protocol.ToolResponse, error) {
+	if response.Action != protocol.ElicitActionAccept {
+		return protocol.NewToolResultStructured(jinn.QuestionnaireResult{Answers: []jinn.QuestionnaireAnswer{}, Cancelled: true})
+	}
+	answers, err := jinn.QuestionnaireAnswers(questionnaire, response.Content)
+	if err != nil {
+		return protocol.NewToolResultError(err.Error()), nil
+	}
+	return protocol.NewToolResultStructured(answers)
 }
 
 func mcpCallDescription(profile mcpProfile) string {
@@ -375,11 +442,15 @@ func mcpRouteHandlerForProfile(mode jinn.ShellMode, profile mcpProfile) func(con
 		}
 		routeID, err := newMCPRouteID()
 		if err != nil {
-			return protocol.NewToolResultError("jinn_route: create route id"), nil
+			return mcpToolError(fmt.Sprintf("jinn_route: create route id: %v", err))
 		}
 		route.RouteID = routeID
 		return protocol.NewToolResultStructured(route)
 	}
+}
+
+func mcpToolError(message string) (protocol.ToolResponse, error) {
+	return protocol.NewToolResultError(message), nil
 }
 
 type mcpCallArguments struct {

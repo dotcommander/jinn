@@ -20,12 +20,12 @@ The script checks three paths:
 - Empty stderr and clean shutdown after the client closes stdin.
 - Compatibility with the older initialize-based handshake.
 - Executable-only host startup with no `--mcp` argument.
-- The opt-in `read-only` profile, including its two-tool surface, generated
-  read-only allowlist, successful `read_file` execution, and rejected
-  `write_file` execution. Its legacy `initialize` request is rejected by the
-  current SDK before any route or tool dispatch.
+- The opt-in `read-only` profile, including its compact tools plus the
+  `jinn_call` executor, generated read-only allowlist, successful `read_file`
+  execution, and rejected `write_file` execution. Its legacy `initialize`
+  request is rejected by the current SDK before any route or tool dispatch.
 
-- The opt-in `network` profile's two-tool surface and its absence of mutating
+- The opt-in `network` profile's compact tools plus `jinn_call`, and its absence of mutating
   or shell execution. The smoke does not invoke real web providers.
 - The local explicit-argv explorer path (`jinn mcp list --command ... --mcp`)
   with stable JSON and subprocess cleanup.
@@ -55,7 +55,7 @@ python3 scripts/codex-discoverability-smoke-test.py \
 ```
 
 The cold prompts never name Jinn, `jinn_route`, or `jinn_call`. The test uses
-Jinn's route-only compatibility surface without enabling legacy execution. Each
+Jinn's non-executing compatibility surface without enabling legacy execution. Each
 isolated Codex run uses the same temporary two-file project as the JCode gate:
 `.jcode/mcp.json` and a short route-first `AGENTS.md`. It ignores user config and
 exec-policy rules, disables documented native tool families and discovered skill

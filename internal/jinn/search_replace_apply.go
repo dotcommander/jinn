@@ -251,17 +251,19 @@ func srDryRunResult(fileResults []searchReplaceFileResult, pending []searchRepla
 // final success result.
 func (e *Engine) srApplyWrites(fileResults []searchReplaceFileResult, pending []searchReplacePending) (*ToolResult, error) {
 	var applied []string
-	var appliedRefs []appliedRef
+	writes := make([]preparedWrite, len(pending))
+	for i, p := range pending {
+		writes[i] = preparedWrite{
+			resolved:   p.candidate.resolved,
+			path:       p.candidate.path,
+			preContent: p.preData,
+			updated:    p.updated,
+		}
+	}
+	if err := e.commitPreparedWrites("search_replace", len(pending), writes, nil); err != nil {
+		return nil, err
+	}
 	for _, p := range pending {
-		if err := e.verifyPreflightState(p.candidate.resolved, p.preData, true); err != nil {
-			return nil, partialApplyErr("search_replace", appliedRefs, len(pending), fmt.Errorf("%s: %w", p.candidate.path, err))
-		}
-		id, err := e.snapshotAndWrite(p.candidate.resolved, p.candidate.path, "search_replace", p.preData, p.updated)
-		if err != nil {
-			// Write failure — abort remaining, report what was already written.
-			return nil, partialApplyErr("search_replace", appliedRefs, len(pending), fmt.Errorf("%s: %w", p.candidate.path, err))
-		}
-		appliedRefs = append(appliedRefs, appliedRef{path: p.candidate.path, undoID: id})
 		applied = append(applied, fmt.Sprintf("%s: %d replacements (lines %d-%d)",
 			p.candidate.path, p.replaced, p.firstLine, p.lastLine))
 	}

@@ -7,6 +7,15 @@ and jinn adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Add a shared structured-questionnaire contract with stable option values,
+  recommended-choice defaults, validation, custom text, multi-select answers,
+  cancellation, and structured results.
+- Add `jinn ask` for terminal questionnaires, `jinn ask --validate` for
+  non-interactive contract validation, and MCP `ask_user_question` support via
+  2026-07-28 form elicitation.
+
 ## [0.14.1] - 2026-08-29
 
 ### Fixed

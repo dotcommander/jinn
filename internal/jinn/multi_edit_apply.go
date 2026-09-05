@@ -123,11 +123,8 @@ func dryRunResult(edits []pendingEdit) *ToolResult {
 
 // writePendingEdits records snapshots and atomically writes each edit in order,
 // returning per-edit result lines, the first changed line, and collected diffs.
-//
-//nolint:gocognit,revive // preflight, snapshot, and partial-apply recovery must remain ordered together.
 func (e *Engine) writePendingEdits(edits []pendingEdit) (writeResult, error) {
 	var wr writeResult
-	var applied []appliedRef
 	for _, ed := range edits {
 		dr := generateEditDiff(string(ed.preContent), ed.updated, ed.path, ed.matchInfo, ed.oldText, ed.newText, 3)
 		if dr.Diff != "" {
@@ -147,16 +144,18 @@ func (e *Engine) writePendingEdits(edits []pendingEdit) (writeResult, error) {
 		}
 		grouped[ed.resolved] = ed
 	}
+	writes := make([]preparedWrite, 0, len(order))
 	for _, resolved := range order {
 		ed := grouped[resolved]
-		if err := e.verifyPreflightState(ed.resolved, ed.preContent, true); err != nil {
-			return writeResult{}, partialApplyErr("multi_edit", applied, len(edits), fmt.Errorf("%s: %w", ed.path, err))
-		}
-		id, werr := e.snapshotAndWrite(ed.resolved, ed.path, "multi_edit", ed.preContent, ed.updated)
-		if werr != nil {
-			return writeResult{}, partialApplyErr("multi_edit", applied, len(edits), fmt.Errorf("%s: %w", ed.path, werr))
-		}
-		applied = append(applied, appliedRef{path: ed.path, undoID: id})
+		writes = append(writes, preparedWrite{
+			resolved:   ed.resolved,
+			path:       ed.path,
+			preContent: ed.preContent,
+			updated:    ed.updated,
+		})
+	}
+	if err := e.commitPreparedWrites("multi_edit", len(edits), writes, func(index int) {
+		ed := grouped[order[index]]
 		line := fmt.Sprintf("edited %s", ed.path)
 		if ed.fuzzy {
 			line += " (fuzzy match)"
@@ -168,7 +167,8 @@ func (e *Engine) writePendingEdits(edits []pendingEdit) (writeResult, error) {
 			}
 		}
 		wr.results = append(wr.results, line)
-
+	}); err != nil {
+		return writeResult{}, err
 	}
 	return wr, nil
 }

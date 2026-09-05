@@ -87,11 +87,11 @@ Scoping is automatic (nearest `.git` ancestor), so the same commands work in eve
 ### MCP discovery broker
 
 If you prefer MCP, `jinn --mcp` uses the MCP 2026-07-28 Go SDK and costs
-exactly one tool schema in context. `jinn_route` recommends jinn tools for a
+a compact two-tool surface in context. `jinn_route` recommends jinn tools for a
 stated need, deterministically with no LLM or network, and never executes
 anything itself. Current clients send stateless requests with protocol metadata
-under `_meta`; older initialize-based clients are handled by a compatibility
-path. Add to `.mcp.json`:
+under `_meta`; older initialize-based clients retain routing and structured user
+elicitation through a compatibility path. Add to `.mcp.json`:
 
 ```json
 {
@@ -104,12 +104,11 @@ path. Add to `.mcp.json`:
 For a bounded read-only inspection surface, use a separate server entry with
 `"args": ["--mcp-profile=read-only", "--mcp"]`. That profile adds `jinn_call`
 for the canonical read-only tool allowlist and rejects mutation, shell,
-`memory`, and `undo` before dispatch. The default entry above remains
-route-only.
+`memory`, and `undo` before dispatch. The default entry above remains non-executing, with routing and structured user elicitation only.
 
 #### Codex MCP configuration
 
-Give Codex the route-only compatibility surface and preapprove only the
+Give Codex the compact routing/elicitation surface and preapprove only the
 side-effect-free discovery lookup:
 
 ```toml
@@ -146,7 +145,7 @@ an unrelated negative control. See
 #### JCode MCP configuration
 
 JCode reads project-local MCP servers from `.jcode/mcp.json`. Configure the
-route-only server with the canonical `mcpServers` key:
+compact routing/elicitation server with the canonical `mcpServers` key:
 
 ```json
 {
@@ -182,7 +181,7 @@ inside a temporary directory and verifies two cold routing choices plus an
 unrelated negative control. See
 [MCP smoke tests](mcp-smoke-test.md#jcode-discoverability-smoke-provider-backed).
 
-For public-web work, use a distinct network-profile server entry. It still has two MCP tools (`jinn_route`, `jinn_call`) and `jinn_call` permits only the local read-only allowlist plus `web_fetch` and `web_search`; it never permits shell or mutation.
+For public-web work, use a distinct network-profile server entry. It still has the compact MCP tools plus `jinn_call`; `jinn_call` permits only the local read-only allowlist plus `web_fetch` and `web_search`; it never permits shell or mutation.
 
 These web requests leave the machine and may consume provider quota.
 
@@ -200,7 +199,7 @@ jinn --mcp-http
 # http://127.0.0.1:8788/mcp
 ```
 
-The default HTTP profile is route-only. Add
+The default HTTP profile provides routing and structured user elicitation. Add
 `--mcp-profile=read-only` for guarded read-only execution. Send one JSON-RPC
 request per POST with `Accept: application/json, text/event-stream`,
 `Content-Type: application/json`, `MCP-Protocol-Version: 2026-07-28`, and

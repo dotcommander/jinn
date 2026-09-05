@@ -209,7 +209,7 @@ func TestMCPHTTPHandlerAuthenticatesBeforeMCPValidation(t *testing.T) {
 	}
 }
 
-func TestMCPHTTPDefaultProfileServesOnlyRoute(t *testing.T) {
+func TestMCPHTTPDefaultProfileServesCompactSurface(t *testing.T) {
 	t.Parallel()
 	handler := newMCPHTTPHandler(newMCPServer("test", jinn.ShellModeDisabled), mcpHTTPConfig{addr: "127.0.0.1:8788"})
 	status, body := mcpHTTPPost(t, handler, "/mcp", "server/discover", "", nil)
@@ -230,7 +230,11 @@ func TestMCPHTTPDefaultProfileServesOnlyRoute(t *testing.T) {
 	if err := json.Unmarshal(body, &response); err != nil {
 		t.Fatalf("decode tools/list: %v", err)
 	}
-	if len(response.Result.Tools) != 1 || response.Result.Tools[0].Name != mcpRouteTool {
+	names := make(map[string]bool, len(response.Result.Tools))
+	for _, tool := range response.Result.Tools {
+		names[tool.Name] = true
+	}
+	if len(names) != 2 || !names[mcpRouteTool] || !names[mcpAskUserTool] {
 		t.Fatalf("default HTTP tools = %#v", response.Result.Tools)
 	}
 	status, _ = mcpHTTPPost(t, handler, "/other", "server/discover", "", nil)
