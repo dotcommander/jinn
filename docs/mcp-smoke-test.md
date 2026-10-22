@@ -14,7 +14,8 @@ python3 scripts/mcp-smoke-test.py \
 The script checks three paths:
 
 - Current MCP 2026-07-28 `server/discover`, `tools/list`, and `tools/call`.
-- Exactly one exposed tool, `jinn_route`, preserving the context-bloat design.
+- Exactly two exposed tools, `jinn_route` and `ask_user_question`, preserving
+  the compact discovery surface without filesystem or shell execution.
 - JSON Schema 2020-12 declarations and output `$defs`.
 - Structured route output plus its mirrored text content.
 - Empty stderr and clean shutdown after the client closes stdin.
