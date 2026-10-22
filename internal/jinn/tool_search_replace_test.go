@@ -535,3 +535,30 @@ func TestSearchReplace_EmptyReplacement(t *testing.T) {
 		t.Errorf("expected 'keep keep', got: %q", data)
 	}
 }
+
+func TestSearchReplace_SkippedFileSurfacesInText(t *testing.T) {
+	t.Parallel()
+	e, dir := testEngine(t)
+	writeTestFile(t, dir, "a.txt", "hello world\n")
+	writeTestFile(t, dir, "bin.dat", "\x00hello\x00binary\n")
+
+	result, err := e.searchReplace(context.Background(), args(
+		"pattern", "hello",
+		"replacement", "hi",
+		"files", []interface{}{"a.txt", "bin.dat"},
+	))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result.Text, "a.txt: 1 replacements") {
+		t.Errorf("expected applied replacement in summary, got: %s", result.Text)
+	}
+	if !strings.Contains(result.Text, "failed or skipped 1 target(s)") || !strings.Contains(result.Text, "bin.dat: binary file detected") {
+		t.Errorf("expected skipped binary target in summary, got: %s", result.Text)
+	}
+
+	data, _ := os.ReadFile(filepath.Join(dir, "a.txt"))
+	if string(data) != "hi world\n" {
+		t.Errorf("a.txt should be replaced, got: %s", data)
+	}
+}

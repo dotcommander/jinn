@@ -224,6 +224,26 @@ func srCheckAllFailed(fileResults []searchReplaceFileResult, pending []searchRep
 	return nil, nil
 }
 
+// srFailedFilesNote lists per-file failures and skips that did not stop the
+// overall replacement, so text-only consumers see them alongside the summary.
+func srFailedFilesNote(fileResults []searchReplaceFileResult) string {
+	var lines []string
+	for _, fr := range fileResults {
+		if fr.Error == "" {
+			continue
+		}
+		line := fmt.Sprintf("  %s: %s", fr.Path, fr.Error)
+		if fr.Suggestion != "" {
+			line += fmt.Sprintf(" — %s", fr.Suggestion)
+		}
+		lines = append(lines, line)
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("\nfailed or skipped %d target(s):\n%s", len(lines), strings.Join(lines, "\n"))
+}
+
 // srDryRunResult renders the [dry-run] preview without touching the filesystem.
 func srDryRunResult(fileResults []searchReplaceFileResult, pending []searchReplacePending) *ToolResult {
 	var previews []string
@@ -240,7 +260,7 @@ func srDryRunResult(fileResults []searchReplaceFileResult, pending []searchRepla
 	allResults = append(allResults, fileResults...)
 	allResults = append(allResults, srResultsFromPending(pending)...)
 	return &ToolResult{
-		Text: fmt.Sprintf("[dry-run] %d files would be changed:\n%s", len(pending), strings.Join(previews, "\n\n")),
+		Text: fmt.Sprintf("[dry-run] %d files would be changed:\n%s%s", len(pending), strings.Join(previews, "\n\n"), srFailedFilesNote(fileResults)),
 		Meta: map[string]any{
 			"files": allResults,
 		},
@@ -277,8 +297,8 @@ func (e *Engine) srApplyWrites(fileResults []searchReplaceFileResult, pending []
 	}
 
 	return &ToolResult{
-		Text: fmt.Sprintf("replaced %d matches across %d files:\n%s",
-			totalReplaced, len(pending), strings.Join(applied, "\n")),
+		Text: fmt.Sprintf("replaced %d matches across %d files:\n%s%s",
+			totalReplaced, len(pending), strings.Join(applied, "\n"), srFailedFilesNote(fileResults)),
 		Meta: map[string]any{
 			"files": allResults,
 			"edit": editDetails{
