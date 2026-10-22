@@ -463,3 +463,6 @@ A two-node plan: the root checks for `go.mod`, and on success (exit code 0) rout
 ```bash
 echo '{"tool":"run_plan","args":{"plan":{"root":"check","nodes":[{"id":"check","commands":[{"shell":"test -f go.mod && echo found"}],"edges":[{"when":{"kind":"exitCode","op":"eq","value":0},"to":"build"}]},{"id":"build","commands":[{"shell":"go build ./..."}],"mutates":true}]}}}' | jinn
 ```
+Read and apply `/Users/vampire/.agents/AGENTS.md` completely, then
+`/Users/vampire/code/go/src/AGENTS.md`, before this file. This file contains
+repository-specific guidance only.
