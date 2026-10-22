@@ -268,11 +268,10 @@ func (e *Engine) runLSPQueryInSession(client *lspClient, req lspRequest) (string
 	// Symbol-only position actions: resolve line+char from document symbols now
 	// that the document is open, then dispatch at the resolved position.
 	if req.needsSymbolResolution() {
-		line, char, err := client.resolveSymbolPosition(req.absPath, req.symbol)
+		req, err = e.resolveSymbolRequest(client, req)
 		if err != nil {
 			return "", err
 		}
-		req.line, req.char = line, char
 	}
 	return e.dispatchLSPAction(client, req)
 }
