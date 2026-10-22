@@ -24,6 +24,20 @@ func TestDiffFilesStopsAtOperationBudget(t *testing.T) {
 	}
 }
 
+func TestDiffFilesFirstChangedLine(t *testing.T) {
+	t.Parallel()
+	e, dir := testEngine(t)
+	writeTestFile(t, dir, "left.txt", "cedar one\ncedar two\n")
+	writeTestFile(t, dir, "right.txt", "cedar one\ncedar altered\n")
+	result, err := e.diffFiles(args("path_a", "left.txt", "path_b", "right.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Meta["first_changed_line"] != 2 || !strings.Contains(result.Text, "+ cedar altered") {
+		t.Fatalf("changed line = %v, diff = %q", result.Meta["first_changed_line"], result.Text)
+	}
+}
+
 func TestUnifiedDiff_Identical(t *testing.T) {
 	t.Parallel()
 	result := unifiedDiff("same\ncontent\n", "same\ncontent\n", "test.txt")

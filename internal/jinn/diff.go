@@ -152,12 +152,12 @@ func firstChangeNewLine(script []diffOp, bounds hunkBounds, k int) int {
 		return 0
 	}
 	newLine := bounds.newOffset + 1
-	for m := bounds.start; m <= k; m++ {
+	for m := bounds.start; m < k; m++ {
 		if script[m].tag == ' ' || script[m].tag == '+' {
 			newLine++
 		}
 	}
-	return newLine - 1
+	return newLine
 }
 
 // renderHunk writes one hunk's @@ header and body lines to b, returning the
