@@ -2,6 +2,7 @@ package jinn
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -106,6 +107,122 @@ func TestMultiReadReturnsNextCalls(t *testing.T) {
 	}
 	if len(decoded.NextCalls) != 1 || decoded.NextCalls[0].Tool != "read_file" {
 		t.Fatalf("next_calls = %#v", decoded.NextCalls)
+	}
+}
+
+func TestReadExplicitWindowContinuation(t *testing.T) {
+	t.Parallel()
+	for _, tool := range []string{"read_file", "multi_read"} {
+		t.Run(tool, func(t *testing.T) {
+			t.Parallel()
+			engine := New(t.TempDir(), "test")
+			t.Cleanup(func() { _ = engine.Close() })
+			if err := os.WriteFile(filepath.Join(engine.workDir, "window.txt"), []byte("one\ntwo\nthree\nfour\nfive\nsix\nseven\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			args := map[string]interface{}{"path": "window.txt", "start_line": float64(2), "end_line": float64(3), "line_numbers": false}
+			var next *NextCall
+			if tool == "read_file" {
+				result, err := engine.readFile(args)
+				if err != nil {
+					t.Fatal(err)
+				}
+				next, _ = result.Meta["next_call"].(*NextCall)
+			} else {
+				result, err := engine.multiRead(map[string]interface{}{"files": []interface{}{args}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				var decoded multiReadResult
+				if err := json.Unmarshal([]byte(result.Text), &decoded); err != nil {
+					t.Fatal(err)
+				}
+				if len(decoded.NextCalls) != 1 {
+					t.Fatalf("next calls = %#v", decoded.NextCalls)
+				}
+				next = &decoded.NextCalls[0]
+			}
+			if next == nil {
+				t.Fatal("missing continuation")
+			}
+			encoded, err := json.Marshal(next)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var replay NextCall
+			if err := json.Unmarshal(encoded, &replay); err != nil {
+				t.Fatal(err)
+			}
+			if replay.Arguments["start_line"] != float64(4) || replay.Arguments["end_line"] != float64(5) {
+				t.Fatalf("continuation window = %#v", replay.Arguments)
+			}
+			result, err := engine.readFile(replay.Arguments)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.HasPrefix(result.Text, "four\nfive\n[Showing lines 4-5 of 7.") {
+				t.Fatalf("replayed content = %q", result.Text)
+			}
+		})
+	}
+}
+
+func TestReadHeadHintsUseSourceWindow(t *testing.T) {
+	t.Parallel()
+	engine := New(t.TempDir(), "test")
+	t.Cleanup(func() { _ = engine.Close() })
+	var fixture strings.Builder
+	for line := 1; line <= readTruncLines+6; line++ {
+		fmt.Fprintf(&fixture, "line %d\n", line)
+	}
+	if err := os.WriteFile(filepath.Join(engine.workDir, "window.txt"), []byte(fixture.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	result, err := engine.readFile(map[string]interface{}{"path": "window.txt", "start_line": float64(4), "end_line": float64(readTruncLines + 4), "line_numbers": false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := fmt.Sprintf("[Showing lines 4-%d of %d. Use start_line=%d to continue.", readTruncLines+3, readTruncLines+6, readTruncLines+4)
+	if !strings.Contains(result.Text, want) || strings.Contains(result.Text, "[truncated:") {
+		t.Fatalf("source hint missing or relative hint retained: %q", result.Text)
+	}
+	next, _ := result.Meta["next_call"].(*NextCall)
+	if next == nil || next.Arguments["end_line"] != readTruncLines+4 {
+		t.Fatalf("unexhausted upper bound = %#v", next)
+	}
+	tr := applyTruncateStrategy(strings.Repeat("line\n", readTruncLines-1)+"line", "head", ".txt")
+	if tr.Truncated || strings.Contains(tr.Content, "[truncated:") {
+		t.Fatal("exact-fit head output reports truncation")
+	}
+}
+
+func TestSearchJSONStablePagination(t *testing.T) {
+	t.Parallel()
+	engine := New(t.TempDir(), "test")
+	t.Cleanup(func() { _ = engine.Close() })
+	pages := []string{
+		"ws/notes.txt:2:third payload here\nws/alpha/one.txt:1:alpha one payload\nws/alpha/two.txt:1:alpha two payload\n",
+		"ws/alpha/one.txt:1:alpha one payload\nws/alpha/two.txt:1:alpha two payload\nws/notes.txt:2:third payload here\n",
+	}
+	var files []string
+	for page, raw := range pages {
+		encoded, err := engine.formatSearchJSON(raw, searchRequest{offset: page * 2, maxMatches: 2}, map[string]interface{}{"pattern": "payload", "path": "ws"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var result searchFilesResult
+		if err := json.Unmarshal([]byte(encoded), &result); err != nil {
+			t.Fatal(err)
+		}
+		for _, match := range result.Results {
+			files = append(files, match.File)
+		}
+		if page == 1 && (result.NextCall != nil || !result.TotalCountExact) {
+			t.Fatalf("last page = %#v", result)
+		}
+	}
+	if got := strings.Join(files, ","); got != "ws/alpha/one.txt,ws/alpha/two.txt,ws/notes.txt" {
+		t.Fatalf("paged paths = %s", got)
 	}
 }
 

@@ -39,10 +39,15 @@ func assembleReadResult(resolved string, lines []string, w readWindow, tr trunca
 
 	var hint string
 	var tmpPath string
-	if windowTruncated {
-		// Write remainder to temp file for seamless continuation.
-		tmpPath, _ = writeTruncationRemainder(resolved, w.endLine+1, lines[w.endLine:w.total])
-		hint = buildReadHint(w.startLine, w.endLine, w.total, w.endLine+1, tmpPath)
+	hintEnd := w.endLine
+	sequentialTruncation := tr.Truncated && (truncateMode == "head" || truncateMode == "smart")
+	if sequentialTruncation {
+		hintEnd = w.startLine + tr.ShownLines - 1
+	}
+	if windowTruncated || sequentialTruncation {
+		// Continue from the last displayed source line, not the requested bound.
+		tmpPath, _ = writeTruncationRemainder(resolved, hintEnd+1, lines[hintEnd:w.total])
+		hint = buildReadHint(w.startLine, hintEnd, w.total, hintEnd+1, tmpPath)
 	}
 
 	// Build truncation metadata for callers.
@@ -175,7 +180,14 @@ func applyTruncateStrategy(rawContent, truncateMode, ext string) truncateResult 
 	var tr truncateResult
 	switch truncateMode {
 	case "head":
-		tr = truncateOutputHead(rawContent, readTruncLines)
+		// Source-aware continuation hints are assembled after truncation.
+		lines := strings.Split(rawContent, "\n")
+		tr = truncateResult{Content: rawContent, TotalLines: len(lines), ShownLines: len(lines)}
+		if len(lines) > readTruncLines {
+			tr.Content = strings.Join(lines[:readTruncLines], "\n")
+			tr.ShownLines = readTruncLines
+			tr.Truncated = true
+		}
 	case "tail":
 		tr = truncateOutputTail(rawContent, readTruncLines)
 	case "middle":

@@ -1,11 +1,13 @@
 package jinn
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -155,6 +157,9 @@ func (e *Engine) runSearch(ctx context.Context, req searchRequest, maxResults in
 // by the caller.
 func (e *Engine) buildSearchArgs(args map[string]interface{}, literal bool) (string, []string) {
 	cmd, cmdArgs := e.searchEngineBaseArgs(args, literal)
+	if e.rgPath != "" && strArg(args, "format") == "json" {
+		cmdArgs = append(cmdArgs, "--sort=path")
+	}
 
 	if ctx, ok := args["context_lines"].(float64); ok && int(ctx) > 0 {
 		cmdArgs = append(cmdArgs, "-C", strconv.Itoa(int(ctx)))
@@ -222,9 +227,18 @@ func (e *Engine) searchFilenamesOnly(ctx context.Context, req searchRequest) (st
 
 // formatSearchJSON renders search output as the searchFilesResult JSON shape.
 func (e *Engine) formatSearchJSON(raw string, req searchRequest, args map[string]interface{}) (string, error) {
-	window, total := parseSearchResults(raw, req.offset+req.maxMatches)
+	window, total := parseSearchResults(raw, 0)
+	slices.SortFunc(window, func(a, b searchResult) int {
+		if c := strings.Compare(a.File, b.File); c != 0 {
+			return c
+		}
+		if c := cmp.Compare(a.Line, b.Line); c != 0 {
+			return c
+		}
+		return cmp.Compare(a.Column, b.Column)
+	})
 	start := min(req.offset, len(window))
-	shown := window[start:]
+	shown := window[start:min(start+req.maxMatches, len(window))]
 	truncated := total > req.offset+len(shown)
 
 	resp := searchFilesResult{Results: shown, Truncated: truncated, TotalCount: total, TotalCountExact: !truncated, Offset: req.offset}

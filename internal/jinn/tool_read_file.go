@@ -107,7 +107,14 @@ func readNextCall(args map[string]interface{}, nextLine int) *NextCall {
 	}
 	path := strArg(args, "path")
 	arguments := map[string]any{"path": path, "start_line": nextLine}
-	for _, key := range []string{"end_line", "line_numbers", "truncate"} {
+	startLine := intArg(args, "start_line", 1)
+	if endLine := intArg(args, "end_line", 0); endLine >= startLine {
+		if endLine < nextLine {
+			endLine = nextLine + endLine - startLine
+		}
+		arguments["end_line"] = endLine
+	}
+	for _, key := range []string{"line_numbers", "truncate"} {
 		if value, ok := args[key]; ok {
 			arguments[key] = value
 		}
