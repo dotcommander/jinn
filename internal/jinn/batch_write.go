@@ -11,11 +11,16 @@ type preparedWrite struct {
 	updated    string
 }
 
-// commitPreparedWrites applies prepared writes in order. total is the legacy
-// input count used in partial-apply errors, so it can exceed len(writes) when a
+// commitPreparedWrites applies prepared writes in order. The legacy input count
+// is replaced by the canonical target count for partial-apply reporting when a
 // caller coalesces several inputs into one file write. committed runs after each
 // successful write and before the next preflight, preserving caller-owned timing.
 func (e *Engine) commitPreparedWrites(op string, total int, writes []preparedWrite, committed func(index int)) error {
+	targets := make(map[string]bool)
+	for _, write := range writes {
+		targets[write.resolved] = true
+	}
+	total = len(targets)
 	var applied []appliedRef
 	for index, write := range writes {
 		if err := e.verifyPreflightState(write.resolved, write.preContent, true); err != nil {
@@ -25,7 +30,7 @@ func (e *Engine) commitPreparedWrites(op string, total int, writes []preparedWri
 		if err != nil {
 			return partialApplyErr(op, applied, total, fmt.Errorf("%s: %w", write.path, err))
 		}
-		applied = append(applied, appliedRef{path: write.path, undoID: id})
+		applied = append(applied, appliedRef{path: write.path, undoID: id, resolved: write.resolved})
 		if committed != nil {
 			committed(index)
 		}

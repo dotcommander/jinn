@@ -7,6 +7,8 @@ and jinn adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-10-28
+
 ### Added
 
 - Add a shared structured-questionnaire contract with stable option values,
@@ -15,6 +17,20 @@ and jinn adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Add `jinn ask` for terminal questionnaires, `jinn ask --validate` for
   non-interactive contract validation, and MCP `ask_user_question` support via
   2026-07-28 form elicitation.
+
+### Changed
+
+- Harden inspector request validation and shutdown, improve Windows adapters,
+  and distinguish MCP call timeouts from cancellation.
+- Support byte-offset continuation for oversized web-fetch lines and align
+  static and rendered HTTP error handling.
+
+### Fixed
+
+- Correct file-edit previews, fuzzy edit overlap checks, patch handling, and
+  scoped plan history and recovery behavior.
+- Improve LSP rename previews, identifier resolution, and file URI handling;
+  correct shell classification and cache cleanup.
 
 ## [0.14.1] - 2026-08-29
 
@@ -404,7 +420,9 @@ and jinn adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `--schema` flag to emit tool definitions
 - `--version` flag with ldflags and VCS fallback
 
-[Unreleased]: https://github.com/dotcommander/jinn/compare/v0.13.1...HEAD
+[Unreleased]: https://github.com/dotcommander/jinn/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/dotcommander/jinn/compare/v0.14.1...v0.15.0
+[0.14.1]: https://github.com/dotcommander/jinn/compare/v0.14.0...v0.14.1
 [0.13.1]: https://github.com/dotcommander/jinn/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/dotcommander/jinn/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/dotcommander/jinn/compare/v0.11.4...v0.12.0

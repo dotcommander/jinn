@@ -28,10 +28,11 @@ echo '{"tool":"web_fetch","args":{"url":"https://example.com","reader":"defuddle
 | `render_wait` | string | `load` | `load` or `networkidle` when rendering. |
 | `format` | string | `markdown` | `markdown`, `headings`, or `links` projection. Raw content supports only `markdown`. |
 | `start_line` | integer | `0` | Zero-based line offset within the selected projection. |
+| `start_line_byte` | integer | `0` | UTF-8 byte offset within `start_line`. |
 | `max_bytes` | integer | `0` | Maximum projected UTF-8 bytes; zero is unlimited. |
 | `max_lines` | integer | `0` | Maximum projected lines; zero is unlimited. |
 
-The text result is projected document content. Metadata uses snake case for document fields plus `format`, `truncated`, `truncated_by`, `total_bytes`, `output_bytes`, `total_lines`, `output_lines`, `max_bytes`, `max_lines`, `start_line`, and `next_start_line`. Private/local addresses and redirect hops are denied unless `JINN_WEB_ALLOW_PRIVATE_NETWORKS=true` is intentionally set at process start.
+The text result is projected document content. Metadata uses snake case for document fields plus `format`, `truncated`, `truncated_by`, `total_bytes`, `output_bytes`, `total_lines`, `output_lines`, `max_bytes`, `max_lines`, `start_line`, `start_line_byte`, `next_start_line`, and `next_start_line_byte`. To continue a capped page, pass both next cursor fields as the corresponding start fields; zero for both next fields indicates EOF. Byte offsets refer to the selected projection and must be UTF-8 boundaries. Private/local addresses and redirect hops are denied unless `JINN_WEB_ALLOW_PRIVATE_NETWORKS=true` is intentionally set at process start.
 
 ### web_search
 

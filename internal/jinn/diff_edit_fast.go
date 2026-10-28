@@ -8,6 +8,9 @@ import (
 // splitDiffLines splits content into lines, trimming the trailing empty
 // element produced by a final newline.
 func splitDiffLines(content string) []string {
+	if content == "" {
+		return nil
+	}
 	lines := strings.Split(content, "\n")
 	if len(lines) > 0 && lines[len(lines)-1] == "" && strings.HasSuffix(content, "\n") {
 		lines = lines[:len(lines)-1]
@@ -86,28 +89,25 @@ func renderEditScript(script []diffOp, offset int, label string, b *strings.Buil
 	fmt.Fprintf(b, "@@ -%d,%d +%d,%d @@\n", offset+1, oldScriptCount, offset+1, newScriptCount)
 
 	firstChangedLine := 0
-	for k, s := range script {
+	newLine := offset + 1
+	for _, s := range script {
 		b.WriteByte(s.tag)
 		b.WriteByte(' ')
 		b.WriteString(s.value)
 		b.WriteByte('\n')
 		if firstChangedLine == 0 && (s.tag == '+' || s.tag == '-') {
-			lineNum := offset + 1
-			for m := 0; m <= k; m++ {
-				if script[m].tag == ' ' || script[m].tag == '+' {
-					lineNum++
-				}
-			}
-			firstChangedLine = lineNum - 1
+			firstChangedLine = newLine
+		}
+		if s.tag == ' ' || s.tag == '+' {
+			newLine++
 		}
 	}
 	return firstChangedLine
 }
 
-// generateEditDiff produces a unified diff from known line ranges, avoiding the
-// O(m×n) LCS computation. It uses matchInfo from applyEdit to build the diff
-// directly. Falls back to the full LCS-based generateDiff if the ranges look
-// wrong (should never happen, but defensive).
+// generateEditDiff produces a unified diff for one contiguous affected span,
+// avoiding the O(m×n) LCS computation. Identical leading and trailing lines
+// bound the actual change, including partial-line and newline-terminated edits.
 //
 //nolint:revive // argument-limit: signature is fixed by callers in tool_edit.go and tests; cannot collapse params without changing the public contract.
 func generateEditDiff(oldContent, newContent, label string, info matchInfo, oldText, newText string, contextLines int) DiffResult {
@@ -118,20 +118,24 @@ func generateEditDiff(oldContent, newContent, label string, info matchInfo, oldT
 	oldLinesRaw := splitDiffLines(oldContent)
 	newLinesRaw := splitDiffLines(newContent)
 
-	oldCount := strings.Count(oldText, "\n") + 1
-	newCount := strings.Count(newText, "\n") + 1
-
-	// Sanity check: if info is out of bounds, fall back to LCS.
-	if info.startLine < 1 || info.endLine > len(oldLinesRaw)+1 {
+	// Derive the affected span from resulting lines. Replacement text alone
+	// cannot describe partial-line edits or a terminating newline faithfully.
+	start := 0
+	for start < len(oldLinesRaw) && start < len(newLinesRaw) && oldLinesRaw[start] == newLinesRaw[start] {
+		start++
+	}
+	oldEnd, newEnd := len(oldLinesRaw), len(newLinesRaw)
+	for oldEnd > start && newEnd > start && oldLinesRaw[oldEnd-1] == newLinesRaw[newEnd-1] {
+		oldEnd--
+		newEnd--
+	}
+	if oldEnd == start && newEnd == start {
 		return generateDiff(oldContent, newContent, label, contextLines)
 	}
-
-	// Build a simple diff script around the known change.
-	start := info.startLine - 1 // 0-based index into oldLinesRaw
 	script, offset := buildEditScript(oldLinesRaw, newLinesRaw, editRegion{
 		start:        start,
-		oldCount:     oldCount,
-		newCount:     newCount,
+		oldCount:     oldEnd - start,
+		newCount:     newEnd - start,
 		contextLines: contextLines,
 	})
 

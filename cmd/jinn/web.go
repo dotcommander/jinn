@@ -100,6 +100,8 @@ func runWebFetch(ctx context.Context, args []string) error {
 	renderWait := flags.String("render-wait", "", "render wait: load or networkidle")
 	maxBytes := flags.Int("max-bytes", 0, "maximum output bytes")
 	maxLines := flags.Int("max-lines", 0, "maximum output lines")
+	startLine := flags.Int("start-line", 0, "zero-based projection line")
+	startLineByte := flags.Int("start-line-byte", 0, "UTF-8 byte offset within start-line")
 	cacheTTL := flags.String("cache-ttl", "", "reader cache TTL")
 	cacheDir := flags.String("cache-dir", "", "reader cache directory")
 	if err := flags.Parse(args); errors.Is(err, flag.ErrHelp) {
@@ -107,10 +109,10 @@ func runWebFetch(ctx context.Context, args []string) error {
 		flags.PrintDefaults()
 		return nil
 	} else if err != nil {
-		return err
+		return webCLIError{err: err, asJSON: webJSONRequested(flags, args)}
 	}
 	if flags.NArg() != 1 {
-		return errors.New("jinn web fetch requires exactly one URL")
+		return webCLIError{err: errors.New("jinn web fetch requires exactly one URL"), asJSON: *asJSON}
 	}
 	limits, err := newWebOutputLimits(*maxBytes, *maxLines)
 	if err != nil {
@@ -132,7 +134,11 @@ func runWebFetch(ctx context.Context, args []string) error {
 	if err != nil {
 		return webCLIError{err: err, asJSON: *asJSON}
 	}
-	return renderWebFetch(os.Stdout, doc, *asJSON, limits)
+	projection, err := webfetch.ProjectFetchContentAt(doc.Content, "markdown", *startLine, *startLineByte, limits)
+	if err != nil {
+		return webCLIError{err: err, asJSON: *asJSON}
+	}
+	return renderWebFetchProjection(os.Stdout, doc, *asJSON, limits, projection)
 }
 
 func runWebSearch(ctx context.Context, args []string) error {
@@ -152,10 +158,10 @@ func runWebSearch(ctx context.Context, args []string) error {
 		flags.PrintDefaults()
 		return nil
 	} else if err != nil {
-		return err
+		return webCLIError{err: err, asJSON: webJSONRequested(flags, args)}
 	}
 	if flags.NArg() != 1 {
-		return errors.New("jinn web search requires exactly one query")
+		return webCLIError{err: errors.New("jinn web search requires exactly one query"), asJSON: *asJSON}
 	}
 	cfg := webConfig()
 	if *provider != "" {
@@ -208,7 +214,14 @@ func projectWebContent(content string, limits webOutputLimits) string {
 
 //nolint:nestif // Human truncation formatting is clearer as one local branch.
 func renderWebFetch(out io.Writer, doc webfetch.Document, asJSON bool, limits webOutputLimits) error {
-	projection := webfetch.ProjectContent(doc.Content, limits)
+	projection, err := webfetch.ProjectFetchContent(doc.Content, "markdown", 0, limits)
+	if err != nil {
+		return err
+	}
+	return renderWebFetchProjection(out, doc, asJSON, limits, projection)
+}
+
+func renderWebFetchProjection(out io.Writer, doc webfetch.Document, asJSON bool, limits webOutputLimits, projection webfetch.ContentProjection) error {
 	if !asJSON {
 		if _, err := io.WriteString(out, projection.Content); err != nil {
 			return err
@@ -222,37 +235,44 @@ func renderWebFetch(out io.Writer, doc webfetch.Document, asJSON bool, limits we
 			}
 		}
 		_, err := fmt.Fprintf(out, "%s\n", webfetch.TruncationMarker(projection))
+		if err == nil && (projection.NextStartLine != 0 || projection.NextStartLineByte != 0) {
+			_, err = fmt.Fprintf(out, "[continue: --start-line=%d --start-line-byte=%d]\n", projection.NextStartLine, projection.NextStartLineByte)
+		}
 		return err
 	}
 	return json.NewEncoder(out).Encode(struct {
-		OK          bool     `json:"ok"`
-		Mode        string   `json:"mode"`
-		URL         string   `json:"url"`
-		FinalURL    string   `json:"final_url,omitempty"`
-		StatusCode  int      `json:"status_code"`
-		ContentType string   `json:"content_type,omitempty"`
-		Title       string   `json:"title,omitempty"`
-		Description string   `json:"description,omitempty"`
-		Domain      string   `json:"domain,omitempty"`
-		Favicon     string   `json:"favicon,omitempty"`
-		Image       string   `json:"image,omitempty"`
-		Language    string   `json:"language,omitempty"`
-		Published   string   `json:"published,omitempty"`
-		Author      string   `json:"author,omitempty"`
-		Site        string   `json:"site,omitempty"`
-		WordCount   int      `json:"word_count,omitempty"`
-		Extractor   string   `json:"extractor,omitempty"`
-		Rendered    bool     `json:"rendered,omitempty"`
-		Warnings    []string `json:"warnings,omitempty"`
-		Content     string   `json:"content"`
-		Truncated   bool     `json:"truncated,omitempty"`
-		TruncatedBy string   `json:"truncated_by,omitempty"`
-		TotalBytes  int      `json:"total_bytes,omitempty"`
-		OutputBytes int      `json:"output_bytes,omitempty"`
-		TotalLines  int      `json:"total_lines,omitempty"`
-		OutputLines int      `json:"output_lines,omitempty"`
-		MaxBytes    int      `json:"max_bytes,omitempty"`
-		MaxLines    int      `json:"max_lines,omitempty"`
+		OK                bool     `json:"ok"`
+		Mode              string   `json:"mode"`
+		URL               string   `json:"url"`
+		FinalURL          string   `json:"final_url,omitempty"`
+		StatusCode        int      `json:"status_code"`
+		ContentType       string   `json:"content_type,omitempty"`
+		Title             string   `json:"title,omitempty"`
+		Description       string   `json:"description,omitempty"`
+		Domain            string   `json:"domain,omitempty"`
+		Favicon           string   `json:"favicon,omitempty"`
+		Image             string   `json:"image,omitempty"`
+		Language          string   `json:"language,omitempty"`
+		Published         string   `json:"published,omitempty"`
+		Author            string   `json:"author,omitempty"`
+		Site              string   `json:"site,omitempty"`
+		WordCount         int      `json:"word_count,omitempty"`
+		Extractor         string   `json:"extractor,omitempty"`
+		Rendered          bool     `json:"rendered,omitempty"`
+		Warnings          []string `json:"warnings,omitempty"`
+		Content           string   `json:"content"`
+		Truncated         bool     `json:"truncated,omitempty"`
+		TruncatedBy       string   `json:"truncated_by,omitempty"`
+		TotalBytes        int      `json:"total_bytes,omitempty"`
+		OutputBytes       int      `json:"output_bytes,omitempty"`
+		TotalLines        int      `json:"total_lines,omitempty"`
+		OutputLines       int      `json:"output_lines,omitempty"`
+		MaxBytes          int      `json:"max_bytes,omitempty"`
+		MaxLines          int      `json:"max_lines,omitempty"`
+		StartLine         int      `json:"start_line"`
+		StartLineByte     int      `json:"start_line_byte"`
+		NextStartLine     int      `json:"next_start_line"`
+		NextStartLineByte int      `json:"next_start_line_byte"`
 	}{
 		OK: true, Mode: doc.Source, URL: doc.URL, FinalURL: doc.FinalURL,
 		StatusCode: doc.StatusCode, ContentType: doc.ContentType, Title: doc.Title,
@@ -264,6 +284,8 @@ func renderWebFetch(out io.Writer, doc webfetch.Document, asJSON bool, limits we
 		TruncatedBy: projection.TruncatedBy, TotalBytes: projection.TotalBytes,
 		OutputBytes: projection.OutputBytes, TotalLines: projection.TotalLines,
 		OutputLines: projection.OutputLines, MaxBytes: limits.MaxBytes, MaxLines: limits.MaxLines,
+		StartLine: projection.StartLine, StartLineByte: projection.StartLineByte,
+		NextStartLine: projection.NextStartLine, NextStartLineByte: projection.NextStartLineByte,
 	})
 }
 func renderWebSearch(out io.Writer, result webfetch.SearchResponse, asJSON bool) error {

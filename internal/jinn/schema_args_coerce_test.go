@@ -231,7 +231,7 @@ func TestWebFetchSchemaProjectionContract(t *testing.T) {
 			continue
 		}
 		properties := tool.Function.Parameters["properties"].(map[string]any)
-		for _, name := range []string{"format", "start_line", "max_bytes", "max_lines"} {
+		for _, name := range []string{"format", "start_line", "start_line_byte", "max_bytes", "max_lines"} {
 			if _, ok := properties[name]; !ok {
 				t.Fatalf("web_fetch schema missing %q", name)
 			}

@@ -1,13 +1,13 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"strings"
 	"unicode"
+	"unicode/utf16"
 )
 
 const (
@@ -34,54 +34,24 @@ func writeMCPExplorerOutput(writer io.Writer, format string, value any) error {
 }
 
 func renderMCPExplorerHuman(value any) ([]byte, error) {
-	encoded, err := json.Marshal(value)
+	pretty, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		return nil, err
 	}
-	decoder := json.NewDecoder(bytes.NewReader(encoded))
-	decoder.UseNumber()
-	var sanitized any
-	if decodeErr := decoder.Decode(&sanitized); decodeErr != nil {
-		return nil, decodeErr
-	}
-	sanitized = sanitizeMCPExplorerHumanValue(sanitized)
-	pretty, err := json.MarshalIndent(sanitized, "", "  ")
-	if err != nil {
-		return nil, err
-	}
-	return append(pretty, '\n'), nil
+	return []byte(sanitizeMCPExplorerEncodedJSON(string(pretty)) + "\n"), nil
 }
 
-func sanitizeMCPExplorerHumanValue(value any) any {
-	switch item := value.(type) {
-	case string:
-		return sanitizeMCPExplorerHumanText(item)
-	case []any:
-		for index := range item {
-			item[index] = sanitizeMCPExplorerHumanValue(item[index])
-		}
-	case map[string]any:
-		sanitized := make(map[string]any, len(item))
-		for key, child := range item {
-			sanitized[sanitizeMCPExplorerHumanText(key)] = sanitizeMCPExplorerHumanValue(child)
-		}
-		return sanitized
-	}
-	return value
-}
-
-func sanitizeMCPExplorerHumanText(value string) string {
+// JSON already escapes control characters and backslashes. Only format-control
+// runes remain raw; escape them at this final terminal presentation boundary.
+func sanitizeMCPExplorerEncodedJSON(value string) string {
 	var builder strings.Builder
 	for _, character := range value {
-		if character == '\\' {
-			builder.WriteString(`\\`)
-			continue
-		}
-		if unicode.IsControl(character) || unicode.In(character, unicode.Cf) {
+		if unicode.In(character, unicode.Cf) || (unicode.IsControl(character) && character > 0x7f) {
 			if character <= 0xffff {
 				fmt.Fprintf(&builder, "\\u%04x", character)
 			} else {
-				fmt.Fprintf(&builder, "\\U%08x", character)
+				high, low := utf16.EncodeRune(character)
+				fmt.Fprintf(&builder, "\\u%04x\\u%04x", high, low)
 			}
 			continue
 		}

@@ -49,12 +49,12 @@ func (e *Engine) applyPatch(args map[string]interface{}) (*ToolResult, error) {
 		if preflightErr != nil {
 			return preflightErr
 		}
-		if checksumErr := e.verifyPatchChecksums(args, resolved, preflights); checksumErr != nil {
-			return checksumErr
-		}
 		if boolArg(args, "dry_run") {
 			result = renderPatchDryRun(resolved, preflights)
 			return nil
+		}
+		if checksumErr := e.verifyPatchChecksums(args, resolved, preflights); checksumErr != nil {
+			return checksumErr
 		}
 		result, err = e.applyPatchOps(resolved, preflights)
 		return err
@@ -87,11 +87,20 @@ func (e *Engine) verifyPatchChecksums(args map[string]interface{}, resolved []re
 // path policy, returning operations paired with their resolved absolute paths.
 func (e *Engine) resolvePatchPaths(ops []patchOperation) ([]resolvedOp, error) {
 	resolved := make([]resolvedOp, 0, len(ops))
-	for _, op := range ops {
+	seen := make(map[string]int, len(ops))
+	for index, op := range ops {
 		resolvedPath, err := e.checkPathForMutation(op.path)
 		if err != nil {
 			return nil, fmt.Errorf("%s %s: %w", op.kind, op.path, err)
 		}
+		if previous, exists := seen[resolvedPath]; exists {
+			return nil, &ErrWithSuggestion{
+				Err:        fmt.Errorf("operations[%d] and operations[%d] target the same file: %s", previous, index, op.path),
+				Suggestion: "combine updates into one Update File operation with ordered chunks; use separate calls for other operations on the same file",
+				Code:       ErrCodeInvalidArgs,
+			}
+		}
+		seen[resolvedPath] = index
 		resolved = append(resolved, resolvedOp{op: op, resolved: resolvedPath})
 	}
 	return resolved, nil
@@ -205,6 +214,10 @@ func (e *Engine) applyPatchOps(resolved []resolvedOp, preflights []preflightResu
 	var allDiffs []string
 	var firstLine int
 	var applied []appliedRef
+	targets := make(map[string]bool)
+	for _, r := range resolved {
+		targets[r.resolved] = true
+	}
 
 	for i, r := range resolved {
 		h, ok := patchOpHandlers[r.op.kind]
@@ -213,9 +226,9 @@ func (e *Engine) applyPatchOps(resolved []resolvedOp, preflights []preflightResu
 		}
 		res, err := h.apply(e, r, preflights[i])
 		if err != nil {
-			return nil, partialApplyErr("apply_patch", applied, len(resolved), err)
+			return nil, partialApplyErr("apply_patch", applied, len(targets), err)
 		}
-		applied = append(applied, appliedRef{path: r.op.path, undoID: res.undoID})
+		applied = append(applied, appliedRef{path: r.op.path, undoID: res.undoID, resolved: r.resolved})
 		results = append(results, res.summary)
 		if res.diff != "" {
 			allDiffs = append(allDiffs, res.diff)

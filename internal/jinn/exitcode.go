@@ -128,14 +128,13 @@ func classifyExitCode(argv0 string, exitCode int) (Classification, string) {
 	return ClassError, "command exited with non-zero status"
 }
 
-// extractArgv0 returns the basename of the first whitespace-delimited token
-// in cmd. Quoted commands are not parsed — this is a best-effort extraction
-// that accepts the limitation for v1 (see roadmap open questions).
+// extractArgv0 identifies a simple command using the risk classifier's token
+// and assignment handling. Compound commands have no single exit identity.
 func extractArgv0(cmd string) string {
-	cmd = strings.TrimLeft(cmd, " \t")
-	end := strings.IndexAny(cmd, " \t")
-	if end < 0 {
-		return filepath.Base(cmd)
+	segments := splitOnOperators(cmd)
+	if len(segments) != 1 || containsCommandExpansion(cmd) || containsProcessSubstitution(cmd) {
+		return ""
 	}
-	return filepath.Base(cmd[:end])
+	verb, _ := effectiveCommand(shellFields(segments[0]))
+	return verb
 }

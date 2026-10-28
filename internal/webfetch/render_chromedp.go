@@ -162,10 +162,18 @@ func (r *chromedpRenderer) Render(ctx context.Context, target *url.URL, options 
 }
 
 func handlePausedRequest(ctx context.Context, event *fetch.EventRequestPaused, allowPrivateNetworks bool, tracker *renderTracker) {
+	handlePausedRequestActions(event, allowPrivateNetworks, tracker, func() error {
+		return chromedp.Run(ctx, fetch.FailRequest(event.RequestID, network.ErrorReasonBlockedByClient))
+	}, func() error {
+		return chromedp.Run(ctx, fetch.ContinueRequest(event.RequestID))
+	})
+}
+
+func handlePausedRequestActions(event *fetch.EventRequestPaused, allowPrivateNetworks bool, tracker *renderTracker, reject, proceed func() error) {
 	if event == nil || event.Request == nil {
 		err := newCodedError(errors.New("browser paused request is missing URL details"), ErrorCodeInvalidURL, "retry the page or use a standard HTTP or HTTPS URL")
 		if event != nil {
-			_ = chromedp.Run(ctx, fetch.FailRequest(event.RequestID, network.ErrorReasonBlockedByClient))
+			_ = reject()
 		}
 		tracker.fail(err)
 		return
@@ -173,13 +181,22 @@ func handlePausedRequest(ctx context.Context, event *fetch.EventRequestPaused, a
 
 	err := validateRenderRequestURL(event.Request.URL, allowPrivateNetworks)
 	if err != nil {
-		_ = chromedp.Run(ctx, fetch.FailRequest(event.RequestID, network.ErrorReasonBlockedByClient))
-		tracker.fail(err)
+		if rejectErr := reject(); rejectErr != nil {
+			tracker.fail(fmt.Errorf("reject browser request: %w", rejectErr))
+		} else if tracker.isMainDocument(event) {
+			tracker.fail(err)
+		}
 		return
 	}
-	if err := chromedp.Run(ctx, fetch.ContinueRequest(event.RequestID)); err != nil {
+	if err := proceed(); err != nil {
 		tracker.fail(fmt.Errorf("continue browser request: %w", err))
 	}
+}
+
+func (t *renderTracker) isMainDocument(event *fetch.EventRequestPaused) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return event.ResourceType == network.ResourceTypeDocument && (t.mainFrameID == "" || string(event.FrameID) == t.mainFrameID)
 }
 
 func validateRenderRequestURL(rawURL string, allowPrivateNetworks bool) error {

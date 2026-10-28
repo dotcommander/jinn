@@ -16,6 +16,7 @@ const (
 	statusSkipped        = "skipped"
 	statusToolError      = "tool_error"
 	statusTransportError = "transport_error"
+	statusTimeout        = "timeout"
 )
 
 // Caller is the connected MCP client surface used by a batch worker pool.
@@ -128,11 +129,17 @@ func (executor *executor) executeCall(index int) Result {
 	started := time.Now()
 	ctx, cancel := context.WithTimeout(executor.ctx, executor.input.CallTimeout)
 	result, err := executor.caller.Call(ctx, call.Tool, call.Arguments)
+	callContextErr := ctx.Err()
 	cancel()
 	output := Result{ID: call.ID, DurationMS: time.Since(started).Milliseconds()}
 	if err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || executor.ctx.Err() != nil {
+		if executor.ctx.Err() != nil {
 			output.Status = statusCanceled
+			output.Error = err.Error()
+		} else if errors.Is(callContextErr, context.DeadlineExceeded) || errors.Is(err, context.DeadlineExceeded) {
+			output.Status, output.Error = statusTimeout, context.DeadlineExceeded.Error()
+		} else if errors.Is(err, context.Canceled) {
+			output.Status, output.Error = statusCanceled, err.Error()
 		} else {
 			output.Status, output.Error = statusTransportError, err.Error()
 		}

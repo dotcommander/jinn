@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"strconv"
 	"strings"
 
@@ -28,11 +27,11 @@ func runQuestionnaireCLI(args []string, input io.Reader, output io.Writer) error
 	if len(args) != 0 {
 		return errors.New("usage: jinn ask [--validate]")
 	}
-	terminal, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
+	terminal, err := openQuestionnaireTerminal()
 	if err != nil {
-		return errors.New("interactive questionnaire requires a terminal; use jinn ask --validate for non-interactive validation")
+		return fmt.Errorf("interactive questionnaire requires a console; use jinn ask --validate: %w", err)
 	}
-	result, runErr := runQuestionnaire(questionnaire, terminal, terminal)
+	result, runErr := runQuestionnaire(questionnaire, terminal.input, terminal.output)
 	closeErr := terminal.Close()
 	if runErr != nil {
 		return runErr
@@ -47,10 +46,7 @@ func runQuestionnaire(questionnaire jinn.Questionnaire, input io.Reader, output 
 	reader := bufio.NewReader(input)
 	answers := make([]jinn.QuestionnaireAnswer, 0, len(questionnaire.Questions))
 	for index, question := range questionnaire.Questions {
-		if err := writeQuestionPrompt(output, question); err != nil {
-			return jinn.QuestionnaireResult{}, err
-		}
-		answer, cancelled, err := readQuestionAnswer(reader, output, index, question)
+		answer, cancelled, err := promptQuestionAnswer(reader, output, index, question)
 		if err != nil {
 			return jinn.QuestionnaireResult{}, err
 		}
@@ -61,6 +57,25 @@ func runQuestionnaire(questionnaire jinn.Questionnaire, input io.Reader, output 
 	}
 	return jinn.QuestionnaireResult{Answers: answers, Cancelled: false}, nil
 }
+
+func promptQuestionAnswer(reader *bufio.Reader, output io.Writer, index int, question jinn.Question) (jinn.QuestionnaireAnswer, bool, error) {
+	for {
+		if err := writeQuestionPrompt(output, question); err != nil {
+			return jinn.QuestionnaireAnswer{}, false, err
+		}
+		answer, cancelled, err := readQuestionAnswer(reader, output, index, question)
+		var validation *questionAnswerError
+		if errors.As(err, &validation) {
+			if _, writeErr := fmt.Fprintln(output, validation); writeErr != nil {
+				return jinn.QuestionnaireAnswer{}, false, writeErr
+			}
+			continue
+		}
+		return answer, cancelled, err
+	}
+}
+
+type questionAnswerError struct{ error }
 
 func writeQuestionPrompt(output io.Writer, question jinn.Question) error {
 	if _, err := fmt.Fprintf(output, "\n[%s] %s\n", question.Header, question.Question); err != nil {
@@ -100,7 +115,7 @@ func readQuestionAnswer(reader *bufio.Reader, output io.Writer, index int, quest
 			return jinn.QuestionnaireAnswer{}, false, err
 		}
 		if custom == "" {
-			return jinn.QuestionnaireAnswer{}, false, errors.New("custom answer is required")
+			return jinn.QuestionnaireAnswer{}, false, &questionAnswerError{errors.New("custom answer is required")}
 		}
 		return jinn.QuestionnaireAnswer{QuestionIndex: index, Question: question.Question, Kind: "custom", Answer: &custom}, false, nil
 	}
@@ -109,7 +124,7 @@ func readQuestionAnswer(reader *bufio.Reader, output io.Writer, index int, quest
 
 func readQuestionLine(reader *bufio.Reader) (string, error) {
 	line, err := reader.ReadString('\n')
-	if err != nil && !errors.Is(err, io.EOF) {
+	if err != nil && (!errors.Is(err, io.EOF) || len(line) == 0) {
 		return "", err
 	}
 	return strings.TrimSpace(line), nil
@@ -126,11 +141,11 @@ func parseQuestionChoices(index int, question jinn.Question, line string) (jinn.
 	for _, part := range parts {
 		choice, err := strconv.Atoi(strings.TrimSpace(part))
 		if err != nil || choice < 1 || choice > len(question.Options) {
-			return jinn.QuestionnaireAnswer{}, false, fmt.Errorf("invalid choice %q for question %d", part, index+1)
+			return jinn.QuestionnaireAnswer{}, false, &questionAnswerError{fmt.Errorf("invalid choice %q for question %d", part, index+1)}
 		}
 		option := question.Options[choice-1]
 		if _, duplicate := seen[option.Label]; duplicate {
-			return jinn.QuestionnaireAnswer{}, false, fmt.Errorf("duplicate choice %q for question %d", part, index+1)
+			return jinn.QuestionnaireAnswer{}, false, &questionAnswerError{fmt.Errorf("duplicate choice %q for question %d", part, index+1)}
 		}
 		seen[option.Label] = struct{}{}
 		selected = append(selected, option.Label)

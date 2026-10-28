@@ -76,7 +76,9 @@ func TestRenderProxyRejectsPrivateTargetBeforeContact(t *testing.T) {
 	if contacts.Load() != 0 {
 		t.Fatalf("private origin contacts = %d, want 0", contacts.Load())
 	}
-	assertCodedError(t, budget.Err(), ErrorCodePrivateNetwork)
+	if budget.Err() != nil {
+		t.Fatalf("blocked subresource canceled render budget: %v", budget.Err())
+	}
 }
 
 func TestRenderProxyCONNECTUsesValidatedIPLiteral(t *testing.T) {
@@ -189,7 +191,9 @@ func TestRenderProxyCONNECTRejectsMixedResolution(t *testing.T) {
 	if status != http.StatusBadGateway {
 		t.Fatalf("CONNECT status = %d, want %d", status, http.StatusBadGateway)
 	}
-	assertCodedError(t, budget.Err(), ErrorCodePrivateNetwork)
+	if budget.Err() != nil {
+		t.Fatalf("blocked subresource canceled render budget: %v", budget.Err())
+	}
 }
 
 func TestRenderProxyEnforcesRequestBudget(t *testing.T) {

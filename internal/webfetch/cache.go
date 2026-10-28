@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -23,6 +24,9 @@ type urlCache struct {
 	dir      string
 	ttl      time.Duration
 	maxBytes int64
+	sweepMu  sync.Mutex
+	sweepDir *os.File
+	closed   bool
 }
 
 type urlCacheEnvelope struct {
@@ -74,6 +78,7 @@ func (c *urlCache) load(rawURL, readerMode, endpoint string, renderArgs ...strin
 	if c == nil || c.ttl <= 0 {
 		return Document{}, false
 	}
+	c.cleanup()
 	renderMode, renderWait := cacheRenderIdentity(renderArgs)
 	path := filepath.Join(c.dir, cacheFileName(rawURL, readerMode, endpoint, renderMode, renderWait))
 	file, err := os.Open(path)
@@ -98,6 +103,12 @@ func (c *urlCache) load(rawURL, readerMode, endpoint string, renderArgs ...strin
 	}
 	age := time.Since(envelope.StoredAt)
 	if age < 0 || age > c.ttl {
+		if age > c.ttl {
+			_ = withCacheLock(filepath.Join(c.dir, ".cache.lock"), func() error {
+				c.removeExpired(path)
+				return nil
+			})
+		}
 		return Document{}, false
 	}
 	return envelope.Document, true
@@ -128,10 +139,16 @@ func (c *urlCache) store(rawURL, readerMode, endpoint string, doc Document, rend
 	if chmodErr := os.Chmod(c.dir, urlCacheDirectoryMode); chmodErr != nil { //nolint:gosec // enforce private cache directory.
 		return
 	}
+	_ = withCacheLock(filepath.Join(c.dir, ".cache.lock"), func() error {
+		return c.storeBytes(data, cacheFileName(rawURL, readerMode, endpoint, renderMode, renderWait))
+	})
+	c.cleanup()
+}
 
+func (c *urlCache) storeBytes(data []byte, name string) error {
 	tmp, err := os.CreateTemp(c.dir, ".jinn-web-cache-*")
 	if err != nil {
-		return
+		return err
 	}
 	tmpPath := tmp.Name()
 	keep := false
@@ -143,18 +160,19 @@ func (c *urlCache) store(rawURL, readerMode, endpoint string, doc Document, rend
 
 	if _, err := tmp.Write(data); err != nil {
 		_ = tmp.Close()
-		return
+		return err
 	}
 	if err := tmp.Close(); err != nil {
-		return
+		return err
 	}
 	if err := os.Chmod(tmpPath, urlCacheFileMode); err != nil {
-		return
+		return err
 	}
-	if err := os.Rename(tmpPath, filepath.Join(c.dir, cacheFileName(rawURL, readerMode, endpoint, renderMode, renderWait))); err != nil {
-		return
+	if err := os.Rename(tmpPath, filepath.Join(c.dir, name)); err != nil {
+		return err
 	}
 	keep = true
+	return nil
 }
 
 func cacheRenderIdentity(renderArgs []string) (renderMode, renderWait string) {

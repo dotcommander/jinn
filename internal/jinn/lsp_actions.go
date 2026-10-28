@@ -165,6 +165,9 @@ func formatDiagnostics(absPath string, diagnostics []lspDiagnostic) string {
 			code = " " + code
 		}
 		fmt.Fprintf(&sb, "%s:%d:%d: %s %s%s: %s\n", absPath, line, character, severity, source, code, diagnostic.Message)
+		if target := diagnosticTargetURL(diagnostic.CodeDescription); target != "" {
+			fmt.Fprintf(&sb, "  %s\n", target)
+		}
 	}
 	return strings.TrimRight(sb.String(), "\n")
 }
@@ -211,7 +214,7 @@ func diagnosticCodeString(code any) string {
 		}
 		return fmt.Sprintf("%g", v)
 	default:
-		return fmt.Sprint(v)
+		return ""
 	}
 }
 
@@ -237,7 +240,7 @@ func (c *lspClient) rename(absPath string, line, char int, newName, workDir stri
 	if err := json.Unmarshal(raw, &edit); err != nil {
 		return "", fmt.Errorf("lsp rename parse: %w", err)
 	}
-	for uri := range collectWorkspaceEditFileEdits(&edit) {
+	for uri := range workspaceEditURIs(&edit) {
 		path, uriErr := fileURIPath(uri)
 		if uriErr != nil {
 			return "", fmt.Errorf("lsp rename returned unsupported URI: %w", uriErr)

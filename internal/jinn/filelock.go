@@ -6,15 +6,11 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"syscall"
 )
 
-// withFileLock serializes cross-process critical sections on an advisory
-// flock at lockPath (created 0o600 if absent; parent dir created 0o700).
-// Blocking LOCK_EX: holders keep it only for microsecond-scale local JSON
-// read-modify-writes, so blocking beats a retry protocol.
-// flock is per open-file-description, so it also serializes goroutines in
-// one process (each call opens its own fd).
+// withFileLock serializes cross-process critical sections using the platform
+// file lock (created 0o600 if absent; parent dir created 0o700). Each call opens
+// its own handle so concurrent goroutines also contend on the lock.
 // IMPORTANT: lockPath must never be deleted while in use — callers keep it
 // OUTSIDE any directory they RemoveAll (unlink-while-locked lets two
 // processes hold the lock on different inodes).
@@ -27,10 +23,10 @@ func withFileLock(lockPath string, fn func() error) error {
 		return err
 	}
 	defer func() { _ = f.Close() }()
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+	if err := lockFile(f); err != nil {
 		return err
 	}
-	defer func() { _ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN) }()
+	defer func() { _ = unlockFile(f) }()
 	return fn()
 }
 

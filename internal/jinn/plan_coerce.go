@@ -168,7 +168,7 @@ var (
 	exitRe = regexp.MustCompile(`^exit\s+(eq|ne|lt|lte|gt|gte)\s+(\d+)$`)
 
 	// stream =~ /regex/ or stream !~ /regex/
-	matchRe = regexp.MustCompile(`^(stdout|stderr)\s+(=~|!~)\s+/([^/]*)/$`)
+	matchRe = regexp.MustCompile(`^(stdout|stderr)\s+(=~|!~)\s+/([\s\S]*)/$`)
 
 	// file exists <path> or file missing <path>
 	fileExistsRe = regexp.MustCompile(`^file\s+(exists|missing)\s+(.+)$`)
@@ -190,7 +190,7 @@ func coerceCondition(s string) (Condition, error) {
 		return Condition{
 			Kind:   "match",
 			Stream: m[1],
-			Regex:  m[3],
+			Regex:  unescapeConditionDelimiter(m[3]),
 			Negate: m[2] == "!~",
 		}, nil
 	}

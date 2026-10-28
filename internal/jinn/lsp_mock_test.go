@@ -19,6 +19,7 @@ type mockConfig struct {
 	// initializeParams receives the initialize params when a test needs to
 	// assert the workspace shape sent to the language server.
 	initializeParams chan<- map[string]any
+	openedText       chan<- string
 
 	// per-method overrides: when true, the server returns null for that method
 	nullDefinition  bool
@@ -108,7 +109,18 @@ func runMockServer(r io.Reader, w io.WriteCloser, cfg mockConfig) {
 			}
 			writeMockFrame(w, mockReply(msg.ID, map[string]any{"capabilities": map[string]any{}}))
 
-		case "initialized", "textDocument/didOpen", "textDocument/didClose", "exit":
+		case "textDocument/didOpen":
+			if cfg.openedText != nil {
+				data, _ := json.Marshal(msg.Params)
+				var params struct {
+					TextDocument struct {
+						Text string `json:"text"`
+					} `json:"textDocument"`
+				}
+				_ = json.Unmarshal(data, &params)
+				cfg.openedText <- params.TextDocument.Text
+			}
+		case "initialized", "textDocument/didClose", "exit":
 			// notifications — no reply required
 
 		case "textDocument/definition":

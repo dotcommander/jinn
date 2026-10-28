@@ -10,8 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-
-	"golang.org/x/sys/unix"
 )
 
 // atomicWriteJSON marshals v as indented JSON and atomically writes it to path
@@ -96,7 +94,7 @@ func (e *Engine) atomicWriteFileStaged(resolved, content string, beforeRename fu
 	if err != nil {
 		return true, fmt.Errorf("open parent directory for durability: %w", err)
 	}
-	if syncErr := dir.Sync(); syncErr != nil {
+	if syncErr := syncMutationDirectory(dir); syncErr != nil {
 		_ = dir.Close()
 		return true, fmt.Errorf("sync parent directory for durability: %w", syncErr)
 	}
@@ -111,8 +109,9 @@ func (e *Engine) atomicWriteFileStaged(resolved, content string, beforeRename fu
 	return true, nil
 }
 
-// removeFileDurable unlinks one rooted file then fsyncs its exact parent so a
-// successful delete has the same crash-durability contract as atomic writes.
+// removeFileDurable unlinks one rooted file and performs the supported parent
+// directory sync. Unix fsyncs the exact parent; Windows has no directory-fsync
+// guarantee beyond the native mutation's completion.
 func (e *Engine) removeFileDurable(resolved string) error {
 	rel, err := e.rootRelative(resolved)
 	if err != nil {
@@ -129,7 +128,7 @@ func (e *Engine) removeFileDurable(resolved string) error {
 			return hookErr
 		}
 	}
-	if unlinkErr := unix.Unlinkat(int(dir.Fd()), filepath.Base(rel), 0); unlinkErr != nil {
+	if unlinkErr := unlinkRootedFile(e.root, dir, rel); unlinkErr != nil {
 		return unlinkErr
 	}
 	if e.removeDurabilityHook != nil {
@@ -138,7 +137,7 @@ func (e *Engine) removeFileDurable(resolved string) error {
 			return err
 		}
 	}
-	if err := dir.Sync(); err != nil {
+	if err := syncMutationDirectory(dir); err != nil {
 		_ = dir.Close()
 		return fmt.Errorf("sync parent directory after delete: %w", err)
 	}

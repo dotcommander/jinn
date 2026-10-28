@@ -245,7 +245,7 @@ jinn web search --provider=exa --include-domain=go.dev "context cancellation"
 
 These subcommands use stdlib flags with human output and flat `--json` envelopes. `--max-bytes` and `--max-lines` add an explicit human truncation marker or JSON byte/line totals and truncation fields. Reader/cache/render settings use `JINN_WEB_*`, including `JINN_WEB_CHROME_PATH`; provider credentials use `JINA_API_KEY`, `BRAVE_API_KEY`, or `EXA_API_KEY`. The default cache directory is `$XDG_CACHE_HOME/jinn/web/urls`, falling back to `~/.cache/jinn/web/urls`.
 
-`web_fetch` and `web_search` are available to normal one-shot discovery. Native `web_fetch` accepts `format=markdown|headings|links`, zero-based `start_line`, `max_bytes`, and `max_lines`; continuation and truncation details are returned in snake-case metadata. They are network-risk tools, excluded from `read-only`, and rejected from every `run_plan` phase. Use `--mcp-profile=network` only when the MCP host is allowed to make public network requests.
+`web_fetch` and `web_search` are available to normal one-shot discovery. Native `web_fetch` accepts `format=markdown|headings|links`, zero-based `start_line`, `start_line_byte`, `max_bytes`, and `max_lines`; resume using both `next_start_line` and `next_start_line_byte` metadata fields. Both next fields being zero indicates EOF. They are network-risk tools, excluded from `read-only`, and rejected from every `run_plan` phase. Use `--mcp-profile=network` only when the MCP host is allowed to make public network requests.
 
 ## MCP Discovery Broker
 

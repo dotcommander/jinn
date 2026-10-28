@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"time"
 
@@ -184,10 +183,9 @@ func doctorOfflineCheck(alias string, server mcpexplore.Server) (mcpDoctorCheck,
 	}
 	if server.Transport == mcpServerTransportStdio {
 		check.Executable = server.Command
-		info, err := os.Stat(server.Command)
-		if err != nil || info.IsDir() || (runtime.GOOS != "windows" && info.Mode().Perm()&0o111 == 0) {
+		if err := doctorCommandExecutable(server.Command); err != nil {
 			check.Status = mcpDoctorStatusFailed
-			check.Warnings = append(check.Warnings, "registered command is not executable")
+			check.Warnings = append(check.Warnings, err.Error())
 		}
 		for _, name := range server.PassEnv {
 			_, present := os.LookupEnv(name)
@@ -263,7 +261,7 @@ func mcpRegistryPermissionWarnings() ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
-		if info.Mode().Perm() != item.mode {
+		if doctorPOSIXModeMismatch(info.Mode(), item.mode) {
 			warnings = append(warnings, fmt.Sprintf("%s permissions are more permissive than required", filepath.Base(item.path)))
 		}
 	}

@@ -11,7 +11,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -90,24 +89,21 @@ type shellRunResult struct {
 	resourceLimited bool
 }
 
-func runWithTimeoutControl(ctx context.Context, c *exec.Cmd, timeout int, resourceLimit <-chan struct{}, interrupt func()) shellRunResult {
+func runWithTimeoutControl(ctx context.Context, group *shellProcessGroup, timeout int, resourceLimit <-chan struct{}, interrupt func()) shellRunResult {
 	if err := ctx.Err(); err != nil {
 		return shellRunResult{exitCode: shellCanceledExitCode, canceled: true}
 	}
-	if err := c.Start(); err != nil {
+	if err := group.start(); err != nil {
 		return shellRunResult{exitCode: 1}
 	}
-	pgid := c.Process.Pid // bash is the group leader (Setpgid=true)
 	killGroup := func() {
-		// Negative pgid targets the whole process group.
-		syscall.Kill(-pgid, syscall.SIGKILL) //nolint:errcheck
-		_ = c.Process.Kill()
+		group.kill()
 		if interrupt != nil {
 			interrupt()
 		}
 	}
 	done := make(chan int, 1)
-	go func() { done <- waitExitCode(c) }()
+	go func() { done <- waitExitCode(group.command) }()
 
 	timer := time.NewTimer(time.Duration(timeout) * time.Second)
 	defer timer.Stop()
@@ -130,11 +126,8 @@ func runWithTimeoutControl(ctx context.Context, c *exec.Cmd, timeout int, resour
 	}
 }
 
-func killCommandGroup(c *exec.Cmd, interrupt func()) {
-	if c.Process != nil {
-		_ = syscall.Kill(-c.Process.Pid, syscall.SIGKILL)
-		_ = c.Process.Kill()
-	}
+func killCommandGroup(group *shellProcessGroup, interrupt func()) {
+	group.kill()
 	if interrupt != nil {
 		interrupt()
 	}
@@ -218,7 +211,11 @@ func (e *Engine) executeShellCommand(ctx context.Context, cmd string, timeout in
 	}
 	argv := e.shellArgv(cmd, runDir, homeDir, tmpDir)
 	c := exec.CommandContext(context.WithoutCancel(ctx), argv[0], argv[1:]...) //nolint:gosec // explicit policy-gated shell execution
-	c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	group, err := prepareShellProcessGroup(c)
+	if err != nil {
+		return shellExecution{exitCode: 1, stderr: err.Error()}
+	}
+	defer group.close()
 	c.Dir = e.workDir
 
 	capture := newShellOutputCapture(1 << 20) // 1 MB response tail + bounded spill on overflow
@@ -257,7 +254,7 @@ func (e *Engine) executeShellCommand(ctx context.Context, cmd string, timeout in
 	}
 
 	start := time.Now()
-	run := runWithTimeoutControl(ctx, c, timeout, capture.LimitReached(), interrupt)
+	run := runWithTimeoutControl(ctx, group, timeout, capture.LimitReached(), interrupt)
 	_ = stdoutW.Close()
 	_ = stderrW.Close()
 	drained := make(chan struct{})
@@ -278,16 +275,16 @@ func (e *Engine) executeShellCommand(ctx context.Context, cmd string, timeout in
 		select {
 		case <-drained:
 		case <-timer.C:
-			killCommandGroup(c, interrupt)
+			killCommandGroup(group, interrupt)
 			run.exitCode = 124
 			<-drained
 		case <-ctx.Done():
-			killCommandGroup(c, interrupt)
+			killCommandGroup(group, interrupt)
 			run.exitCode = shellCanceledExitCode
 			run.canceled = true
 			<-drained
 		case <-capture.LimitReached():
-			killCommandGroup(c, interrupt)
+			killCommandGroup(group, interrupt)
 			run.exitCode = 1
 			run.resourceLimited = true
 			<-drained
@@ -407,12 +404,12 @@ func (e *Engine) runShell(ctx context.Context, args map[string]interface{}) (str
 	if riskLevel == RiskDangerous {
 		if force, _ := args["force"].(bool); !force {
 			return "", map[string]any{
-					"risk": riskLevel.String(),
-				}, &ErrWithSuggestion{
-					Err:        fmt.Errorf("blocked by risk classifier: %s — %s", riskLevel, riskReason),
-					Suggestion: `pass force:true in args to override, or use a less-destructive command`,
-					Code:       ErrCodeCommandBlocked,
-				}
+				"risk": riskLevel.String(),
+			}, &ErrWithSuggestion{
+				Err:        fmt.Errorf("blocked by risk classifier: %s — %s", riskLevel, riskReason),
+				Suggestion: `pass force:true in args to override, or use a less-destructive command`,
+				Code:       ErrCodeCommandBlocked,
+			}
 		}
 	}
 

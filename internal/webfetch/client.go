@@ -169,14 +169,8 @@ func (c *Client) Do(ctx context.Context, method, rawURL string, headers http.Hea
 		if resp.Request != nil && resp.Request.URL != nil {
 			result.URL = resp.Request.URL.String()
 		}
-		if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-			httpErr := &HTTPError{
-				URL:        result.URL,
-				StatusCode: resp.StatusCode,
-				Status:     resp.Status,
-				Body:       truncate(string(body), maxErrorBody),
-			}
-			return httpResponse{}, newCodedError(httpErr, httpErrorCode(resp.StatusCode), httpErrorSuggestion(resp.StatusCode))
+		if err := responseStatusError(result.URL, resp.StatusCode, resp.Status, string(body)); err != nil {
+			return httpResponse{}, err
 		}
 		return result, nil
 	}

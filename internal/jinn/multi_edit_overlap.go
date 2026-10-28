@@ -39,16 +39,17 @@ type offsetEntry struct {
 func computeFileOffsets(rawEntries []rawEntry, originalContent map[string]string) map[string][]offsetEntry {
 	fileOffsets := make(map[string][]offsetEntry)
 	for _, re := range rawEntries {
-		origNorm := originalContent[re.resolved]
+		mapped := mapNormalizedText(originalContent[re.resolved], false)
 		oldNorm := normalizeToLF(re.oldText)
-		offset := strings.Index(origNorm, oldNorm)
+		offset := strings.Index(mapped.text, oldNorm)
 		if offset < 0 {
-			origFuzzy := normalizeForFuzzyMatch(origNorm)
-			oldFuzzy := normalizeForFuzzyMatch(oldNorm)
-			offset = strings.Index(origFuzzy, oldFuzzy)
+			mapped = mapNormalizedText(originalContent[re.resolved], true)
+			oldNorm = normalizeForFuzzyMatch(oldNorm)
+			offset = strings.Index(mapped.text, oldNorm)
 		}
 		if offset >= 0 {
-			fileOffsets[re.resolved] = append(fileOffsets[re.resolved], offsetEntry{re.idx, offset, len(oldNorm)})
+			start, end := mapped.boundaries[offset], mapped.boundaries[offset+len(oldNorm)]
+			fileOffsets[re.resolved] = append(fileOffsets[re.resolved], offsetEntry{re.idx, start, end - start})
 		}
 	}
 	return fileOffsets

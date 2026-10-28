@@ -3,14 +3,11 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"os"
-	"os/signal"
-	"syscall"
 	"time"
 
 	"github.com/dotcommander/jinn/internal/jinn"
@@ -41,8 +38,6 @@ func serveInspector(ctx context.Context, addr string, version string, mode jinn.
 	if err != nil {
 		return fail(jinn.Response{Error: err.Error(), ErrorCode: jinn.ErrCodeInvalidArgs})
 	}
-	defer func() { _ = engine.Close() }()
-
 	srv := &http.Server{
 		Addr:              addr,
 		Handler:           newInspectorHandler(engine, jinn.ResolveVersion(version)),
@@ -52,21 +47,13 @@ func serveInspector(ctx context.Context, addr string, version string, mode jinn.
 		IdleTimeout:       60 * time.Second,
 	}
 
-	sigCtx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	go func() {
-		<-sigCtx.Done()
-		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-		defer cancel()
-		_ = srv.Shutdown(shutdownCtx)
-	}()
-
-	fmt.Fprintf(os.Stderr, "jinn inspector listening on http://%s\n", addr)
-	err = srv.ListenAndServe()
-	if errors.Is(err, http.ErrServerClosed) {
-		return nil
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		_ = engine.Close()
+		return err
 	}
-	return err
+	fmt.Fprintf(os.Stderr, "jinn inspector listening on http://%s\n", addr)
+	return serveInspectorServerWithDrain(ctx, srv, listener, 5*time.Second, func() { _ = engine.Close() })
 }
 
 func validateInspectorAddr(addr string) error {
@@ -102,6 +89,9 @@ func newInspectorHandler(engine *jinn.Engine, version string) http.Handler {
 	mux.HandleFunc("/api/run", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if !inspectorRunAllowed(w, r) {
 			return
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, inspectorMaxBody)
@@ -167,6 +157,9 @@ func inspectorSecurityHeaders(version string, next http.Handler) http.Handler {
 		host, _, err := net.SplitHostPort(r.Host)
 		if err != nil {
 			host = r.Host
+			if host == "["+loopbackIPv6+"]" {
+				host = loopbackIPv6
+			}
 		}
 		if host != loopbackIPv4 && host != "localhost" && host != "::1" {
 			http.Error(w, "inspector only accepts localhost requests", http.StatusForbidden)

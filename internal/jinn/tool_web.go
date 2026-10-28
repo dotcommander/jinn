@@ -38,6 +38,7 @@ func (e *Engine) dispatchWeb(ctx context.Context, args map[string]any, tool stri
 			return nil, true, mapWebError(webfetch.NewCodedError(errors.New("raw is only compatible with format markdown"), webfetch.ErrorCodeInvalidArgument, "omit format or use format markdown with raw content"))
 		}
 		startLine := intArg(args, "start_line", 0)
+		startLineByte := intArg(args, "start_line_byte", 0)
 		limits, err := webfetch.NewOutputLimits(intArg(args, "max_bytes", 0), intArg(args, "max_lines", 0))
 		if err != nil {
 			return nil, true, mapWebError(err)
@@ -46,7 +47,7 @@ func (e *Engine) dispatchWeb(ctx context.Context, args map[string]any, tool stri
 		if err != nil {
 			return nil, true, mapWebError(err)
 		}
-		projection, err := webfetch.ProjectFetchContent(doc.Content, format, startLine, limits)
+		projection, err := webfetch.ProjectFetchContentAt(doc.Content, format, startLine, startLineByte, limits)
 		if err != nil {
 			return nil, true, mapWebError(err)
 		}
@@ -91,6 +92,7 @@ func webFetchMeta(doc webfetch.Document, projection webfetch.ContentProjection, 
 		"total_lines": projection.TotalLines, "output_lines": projection.OutputLines,
 		"max_bytes": limits.MaxBytes, "max_lines": limits.MaxLines,
 		"start_line": projection.StartLine, "next_start_line": projection.NextStartLine,
+		"start_line_byte": projection.StartLineByte, "next_start_line_byte": projection.NextStartLineByte,
 	}
 }
 

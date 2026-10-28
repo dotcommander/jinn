@@ -26,7 +26,8 @@ var errRegisteredToolNotDispatched = errors.New("registered tool has no dispatch
 // Engine is a sandboxed tool executor bound to a working directory.
 type Engine struct {
 	workDir                      string
-	version                      string // ldflags-injected version ("dev" when un-set)
+	historyOwner                 *Engine // immutable workspace owner; nil on the root engine
+	version                      string  // ldflags-injected version ("dev" when un-set)
 	root                         *os.Root
 	shellMode                    ShellMode
 	sandboxBinary                string

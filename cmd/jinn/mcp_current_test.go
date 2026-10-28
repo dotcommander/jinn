@@ -62,7 +62,6 @@ func TestMCPProfileParsing(t *testing.T) {
 		t.Fatal("parseMCPProfile accepted an unsupported profile")
 	}
 	for _, arguments := range [][]string{
-		{"--mcp-profile=discover"},
 		{"--mcp-profile", "read-only", "--schema"},
 		{"--mcp-profile=read-only", "--schema", "--mcp"},
 	} {

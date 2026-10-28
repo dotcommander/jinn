@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"syscall"
 	"time"
 )
 
@@ -48,7 +47,7 @@ func registerShellSpill(path string) {
 	if err != nil || !info.Mode().IsRegular() {
 		return
 	}
-	ident, ok := spillFileIdentity(info)
+	ident, ok := spillFileIdentity(path, info)
 	if !ok {
 		return
 	}
@@ -108,7 +107,7 @@ func deleteRecordedSpill(record spillRegistryRecord) {
 	if err != nil || !info.Mode().IsRegular() {
 		return
 	}
-	identity, ok := spillFileIdentity(info)
+	identity, ok := spillFileIdentity(clean, info)
 	if !ok || identity.dev != record.Dev || identity.ino != record.Ino {
 		return
 	}
@@ -140,7 +139,7 @@ func isRegisteredShellSpill(path string) bool {
 }
 
 func isRegisteredShellSpillFile(clean string, info os.FileInfo) bool {
-	ident, ok := spillFileIdentity(info)
+	ident, ok := spillFileIdentity(clean, info)
 	if !ok {
 		return false
 	}
@@ -173,14 +172,6 @@ func hasShellSpillName(path string) bool {
 type spillIdentity struct {
 	dev int64
 	ino uint64
-}
-
-func spillFileIdentity(info os.FileInfo) (spillIdentity, bool) {
-	st, ok := info.Sys().(*syscall.Stat_t)
-	if !ok || st == nil {
-		return spillIdentity{}, false
-	}
-	return spillIdentity{dev: int64(st.Dev), ino: st.Ino}, true
 }
 
 func unregisteredSpillErr(path string) error {

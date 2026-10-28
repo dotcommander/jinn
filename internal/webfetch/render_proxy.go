@@ -223,12 +223,7 @@ func (p *renderProxy) serveConnect(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	_ = downstream.SetDeadline(time.Now().Add(renderProxyTunnelIdleTimeout))
-	_ = upstream.SetDeadline(time.Now().Add(renderProxyTunnelIdleTimeout))
-	errCh := make(chan error, 2)
-	go proxyTunnelCopy(errCh, upstream, io.MultiReader(rw.Reader, downstream), p.budget)
-	go proxyTunnelCopy(errCh, downstream, upstream, p.budget)
-	<-errCh
+	forwardProxyTunnel(req.Context(), upstream, downstream, rw.Reader, p.budget, renderProxyTunnelIdleTimeout)
 }
 
 func proxyTunnelCopy(errCh chan<- error, dst io.Writer, src io.Reader, budget *proxyBudget) {
@@ -239,7 +234,7 @@ func proxyTunnelCopy(errCh chan<- error, dst io.Writer, src io.Reader, budget *p
 func (p *renderProxy) reject(w http.ResponseWriter, err error) {
 	if p.budget != nil {
 		var coded *CodedError
-		if errors.As(err, &coded) {
+		if errors.As(err, &coded) && coded.Code != ErrorCodePrivateNetwork && coded.Code != ErrorCodeInvalidURL {
 			_ = p.budget.fail(err)
 		}
 	}

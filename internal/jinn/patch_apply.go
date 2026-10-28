@@ -90,8 +90,11 @@ func deriveUpdatedContent(filePath string, content string, chunks []updateChunk)
 			case r.start+r.oldLen < len(records):
 				newRecords[len(newRecords)-1].ending = ending
 			default:
-				newRecords[len(newRecords)-1].ending = "\n"
+				newRecords[len(newRecords)-1].ending = ending
 			}
+		}
+		if r.oldLen == 0 && r.start > 0 && len(newRecords) > 0 && records[r.start-1].ending == "" {
+			records[r.start-1].ending = ending
 		}
 		tail := append([]lineRecord(nil), records[r.start+r.oldLen:]...)
 		records = append(records[:r.start], newRecords...)

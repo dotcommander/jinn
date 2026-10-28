@@ -29,7 +29,7 @@ func TestMCPExplorerHumanRendererEscapesHostileControls(t *testing.T) {
 			t.Fatalf("human output retained raw hostile control %q: %q", raw, text)
 		}
 	}
-	for _, escaped := range []string{`\\u001b`, `\\u009b`, `\\u180e`, `\\u202e`, `\\u200b`, `\\u2061`, `\\ufeff`, `\\u0007`, `\\U0001d173`} {
+	for _, escaped := range []string{`\u001b`, `\u009b`, `\u180e`, `\u202e`, `\u200b`, `\u2061`, `\ufeff`, `\u0007`, `\ud834\udd73`} {
 		if !strings.Contains(text, escaped) {
 			t.Fatalf("human output omitted escaped control %q: %q", escaped, text)
 		}

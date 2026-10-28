@@ -167,10 +167,10 @@ func TestURLCacheStoreIsAtomicAndPermissionRestricted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read cache directory: %v", err)
 	}
-	if len(entries) != 1 || strings.HasPrefix(entries[0].Name(), ".jinn-web-cache-") {
-		t.Fatalf("cache entries = %+v, want one final file", entries)
+	if len(entries) != 2 || entries[0].Name() != ".cache.lock" || !canonicalCacheName(entries[1].Name()) {
+		t.Fatalf("cache entries = %+v, want one final file and cache lock", entries)
 	}
-	fileInfo, err := os.Stat(filepath.Join(cacheDir, entries[0].Name()))
+	fileInfo, err := os.Stat(filepath.Join(cacheDir, entries[1].Name()))
 	if err != nil {
 		t.Fatalf("cache file: %v", err)
 	}

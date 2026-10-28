@@ -125,7 +125,9 @@ func markdownTitle(markdown string) string {
 		}
 	}
 
-	for _, line := range strings.Split(markdown, "\n") {
+	for markdown != "" {
+		line, rest, _ := strings.Cut(markdown, "\n")
+		markdown = rest
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "# ") {
 			return strings.TrimSpace(strings.TrimPrefix(line, "# "))

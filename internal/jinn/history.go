@@ -60,7 +60,7 @@ type historyFile struct {
 
 // historyDir returns the per-workdir history directory.
 func (e *Engine) historyDir() string {
-	hash := sha256.Sum256([]byte(e.workDir))
+	hash := sha256.Sum256([]byte(e.historyOwnerEngine().workDir))
 	wdHash := hex.EncodeToString(hash[:])[:16]
 	base := os.Getenv("JINN_CONFIG_DIR")
 	if base == "" {
@@ -179,7 +179,7 @@ func (e *Engine) reconcileHistoryLocked(hf *historyFile) error {
 }
 
 func (e *Engine) historyTargetIdentity(resolved string) (historyIdentity, error) {
-	data, _, err := e.readRegularFile(resolved, maxFileSize)
+	data, _, err := e.historyOwnerEngine().readRegularFile(resolved, maxFileSize)
 	if os.IsNotExist(err) {
 		return historyIdentity{}, nil
 	}
@@ -315,7 +315,7 @@ func (e *Engine) recordSnapshotLockedStrict(absPath, displayPath, op string, tra
 		blobHash, blobPath, blobSize = blob.hash, blob.path, blob.size
 	}
 
-	target, err := e.rootRelative(absPath)
+	target, err := e.historyOwnerEngine().rootRelative(absPath)
 	if err != nil {
 		return "", err
 	}

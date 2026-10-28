@@ -86,7 +86,7 @@ func (e *Engine) parseAndResolveEdits(editsRaw []interface{}, requireChecksums b
 			}
 			origDataCache[resolved] = data
 			norm, _ := stripBom(string(data))
-			originalContent[resolved] = normalizeToLF(norm)
+			originalContent[resolved] = norm
 		}
 		if err := verifyChecksum(strArg(entry, "if_checksum"), path, origDataCache[resolved], true); err != nil {
 			return nil, nil, fmt.Errorf("edit[%d] %s: %w", i, path, err)

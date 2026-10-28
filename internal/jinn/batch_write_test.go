@@ -86,9 +86,6 @@ func TestPreparedWriteToolLifecycle(t *testing.T) {
 					}
 					if scenario.failAt == 2 {
 						total := len(paths)
-						if tool == "multi_edit" {
-							total *= 2 // The existing error counts input edits, before grouping by file.
-						}
 						prefix := fmt.Sprintf("%s: partial apply — 1 of %d files already written: a.txt (undo id=%s); b.txt: ", tool, total, history.Entries[0].ID)
 						if !strings.HasPrefix(err.Error(), prefix) || strings.Contains(err.Error(), history.Entries[1].ID) {
 							t.Fatalf("partial receipt = %v, want prefix %q and no failed undo ID", err, prefix)

@@ -216,6 +216,9 @@ func (e *Engine) undoRestoreLocked(args map[string]interface{}, ent historyEntry
 }
 
 func (e *Engine) resolveUndoTarget(ent historyEntry) (string, error) {
+	if e.historyOwner != nil {
+		return e.historyOwner.resolveUndoTarget(ent)
+	}
 	target := ent.Target
 	if target == "" {
 		target = ent.DisplayPath

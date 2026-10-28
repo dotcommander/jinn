@@ -1101,7 +1101,7 @@ func extractFunctionBodyContents(cmdline string) []string {
 		if !ok {
 			break
 		}
-		close := findMatchingBrace(runes, open)
+		close := findMatchingFunctionBody(runes, open)
 		if close <= open {
 			contents = append(contents, string(runes[open+1:]))
 			break
@@ -1121,12 +1121,12 @@ func stripFunctionBodies(cmdline string) string {
 			out.WriteString(string(runes[offset:]))
 			break
 		}
-		close := findMatchingBrace(runes, open)
+		close := findMatchingFunctionBody(runes, open)
 		out.WriteString(string(runes[offset : open+1]))
 		if close <= open {
 			break
 		}
-		out.WriteRune('}')
+		out.WriteRune(runes[close])
 		offset = close + 1
 	}
 	return out.String()
@@ -1138,7 +1138,7 @@ func nextFunctionBodyOpen(runes []rune, offset int) (int, bool) {
 		if quote.writeLiteral(runes[i], nil) {
 			continue
 		}
-		if runes[i] == '{' && looksLikeFunctionHeader(string(runes[:i])) {
+		if (runes[i] == '{' || runes[i] == '(') && looksLikeFunctionHeader(string(runes[:i])) {
 			return i, true
 		}
 	}
@@ -1158,6 +1158,13 @@ func looksLikeFunctionHeader(prefix string) bool {
 		return true
 	}
 	return false
+}
+
+func findMatchingFunctionBody(runes []rune, open int) int {
+	if runes[open] == '(' {
+		return findMatchingParenRunes(runes, open)
+	}
+	return findMatchingBrace(runes, open)
 }
 
 func isShellName(s string) bool {

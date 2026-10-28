@@ -3,6 +3,8 @@ package webfetch
 import (
 	"regexp"
 	"strings"
+
+	"golang.org/x/net/html"
 )
 
 type shellClass uint8
@@ -14,11 +16,10 @@ const (
 )
 
 var (
-	knownAppMarkers = regexp.MustCompile(`(?i)(?:id|class)=["'][^"']*(?:app|root|__next|__nuxt|react)[^"']*["']|__next_data__|__nuxt__|data-reactroot|data-vue-meta`)
-	scriptTag       = regexp.MustCompile(`(?i)<script\b`)
-	noscriptTag     = regexp.MustCompile(`(?i)<noscript\b`)
-	textTag         = regexp.MustCompile(`(?is)<(?:script|style|noscript|svg)\b.*?</(?:script|style|noscript|svg)>`)
-	markupTag       = regexp.MustCompile(`(?is)<[^>]+>`)
+	scriptTag   = regexp.MustCompile(`(?i)<script\b`)
+	noscriptTag = regexp.MustCompile(`(?i)<noscript\b`)
+	textTag     = regexp.MustCompile(`(?is)<(?:script|style|noscript|svg)\b.*?</(?:script|style|noscript|svg)>`)
+	markupTag   = regexp.MustCompile(`(?is)<[^>]+>`)
 )
 
 // classifyHTML identifies pages that are likely to need a browser before
@@ -29,7 +30,7 @@ func classifyHTML(html string) shellClass {
 	if trimmed == "" {
 		return shellClassLikely
 	}
-	if knownAppMarkers.MatchString(trimmed) {
+	if hasAppMarker(trimmed) {
 		return shellClassLikely
 	}
 
@@ -50,4 +51,29 @@ func classifyHTML(html string) shellClass {
 		return shellClassAmbiguous
 	}
 	return shellClassStatic
+}
+
+func hasAppMarker(document string) bool {
+	tokens := html.NewTokenizer(strings.NewReader(document))
+	for {
+		switch tokens.Next() {
+		case html.ErrorToken:
+			return false
+		case html.StartTagToken, html.SelfClosingTagToken:
+			for _, attr := range tokens.Token().Attr {
+				if attr.Key == "data-reactroot" || attr.Key == "data-vue-meta" {
+					return true
+				}
+				if attr.Key != "id" && attr.Key != "class" {
+					continue
+				}
+				for _, token := range strings.Fields(strings.ToLower(attr.Val)) {
+					switch token {
+					case "app", "root", "__next", "__nuxt", "react", "__next_data__", "__nuxt__":
+						return true
+					}
+				}
+			}
+		}
+	}
 }

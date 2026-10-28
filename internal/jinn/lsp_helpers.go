@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode"
 	"unicode/utf16"
 )
 
@@ -49,9 +50,12 @@ type lspWorkspaceEdit struct {
 	DocumentChanges []lspTextDocumentEdit    `json:"documentChanges,omitempty"`
 }
 
-// lspTextDocumentEdit is the text-edit subset of WorkspaceEdit.documentChanges.
-// Resource operations are intentionally ignored by the preview formatter.
+// lspTextDocumentEdit preserves the ordered text-edit/resource-operation union.
 type lspTextDocumentEdit struct {
+	Kind         string `json:"kind,omitempty"`
+	URI          string `json:"uri,omitempty"`
+	OldURI       string `json:"oldUri,omitempty"`
+	NewURI       string `json:"newUri,omitempty"`
 	TextDocument struct {
 		URI string `json:"uri"`
 	} `json:"textDocument"`
@@ -66,11 +70,12 @@ type lspTextEdit struct {
 
 // lspDiagnostic is the subset of LSP Diagnostic fields Jinn renders.
 type lspDiagnostic struct {
-	Range    lspRange `json:"range"`
-	Severity int      `json:"severity,omitempty"`
-	Code     any      `json:"code,omitempty"`
-	Source   string   `json:"source,omitempty"`
-	Message  string   `json:"message"`
+	Range           lspRange `json:"range"`
+	Severity        int      `json:"severity,omitempty"`
+	Code            any      `json:"code,omitempty"`
+	CodeDescription any      `json:"codeDescription,omitempty"`
+	Source          string   `json:"source,omitempty"`
+	Message         string   `json:"message"`
 }
 
 // --- position helpers ---
@@ -88,7 +93,7 @@ func tdPos(absPath string, line, char int) map[string]any {
 }
 
 // findSymbolColumn reads line (0-based) from absPath and returns the 0-based
-// UTF-16 character offset of the first occurrence of symbol, matching the LSP
+// UTF-16 character offset of the unique identifier candidate, matching the LSP
 // Position.character contract.
 func findSymbolColumn(absPath string, line int, symbol string) (int, error) {
 	data, err := os.ReadFile(absPath)
@@ -99,12 +104,7 @@ func findSymbolColumn(absPath string, line int, symbol string) (int, error) {
 	if line < 0 || line >= len(lines) {
 		return 0, fmt.Errorf("line %d out of range (file has %d lines)", line+1, len(lines))
 	}
-	lineText := lines[line]
-	before, _, ok := strings.Cut(lineText, symbol)
-	if !ok {
-		return 0, fmt.Errorf("symbol %q not found on line %d", symbol, line+1)
-	}
-	return utf16CodeUnitLen(before), nil
+	return identifierColumn(lines[line], line, symbol)
 }
 
 func (e *Engine) findSymbolColumn(absPath string, line int, symbol string) (int, error) {
@@ -116,11 +116,36 @@ func (e *Engine) findSymbolColumn(absPath string, line int, symbol string) (int,
 	if line < 0 || line >= len(lines) {
 		return 0, fmt.Errorf("line %d out of range (file has %d lines)", line+1, len(lines))
 	}
-	before, _, ok := strings.Cut(lines[line], symbol)
-	if !ok {
+	return identifierColumn(lines[line], line, symbol)
+}
+
+func identifierColumn(text string, line int, symbol string) (int, error) {
+	start, candidate := -1, -1
+	for index, r := range text {
+		if r == '_' || r == '$' || unicode.IsLetter(r) || unicode.IsDigit(r) || unicode.IsMark(r) {
+			if start < 0 {
+				start = index
+			}
+			continue
+		}
+		if start >= 0 && text[start:index] == symbol {
+			if candidate >= 0 {
+				return 0, fmt.Errorf("symbol %q is ambiguous on line %d", symbol, line+1)
+			}
+			candidate = start
+		}
+		start = -1
+	}
+	if start >= 0 && text[start:] == symbol {
+		if candidate >= 0 {
+			return 0, fmt.Errorf("symbol %q is ambiguous on line %d", symbol, line+1)
+		}
+		candidate = start
+	}
+	if candidate < 0 {
 		return 0, fmt.Errorf("symbol %q not found on line %d", symbol, line+1)
 	}
-	return utf16CodeUnitLen(before), nil
+	return utf16CodeUnitLen(text[:candidate]), nil
 }
 
 func splitLSPLines(source string) []string {
@@ -175,6 +200,9 @@ func lspFormatContext(lines []string, targetLine, contextSize int) string {
 // formatWorkspaceEdit formats rename results as "file: N edit(s)" + per-edit lines.
 // workDir is used to compute relative paths for readability.
 func formatWorkspaceEdit(edit *lspWorkspaceEdit, workDir string) string {
+	if edit != nil && len(edit.DocumentChanges) > 0 {
+		return formatOrderedWorkspaceEdit(edit, workDir)
+	}
 	fileEdits := collectWorkspaceEditFileEdits(edit)
 	if len(fileEdits) == 0 {
 		return "no changes"

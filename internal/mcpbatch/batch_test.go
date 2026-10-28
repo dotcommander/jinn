@@ -118,7 +118,7 @@ func TestExecuteOrderConcurrencyErrorsAndCancellation(t *testing.T) {
 	timedOut := batchInput(Call{ID: "wait", Tool: "wait"})
 	timedOut.CallTimeout = time.Millisecond
 	results = Execute(context.Background(), &testCaller{waitForContext: true}, timedOut, testProjector)
-	if results[0].Status != statusCanceled {
+	if results[0].Status != statusTimeout {
 		t.Fatalf("timeout result = %#v", results[0])
 	}
 

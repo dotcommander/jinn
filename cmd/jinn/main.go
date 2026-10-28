@@ -156,6 +156,9 @@ func run(ctx context.Context) error {
 	}
 
 	if fi, statErr := os.Stdin.Stat(); statErr == nil && fi.Mode()&os.ModeCharDevice != 0 {
+		if requestedMCPProfile(os.Args[1:]) {
+			return fail(jinn.Response{Error: "--mcp-profile requires --mcp or --mcp-http", ErrorCode: jinn.ErrCodeInvalidArgs})
+		}
 		fmt.Print(helpText)
 		return nil
 	}
@@ -170,6 +173,9 @@ func run(ctx context.Context) error {
 		if isMCP {
 			return runMCPWithProfile(sigCtx, input, os.Stdout, version, mode, profile)
 		}
+	}
+	if requestedMCPProfile(os.Args[1:]) {
+		return fail(jinn.Response{Error: "--mcp-profile requires --mcp or --mcp-http", ErrorCode: jinn.ErrCodeInvalidArgs})
 	}
 
 	wd, err := os.Getwd()
@@ -286,7 +292,7 @@ func parseCLIArgs(arguments []string) (jinn.ShellMode, mcpProfile, []string, err
 		}
 		mode = parsed
 	}
-	if profileSet && (len(positional) == 0 || (positional[0] != "--mcp" && positional[0] != "--mcp-http")) {
+	if profileSet && len(positional) > 0 && positional[0] != "--mcp" && positional[0] != "--mcp-http" {
 		return "", "", nil, errors.New("--mcp-profile requires --mcp or --mcp-http")
 	}
 	return mode, profile, positional, nil

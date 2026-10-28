@@ -7,7 +7,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 )
@@ -533,17 +532,4 @@ func waitForPIDFile(t *testing.T, path string) int {
 	}
 	t.Fatalf("child pid file was not written: %v", lastErr)
 	return 0
-}
-
-func waitForProcessExit(t *testing.T, pid int) {
-	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		if err := syscall.Kill(pid, 0); err != nil {
-			return
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	_ = syscall.Kill(pid, syscall.SIGKILL)
-	t.Fatalf("background child process %d survived run_shell cancellation", pid)
 }

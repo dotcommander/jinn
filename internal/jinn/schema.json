@@ -526,6 +526,7 @@
           "render_wait": {"type": "string", "enum": ["load", "networkidle"], "description": "Browser wait strategy when rendering"},
           "format": {"type": "string", "enum": ["markdown", "headings", "links"], "description": "Content projection", "default": "markdown"},
           "start_line": {"type": "integer", "minimum": 0, "description": "Zero-based line offset within the projection", "default": 0},
+          "start_line_byte": {"type": "integer", "minimum": 0, "description": "UTF-8 byte offset within start_line; resume with both next cursor fields", "default": 0},
           "max_bytes": {"type": "integer", "minimum": 0, "description": "Maximum projected UTF-8 bytes; zero is unlimited", "default": 0},
           "max_lines": {"type": "integer", "minimum": 0, "description": "Maximum projected lines; zero is unlimited", "default": 0}
         },

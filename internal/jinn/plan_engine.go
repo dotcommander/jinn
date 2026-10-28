@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"unicode/utf8"
 )
 
 var planPhase1ToolAllowlist = map[string]bool{
@@ -395,14 +396,12 @@ func nestedPlanResult(tr *ToolResult) (*PlanRunResult, bool) {
 }
 
 func planRunSucceeded(result *PlanRunResult) bool {
-	if result == nil || result.StoppedReason != StopLeaf {
+	if result == nil || result.StoppedReason != StopLeaf || len(result.Transcript) == 0 {
 		return false
 	}
-	for _, node := range result.Transcript {
-		for _, op := range node.Ops {
-			if !op.OK {
-				return false
-			}
+	for _, op := range result.Transcript[len(result.Transcript)-1].Ops {
+		if !op.OK {
+			return false
 		}
 	}
 	return true
@@ -621,9 +620,9 @@ func (e *Engine) evaluateCondition(last PlanOpResult, cond Condition) (bool, err
 		if err != nil {
 			return false, err
 		}
-		stream := last.Stdout
-		if cond.Stream == "stderr" {
-			stream = last.Stderr
+		stream := last.Result
+		if last.Classification != "" || last.Stdout != "" || last.Stderr != "" {
+			stream = last.Stdout + last.Stderr
 		}
 		matched = re.MatchString(stream)
 	case "numeric":
@@ -763,6 +762,7 @@ func (e *Engine) scopedPlanEngine(cwd string) (*Engine, error) {
 	}
 	return &Engine{
 		workDir:                      resolved,
+		historyOwner:                 e.historyOwnerEngine(),
 		version:                      e.version,
 		root:                         root,
 		shellMode:                    e.shellMode,
@@ -941,7 +941,11 @@ func boundPlanOpResultLimit(result PlanOpResult, fieldLimit int) PlanOpResult {
 		if len(value) <= fieldLimit {
 			return value
 		}
-		return value[:fieldLimit] + "…"
+		end := fieldLimit
+		for end > 0 && !utf8.RuneStart(value[end]) {
+			end--
+		}
+		return value[:end] + "…"
 	}
 	result.Result = trim(result.Result)
 	result.Error = trim(result.Error)

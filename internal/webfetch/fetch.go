@@ -295,6 +295,13 @@ func (s *Service) render(ctx context.Context, target *url.URL, options renderOpt
 		}
 		return renderedPage{}, newCodedError(fmt.Errorf("render %s: %w", target, err), ErrorCodeRenderFailed, "retry without rendering or increase the render timeout")
 	}
+	finalURL := page.FinalURL
+	if finalURL == "" {
+		finalURL = target.String()
+	}
+	if err := responseStatusError(finalURL, page.StatusCode, fmt.Sprintf("%d %s", page.StatusCode, http.StatusText(page.StatusCode)), page.HTML); err != nil {
+		return renderedPage{}, err
+	}
 	if strings.TrimSpace(page.HTML) == "" {
 		return renderedPage{}, newCodedError(errors.New("render returned empty HTML"), ErrorCodeRenderFailed, "retry the page or use render never")
 	}
@@ -383,6 +390,7 @@ func (s *Service) Close(ctx context.Context) error {
 	initialized := s.renderInit
 	s.renderer = nil
 	s.renderMu.Unlock()
+	s.cache.close()
 	var closeErr error
 	if renderer != nil {
 		closeErr = renderer.Close(ctx)

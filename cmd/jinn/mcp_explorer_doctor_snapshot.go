@@ -66,7 +66,7 @@ func mcpSnapshotPermissionWarnings(aliases []string) ([]string, error) {
 	}
 	warnings := make([]string, 0, 1+len(aliases)*3)
 	info, err := os.Stat(filepath.Dir(path))
-	if err == nil && info.Mode().Perm() != 0o700 {
+	if err == nil && doctorPOSIXModeMismatch(info.Mode(), 0o700) {
 		warnings = append(warnings, fmt.Sprintf("%s permissions are more permissive than required", filepath.Base(filepath.Dir(path))))
 	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, err
@@ -84,7 +84,7 @@ func mcpSnapshotPermissionWarnings(aliases []string) ([]string, error) {
 			if err != nil {
 				return nil, err
 			}
-			if info.Mode().Perm() != 0o600 {
+			if doctorPOSIXModeMismatch(info.Mode(), 0o600) {
 				warnings = append(warnings, fmt.Sprintf("%s permissions are more permissive than required", filepath.Base(item)))
 			}
 		}

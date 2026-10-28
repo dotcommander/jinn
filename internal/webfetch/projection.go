@@ -25,16 +25,18 @@ type OutputLimits struct {
 
 // ContentProjection describes a bounded view of fetched content.
 type ContentProjection struct {
-	Content       string
-	Format        string
-	Truncated     bool
-	TruncatedBy   string
-	TotalBytes    int
-	OutputBytes   int
-	TotalLines    int
-	OutputLines   int
-	StartLine     int
-	NextStartLine int
+	Content           string
+	Format            string
+	Truncated         bool
+	TruncatedBy       string
+	TotalBytes        int
+	OutputBytes       int
+	TotalLines        int
+	OutputLines       int
+	StartLine         int
+	StartLineByte     int
+	NextStartLine     int
+	NextStartLineByte int
 }
 
 // NewOutputLimits validates optional byte and line limits.
@@ -84,11 +86,16 @@ func ProjectContent(content string, limits OutputLimits) ContentProjection {
 // ProjectFetchContent derives a requested representation, applies a zero-based
 // line offset, and then enforces output limits.
 func ProjectFetchContent(content, format string, startLine int, limits OutputLimits) (ContentProjection, error) {
+	return ProjectFetchContentAt(content, format, startLine, 0, limits)
+}
+
+// ProjectFetchContentAt resumes at a byte boundary within the selected line.
+func ProjectFetchContentAt(content, format string, startLine, startLineByte int, limits OutputLimits) (ContentProjection, error) {
 	format = NormalizeProjectionFormat(format)
 	if format == "" {
 		format = ProjectionFormatMarkdown
 	}
-	if startLine < 0 {
+	if startLine < 0 || startLineByte < 0 {
 		return ContentProjection{}, newCodedError(errors.New("start_line must be non-negative"), ErrorCodeInvalidArgument, "use a zero-based line offset")
 	}
 	derived, err := deriveProjectionContent(content, format)
@@ -96,17 +103,34 @@ func ProjectFetchContent(content, format string, startLine int, limits OutputLim
 		return ContentProjection{}, err
 	}
 	totalLines := ContentLineCount(derived)
-	projection := ProjectContent(contentFromLine(derived, startLine), limits)
+	remaining := contentFromLine(derived, startLine)
+	lineLength := len(remaining)
+	if end := strings.IndexByte(remaining, '\n'); end >= 0 {
+		lineLength = end
+	}
+	if startLineByte > lineLength || (startLineByte < len(remaining) && !utf8.RuneStart(remaining[startLineByte])) {
+		return ContentProjection{}, newCodedError(errors.New("invalid start_line_byte"), ErrorCodeInvalidArgument, "use a UTF-8 byte boundary within start_line")
+	}
+	remaining = remaining[startLineByte:]
+	projection := ProjectContent(remaining, limits)
+	if remaining != "" && projection.Content == "" {
+		return ContentProjection{}, newCodedError(errors.New("max_bytes cannot fit the next character"), ErrorCodeInvalidArgument, "increase max_bytes to fit the next UTF-8 character")
+	}
 	projection.Format = format
 	projection.StartLine = startLine
+	projection.StartLineByte = startLineByte
 	projection.TotalBytes = len(derived)
 	projection.TotalLines = totalLines
-	if startLine > 0 && !projection.Truncated {
+	if (startLine > 0 || startLineByte > 0) && !projection.Truncated {
 		projection.Truncated = true
 		projection.TruncatedBy = "offset"
 	}
-	if startLine+projection.OutputLines < totalLines {
-		projection.NextStartLine = startLine + projection.OutputLines
+	if len(projection.Content) < len(remaining) {
+		projection.NextStartLine = startLine + strings.Count(projection.Content, "\n")
+		projection.NextStartLineByte = startLineByte + len(projection.Content)
+		if last := strings.LastIndexByte(projection.Content, '\n'); last >= 0 {
+			projection.NextStartLineByte = len(projection.Content) - last - 1
+		}
 	}
 	return projection, nil
 }
@@ -161,7 +185,9 @@ func deriveProjectionContent(content, format string) (string, error) {
 
 func extractHeadings(content string) string {
 	var headings strings.Builder
-	for _, line := range strings.SplitAfter(content, "\n") {
+	for content != "" {
+		line, rest, _ := strings.Cut(content, "\n")
+		content = rest
 		trimmed := strings.TrimSpace(strings.TrimRight(line, "\r\n"))
 		if headingPattern.MatchString(trimmed) {
 			headings.WriteString(trimmed)
@@ -199,11 +225,14 @@ func contentFromLine(content string, startLine int) string {
 	if startLine <= 0 || content == "" {
 		return content
 	}
-	lines := strings.SplitAfter(content, "\n")
-	if startLine >= len(lines) {
-		return ""
+	for range startLine {
+		_, rest, found := strings.Cut(content, "\n")
+		if !found {
+			return ""
+		}
+		content = rest
 	}
-	return strings.Join(lines[startLine:], "")
+	return content
 }
 
 func prefixByLines(content string, maxLines int) string {
