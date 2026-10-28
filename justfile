@@ -44,9 +44,19 @@ release bump:
     fi
     echo "v$CUR → v$VER"
     just test
-    just build
-    git push origin main
+    mkdir -p "{{gobin}}"
+    tmp=$(mktemp "{{gobin}}/.jinn-release.XXXXXX")
+    trap 'rm -f "$tmp"' EXIT
+    go build -ldflags "-X main.version=v$VER" -o "$tmp" ./cmd/jinn/
+    [[ "$("$tmp" --version)" == "v$VER" ]] || { echo "release build version mismatch" >&2; exit 1; }
+    mv -f "$tmp" "{{gobin}}/jinn"
+    [[ "$("{{gobin}}/jinn" --version)" == "v$VER" ]] || { echo "installed release version mismatch" >&2; exit 1; }
     git tag "v$VER"
+    git push origin main
     git push origin "v$VER"
-    gh release create "v$VER" --repo dotcommander/jinn --title "v$VER" --generate-notes --latest
+    notes=(--generate-notes)
+    if [[ -n "${JINN_RELEASE_NOTES:-}" ]]; then
+      notes=(--notes-file "$JINN_RELEASE_NOTES")
+    fi
+    gh release create "v$VER" --repo dotcommander/jinn --title "v$VER" --verify-tag "${notes[@]}" --latest
     echo "✓ v$VER live"
