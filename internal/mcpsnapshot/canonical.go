@@ -104,6 +104,10 @@ func Fingerprint(value any) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	return fingerprintCanonical(canonical), nil
+}
+
+func fingerprintCanonical(canonical []byte) string {
 	digest := sha256.Sum256(canonical)
-	return "sha256:" + hex.EncodeToString(digest[:]), nil
+	return "sha256:" + hex.EncodeToString(digest[:])
 }

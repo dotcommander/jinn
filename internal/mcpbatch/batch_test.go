@@ -80,6 +80,54 @@ func TestValidateAnnotationsSchemasAndNoExternalRefs(t *testing.T) {
 	}
 }
 
+type countedSchemaType struct {
+	count *int
+	value string
+}
+
+func (item countedSchemaType) MarshalJSON() ([]byte, error) {
+	*item.count++
+	return json.Marshal(item.value)
+}
+
+func TestValidateReusesSchemasAndReportsEveryCall(t *testing.T) {
+	t.Parallel()
+	readOnly := true
+	validCompilations, failedCompilations := 0, 0
+	valid := &protocol.Tool{Name: "valid", InputSchema: protocol.JSONSchema{
+		"type":     countedSchemaType{count: &validCompilations, value: "object"},
+		"required": []string{"count"},
+	}, Annotations: &protocol.ToolAnnotations{ReadOnlyHint: &readOnly}}
+	invalid := &protocol.Tool{Name: "invalid", InputSchema: protocol.JSONSchema{
+		"type": countedSchemaType{count: &failedCompilations, value: "not-a-type"},
+	}, Annotations: &protocol.ToolAnnotations{ReadOnlyHint: &readOnly}}
+	tools := []*protocol.Tool{valid, invalid}
+	input := batchInput(
+		Call{ID: "missing-one", Tool: "valid"},
+		Call{ID: "present", Tool: "valid", Arguments: map[string]any{"count": 1}},
+		Call{ID: "missing-two", Tool: "valid"},
+		Call{ID: "compile-one", Tool: "invalid"},
+		Call{ID: "compile-two", Tool: "invalid"},
+	)
+	for invocation := 1; invocation <= 2; invocation++ {
+		err := Validate(input, tools, tools)
+		if err == nil {
+			t.Fatal("invalid batch passed preflight")
+		}
+		for _, id := range []string{"missing-one", "missing-two", "compile-one", "compile-two"} {
+			if !strings.Contains(err.Error(), "batch call \""+id+"\" arguments:") {
+				t.Fatalf("missing %q error: %v", id, err)
+			}
+		}
+		if strings.Contains(err.Error(), "batch call \"present\"") {
+			t.Fatalf("valid arguments rejected: %v", err)
+		}
+		if validCompilations != invocation || failedCompilations != invocation {
+			t.Fatalf("schema encodings after %d preflights = %d valid, %d failed", invocation, validCompilations, failedCompilations)
+		}
+	}
+}
+
 func TestValidatePreflightIsAtomic(t *testing.T) {
 	readOnly := true
 	tool := batchTool(&readOnly, nil)

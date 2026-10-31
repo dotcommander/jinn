@@ -1,16 +1,45 @@
 package webfetch
 
 import (
+	"bytes"
 	"encoding/hex"
 	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
 
-const cacheCleanupBatch = 64
+const (
+	cacheCleanupBatch      = 64
+	cacheCleanupProbeBytes = 128
+)
+
+// A canonical envelope starts with version and stored_at before its document.
+// A fresh prefix only authorizes retention, never deletion. Expired or
+// unrecognized prefixes still require full JSON validation; a later duplicate
+// field or malformed suffix may be conservatively retained until a later sweep.
+func freshCanonicalCachePrefix(r io.Reader, ttl time.Duration) bool {
+	var prefix [cacheCleanupProbeBytes]byte
+	n, _ := io.ReadFull(r, prefix[:])
+	data := prefix[:n]
+	header := `{"version":` + strconv.Itoa(urlCacheVersion) + `,"stored_at":"`
+	if !bytes.HasPrefix(data, []byte(header)) {
+		return false
+	}
+	stamp, _, found := bytes.Cut(data[len(header):], []byte(`","url":`))
+	if !found {
+		return false
+	}
+	storedAt, err := time.Parse(time.RFC3339Nano, string(stamp))
+	if err != nil || storedAt.IsZero() {
+		return false
+	}
+	age := time.Since(storedAt)
+	return age >= 0 && age <= ttl
+}
 
 // cleanup advances a bounded sweep on cache activity; Close owns the cursor.
 func (c *urlCache) cleanup() {
@@ -61,9 +90,21 @@ func (c *urlCache) removeExpired(path string) {
 		return
 	}
 	info, statErr := file.Stat()
+	if statErr != nil || !info.Mode().IsRegular() {
+		_ = file.Close()
+		return
+	}
+	if info.Size() <= c.maxBytes && freshCanonicalCachePrefix(file, c.ttl) {
+		_ = file.Close()
+		return
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		_ = file.Close()
+		return
+	}
 	data, readErr := io.ReadAll(io.LimitReader(file, c.maxBytes+1))
 	_ = file.Close()
-	if statErr != nil || !info.Mode().IsRegular() || readErr != nil || int64(len(data)) > c.maxBytes {
+	if readErr != nil || int64(len(data)) > c.maxBytes {
 		return
 	}
 	var envelope urlCacheEnvelope

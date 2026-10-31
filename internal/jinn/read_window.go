@@ -2,7 +2,6 @@ package jinn
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
 )
 
@@ -15,11 +14,11 @@ type readWindow struct {
 
 // oversizedLineResult returns a hint result when the first windowed source line
 // exceeds the byte cap (the byte-cap loop would otherwise keep nothing), or nil.
-func oversizedLineResult(resolved string, lines []string, startLine, total int) *readContentResult {
-	if startLine > total || len(lines[startLine-1]) <= readMaxBytes {
+func oversizedLineResult(resolved, firstLine string, startLine, total int) *readContentResult {
+	if len(firstLine) <= readMaxBytes {
 		return nil
 	}
-	srcLineLen := len(lines[startLine-1])
+	srcLineLen := len(firstLine)
 	return &readContentResult{
 		Content: fmt.Sprintf(
 			"[Line %d is %d KB, exceeds 50 KB limit. Use run_shell: sed -n '%dp' %s | head -c 50000]",
@@ -33,7 +32,7 @@ func oversizedLineResult(resolved string, lines []string, startLine, total int) 
 // assembleReadResult builds the final readContentResult, attaching a
 // continuation hint and remainder temp file when the window or the truncation
 // strategy dropped lines.
-func assembleReadResult(resolved string, lines []string, w readWindow, tr truncateResult, truncateMode string) *readContentResult {
+func assembleReadResult(w readWindow, tr truncateResult, truncateMode string, spill func(int) (string, error)) *readContentResult {
 	// Determine if the file itself is longer than the window requested.
 	windowTruncated := w.total > w.endLine
 
@@ -46,7 +45,7 @@ func assembleReadResult(resolved string, lines []string, w readWindow, tr trunca
 	}
 	if windowTruncated || sequentialTruncation {
 		// Continue from the last displayed source line, not the requested bound.
-		tmpPath, _ = writeTruncationRemainder(resolved, hintEnd+1, lines[hintEnd:w.total])
+		tmpPath, _ = spill(hintEnd + 1)
 		hint = buildReadHint(w.startLine, hintEnd, w.total, hintEnd+1, tmpPath)
 	}
 
@@ -158,21 +157,6 @@ func explicitOrDefaultWindow(args map[string]interface{}, truncateMode string, t
 		endLine = total
 	}
 	return startLine, endLine
-}
-
-// renderWindow formats lines[startLine-1:endLine] with optional line numbers
-// and returns the content with the trailing newline trimmed.
-func renderWindow(lines []string, startLine, endLine int, lineNumbers bool) string {
-	width := len(strconv.Itoa(endLine))
-	var b strings.Builder
-	for i := startLine - 1; i < endLine && i < len(lines); i++ {
-		if lineNumbers {
-			fmt.Fprintf(&b, "%*d\t%s\n", width, i+1, lines[i])
-		} else {
-			fmt.Fprintf(&b, "%s\n", lines[i])
-		}
-	}
-	return strings.TrimRight(b.String(), "\n")
 }
 
 // applyTruncateStrategy collapses the windowed chunk per the chosen mode.

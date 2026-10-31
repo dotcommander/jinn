@@ -7,6 +7,23 @@ and jinn adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.15.1] - 2026-10-31
+
+### Changed
+
+- Reduce file-read memory use by retaining requested windows and streaming
+  remainder files while preserving checksums, continuation metadata, and output.
+- Avoid unnecessary file metadata lookups for nonmatching search candidates.
+- Reuse compiled MCP schemas within each batch and canonical manifest bytes
+  during snapshot creation without weakening validation or drift checks.
+- Retain fresh web-cache entries using bounded metadata probes instead of
+  decoding complete cached documents during cleanup.
+
+### Tests
+
+- Add output, checksum, and spill-parity regressions plus bounded local
+  before/after benchmarks for the optimized paths.
+
 ## [0.15.0] - 2026-10-28
 
 ### Added

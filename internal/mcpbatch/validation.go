@@ -22,6 +22,8 @@ func Validate(input Input, approved, current []*protocol.Tool) error {
 		return fmt.Errorf("current server manifest: %w", err)
 	}
 	var validationErrors []error
+	// Cache both compiled schemas and compilation errors for this preflight only.
+	schemas := make(map[string]compiledSchema)
 	for _, call := range input.Calls {
 		approvedTool, approvedOK := approvedByName[call.Tool]
 		currentTool, currentOK := currentByName[call.Tool]
@@ -37,8 +39,15 @@ func Validate(input Input, approved, current []*protocol.Tool) error {
 		if arguments == nil {
 			arguments = map[string]any{}
 		}
-		if err := validateArguments(approvedTool, arguments); err != nil {
-			validationErrors = append(validationErrors, fmt.Errorf("batch call %q arguments: %w", call.ID, err))
+		compiled, exists := schemas[call.Tool]
+		if !exists {
+			compiled.schema, compiled.err = compileApprovedSchema(approvedTool)
+			schemas[call.Tool] = compiled
+		}
+		if compiled.err != nil {
+			validationErrors = append(validationErrors, fmt.Errorf("batch call %q arguments: %w", call.ID, compiled.err))
+		} else if err := compiled.schema.Validate(arguments); err != nil {
+			validationErrors = append(validationErrors, fmt.Errorf("batch call %q arguments: do not satisfy approved schema: %w", call.ID, err))
 		}
 	}
 	return errors.Join(validationErrors...)
@@ -62,26 +71,28 @@ func isReadOnly(tool *protocol.Tool) bool {
 	return tool.Annotations != nil && tool.Annotations.ReadOnlyHint != nil && *tool.Annotations.ReadOnlyHint && (tool.Annotations.DestructiveHint == nil || !*tool.Annotations.DestructiveHint)
 }
 
-func validateArguments(tool *protocol.Tool, arguments map[string]any) error {
+type compiledSchema struct {
+	schema *jsonschema.Schema
+	err    error
+}
+
+func compileApprovedSchema(tool *protocol.Tool) (*jsonschema.Schema, error) {
 	compiler := jsonschema.NewCompiler()
 	compiler.DefaultDraft(jsonschema.Draft2020)
 	compiler.UseLoader(noExternalSchemaLoader{})
 	location := "urn:jinn:mcp-batch:" + tool.Name
 	schemaDocument, err := schemaDocument(tool.InputSchema)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if addErr := compiler.AddResource(location, schemaDocument); addErr != nil {
-		return fmt.Errorf("register approved schema: %w", addErr)
+		return nil, fmt.Errorf("register approved schema: %w", addErr)
 	}
 	schema, err := compiler.Compile(location)
 	if err != nil {
-		return fmt.Errorf("compile approved schema: %w", err)
+		return nil, fmt.Errorf("compile approved schema: %w", err)
 	}
-	if err := schema.Validate(arguments); err != nil {
-		return fmt.Errorf("do not satisfy approved schema: %w", err)
-	}
-	return nil
+	return schema, nil
 }
 
 func schemaDocument(schema protocol.JSONSchema) (any, error) {

@@ -1,16 +1,8 @@
 package jinn
 
 import (
-	"bufio"
-	"crypto/sha256"
-	"encoding/hex"
-	"errors"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
-	"path/filepath"
-	"strings"
 )
 
 const (
@@ -38,63 +30,7 @@ type readContentResult struct {
 // truncation. The caller is responsible for sandbox validation (checkPath),
 // image detection, checksum computation, and ToolResult wrapping.
 func (e *Engine) readFileContent(resolved string, args map[string]interface{}, needChecksum bool) (*readContentResult, error) {
-	lines, info, checksum, err := e.streamTextLines(resolved, needChecksum)
-	if err != nil {
-		return &readContentResult{Checksum: checksum}, err
-	}
-	e.tracker.record(resolved, info.ModTime(), info.Size())
-
-	ext := strings.ToLower(filepath.Ext(resolved))
-
-	truncateMode, err := parseTruncateMode(args)
-	if err != nil {
-		return nil, err
-	}
-
-	total := len(lines)
-	if total == 0 {
-		return &readContentResult{
-			Content:     "",
-			TotalLines:  0,
-			OutputLines: 0,
-			Checksum:    checksum,
-		}, nil
-	}
-
-	startLine, endLine, err := resolveReadWindow(args, truncateMode, total)
-	if err != nil {
-		return nil, err
-	}
-
-	lineNumbers := true
-	if v, ok := args["line_numbers"].(bool); ok {
-		lineNumbers = v
-	}
-
-	rawContent := renderWindow(lines, startLine, endLine, lineNumbers)
-
-	// Single oversized line guard: if the first source line exceeds the byte cap,
-	// the byte-cap loop below would keep nothing. Return a hint instead.
-	if res := oversizedLineResult(resolved, lines, startLine, total); res != nil {
-		res.Checksum = checksum
-		return res, nil
-	}
-
-	// Apply truncation strategy if windowed chunk exceeds the line limit.
-	tr := applyTruncateStrategy(rawContent, truncateMode, ext)
-
-	// Apply byte-size truncation: if the numbered output exceeds 50KB,
-	// keep the head portion that fits and write the full remainder to a
-	// temp file so the agent can pick up where it left off.
-	sequential := truncateMode == "head" || truncateMode == "none" || truncateMode == "smart"
-	if res := byteTruncateResult(tr.Content, resolved, lines, startLine, total, sequential); res != nil {
-		res.Checksum = checksum
-		return res, nil
-	}
-
-	result := assembleReadResult(resolved, lines, readWindow{startLine: startLine, endLine: endLine, total: total}, tr, truncateMode)
-	result.Checksum = checksum
-	return result, nil
+	return e.readTextWindow(resolved, args, needChecksum)
 }
 
 // statForRead stats resolved and verifies it is a readable, regular file
@@ -135,105 +71,4 @@ func (e *Engine) statForRead(resolved string) (os.FileInfo, error) {
 		}
 	}
 	return info, nil
-}
-
-// streamTextLines computes the checksum and content classification in a bounded
-// streaming pass, then seeks the same descriptor to collect source lines. It
-// avoids holding both the full byte slice and a whole-file strings.Split copy.
-//
-//nolint:funlen,gocognit,gocyclo,revive // streaming checksum, MIME gates, and line collection must share one bounded descriptor and result shape.
-func (e *Engine) streamTextLines(resolved string, needChecksum bool) ([]string, os.FileInfo, string, error) {
-	file, info, err := e.openRegularFile(resolved, maxFileSize, true)
-	if err != nil {
-		if os.IsPermission(err) {
-			return nil, info, "", permissionDeniedErr(resolved)
-		}
-		return nil, info, "", err
-	}
-	defer func() { _ = file.Close() }()
-
-	hasher := sha256.New()
-	buffer := make([]byte, 32<<10)
-	sample := make([]byte, 0, 8192)
-	for {
-		n, readErr := file.Read(buffer)
-		//nolint:nestif // bounded sampling must be updated alongside the checksum for each read chunk.
-		if n > 0 {
-			chunk := buffer[:n]
-			if needChecksum {
-				_, _ = hasher.Write(chunk)
-			}
-			if len(sample) < cap(sample) {
-				remaining := cap(sample) - len(sample)
-				if remaining > n {
-					remaining = n
-				}
-				sample = append(sample, chunk[:remaining]...)
-			}
-		}
-		if errors.Is(readErr, io.EOF) {
-			break
-		}
-		if readErr != nil {
-			return nil, info, "", readErr
-		}
-	}
-	checksum := ""
-	if needChecksum {
-		checksum = hex.EncodeToString(hasher.Sum(nil))
-	}
-	ext := strings.ToLower(filepath.Ext(resolved))
-	detected := http.DetectContentType(sample)
-	// Strip "; charset=..." suffix for a clean MIME.
-	if i := strings.Index(detected, ";"); i != -1 {
-		detected = strings.TrimSpace(detected[:i])
-	}
-
-	// PDF: reject before binary checks — pdftotext is a better tool.
-	// Either the content detector or the extension is sufficient evidence.
-	if detected == "application/pdf" || ext == ".pdf" {
-		return nil, info, checksum, &ErrWithSuggestion{
-			Err:        errors.New("pdf extraction not supported in zero-dep mode"),
-			Suggestion: "convert the PDF to text first (pdftotext, pdftk, or a cloud OCR service) and read the text file",
-			Code:       ErrCodeBinaryFile,
-		}
-	}
-
-	// Binary detection: NUL byte in first 8KB (matches search/replace window).
-	// Binary detection: return an error so the caller can decide how to present it.
-	if isBinaryContent(sample) {
-		return nil, info, checksum, &ErrWithSuggestion{
-			Err:        fmt.Errorf("binary file: %d bytes", info.Size()),
-			Suggestion: "use stat_file for metadata or skip content reads",
-			Code:       ErrCodeBinaryFile,
-		}
-	}
-	if _, seekErr := file.Seek(0, io.SeekStart); seekErr != nil {
-		return nil, info, checksum, seekErr
-	}
-	reader := bufio.NewReaderSize(file, 32<<10)
-	lines := make([]string, 0, min(int(info.Size()/40)+1, readDefaultLines))
-	for {
-		line, readErr := reader.ReadString('\n')
-		if strings.HasSuffix(line, "\n") {
-			line = strings.TrimSuffix(line, "\n")
-			lines = append(lines, line)
-		} else if line != "" {
-			lines = append(lines, line)
-		}
-		if errors.Is(readErr, io.EOF) {
-			break
-		}
-		if readErr != nil {
-			return nil, info, checksum, readErr
-		}
-	}
-	finalInfo, err := file.Stat()
-	if err != nil {
-		return nil, info, checksum, err
-	}
-	if finalInfo.Size() != info.Size() || !finalInfo.ModTime().Equal(info.ModTime()) {
-		return nil, finalInfo, checksum, &ErrWithSuggestion{Err: fmt.Errorf("file changed while reading: %s", resolved), Suggestion: "retry the read against stable bytes", Code: ErrCodeStaleFile}
-	}
-	return lines, finalInfo, checksum, nil
 }

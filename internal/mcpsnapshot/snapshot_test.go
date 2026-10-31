@@ -54,6 +54,34 @@ func TestBuildCanonicalizesSortsAndLints(t *testing.T) {
 	}
 }
 
+func TestBuildManifestFingerprintUsesCanonicalBytes(t *testing.T) {
+	t.Parallel()
+	snapshot, _, err := Build("local", mcpexplore.Server{Transport: "stdio", Command: "/bin/echo"},
+		&protocol.Implementation{Name: "<server>", Version: "1"},
+		[]*protocol.Tool{{Name: "tool", Description: "<description>", InputSchema: protocol.JSONSchema{"type": "object"}}}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonical, err := CanonicalJSON(snapshotManifestForLint(snapshot))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := Fingerprint(snapshotManifestForLint(snapshot))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(canonical), "<description>") || snapshot.ManifestFingerprint != want {
+		t.Fatalf("manifest fingerprint %q does not match canonical bytes %s", snapshot.ManifestFingerprint, canonical)
+	}
+	if err := snapshot.Validate(); err != nil {
+		t.Fatalf("valid snapshot: %v", err)
+	}
+	snapshot.Server = json.RawMessage(`{"name":"changed","version":"1"}`)
+	if err := snapshot.Validate(); err == nil || !strings.Contains(err.Error(), "manifest fingerprint does not match") {
+		t.Fatalf("modified snapshot drift check = %v", err)
+	}
+}
+
 func TestMetadataLintSizeAndControlLimits(t *testing.T) {
 	tool := &protocol.Tool{
 		Name:        "large",

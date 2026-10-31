@@ -122,12 +122,18 @@ func (e *Engine) walkNativeFiles(ctx context.Context, pattern, searchPath string
 		if entry.IsDir() || entry.Type()&fs.ModeSymlink != 0 {
 			return nil
 		}
-		info, infoErr := entry.Info()
-		if infoErr != nil {
-			return infoErr
-		}
-		if !info.Mode().IsRegular() {
-			return nil
+		// A zero type is usually a regular file, but can also be unknown.
+		// Check matching candidates with Info; keep the original Info/error
+		// path for entries whose type already identifies a special file.
+		regularCandidate := entry.Type().IsRegular()
+		if !regularCandidate {
+			info, infoErr := entry.Info()
+			if infoErr != nil {
+				return infoErr
+			}
+			if !info.Mode().IsRegular() {
+				return nil
+			}
 		}
 		relWork := filepath.ToSlash(path)
 		candidate := filepath.ToSlash(relBase)
@@ -136,6 +142,15 @@ func (e *Engine) walkNativeFiles(ctx context.Context, pattern, searchPath string
 		}
 		if !globMatch(pattern, candidate) {
 			return nil
+		}
+		if regularCandidate {
+			info, infoErr := entry.Info()
+			if infoErr != nil {
+				return infoErr
+			}
+			if !info.Mode().IsRegular() {
+				return nil
+			}
 		}
 		total++
 		if total > offset && len(files) < limit {

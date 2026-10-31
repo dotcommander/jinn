@@ -46,18 +46,11 @@ func Build(alias string, target mcpexplore.Server, server *protocol.Implementati
 	if err != nil {
 		return Snapshot{}, nil, err
 	}
-	manifestFingerprint, err := Fingerprint(struct {
-		Server json.RawMessage   `json:"server"`
-		Tools  []json.RawMessage `json:"tools"`
-	}{Server: serverJSON, Tools: toolJSON})
+	manifest, err := CanonicalJSON(snapshotManifestForLint(Snapshot{Server: serverJSON, Tools: toolJSON}))
 	if err != nil {
 		return Snapshot{}, nil, err
 	}
-	snapshot := Snapshot{Version: version, Alias: alias, CapturedAt: capturedAt.UTC(), TargetFingerprint: targetFingerprint, ManifestFingerprint: manifestFingerprint, Server: serverJSON, Tools: toolJSON}
-	manifest, err := CanonicalJSON(snapshotManifestForLint(snapshot))
-	if err != nil {
-		return Snapshot{}, nil, err
-	}
+	snapshot := Snapshot{Version: version, Alias: alias, CapturedAt: capturedAt.UTC(), TargetFingerprint: targetFingerprint, ManifestFingerprint: fingerprintCanonical(manifest), Server: serverJSON, Tools: toolJSON}
 	if len(manifest) > 4<<20 {
 		warnings = append(warnings, Warning{Code: "manifest_too_large", Path: "", Message: "manifest exceeds 4 MiB"})
 	}
