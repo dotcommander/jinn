@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/chromedp/cdproto/browser"
+	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/chromedp"
@@ -110,31 +111,44 @@ func (r *chromedpRenderer) Render(ctx context.Context, target *url.URL, options 
 	defer tabCancel()
 
 	tracker := newRenderTracker(r.config.MaxRequests, cancel)
-	chromedp.ListenTarget(tabCtx, func(event any) {
-		tracker.handleEvent(event)
-		if paused, ok := event.(*fetch.EventRequestPaused); ok {
-			go handlePausedRequest(tabCtx, paused, r.client.allowPrivateNetworks, tracker)
+	watchRenderEvents(tabCtx, network.RequestWillBeSent, tracker)
+	watchRenderEvents(tabCtx, network.ResponseReceived, tracker)
+	watchRenderEvents(tabCtx, network.LoadingFinished, tracker)
+	watchRenderEvents(tabCtx, network.LoadingFailed, tracker)
+	pausedEvents := chromedp.Events(tabCtx, fetch.RequestPaused)
+	go func() {
+		for event, err := range pausedEvents {
+			if err != nil {
+				tracker.fail(err)
+				return
+			}
+			go handlePausedRequest(tabCtx, &event, r.client.allowPrivateNetworks, tracker)
 		}
-	})
+	}()
 
 	var page renderedPage
 	var snapshot renderSnapshot
-	actions := chromedp.Tasks{
-		network.Enable(),
-		fetch.Enable(),
-		browser.SetDownloadBehavior(browser.SetDownloadBehaviorBehaviorDeny),
+	actions := []chromedp.Action[chromedp.Void]{
+		renderCommand(network.Enable, network.EnableParams{}),
+		renderCommand(fetch.Enable, fetch.EnableParams{}),
+		renderCommand(browser.SetDownloadBehavior, browser.SetDownloadBehaviorParams{Behavior: browser.SetDownloadBehaviorBehaviorDeny}),
 		chromedp.Navigate(target.String()),
 	}
 	if options.Wait == RenderWaitNetworkIdle {
-		actions = append(actions, chromedp.ActionFunc(func(context.Context) error {
+		actions = append(actions, chromedp.Func(func(context.Context, *chromedp.Target) error {
 			return tracker.waitForIdle(renderCtx, renderNetworkIdleWindow)
 		}))
 	}
-	actions = append(actions,
-		chromedp.Location(&page.FinalURL),
-		chromedp.Evaluate(renderSnapshotExpression(r.config.MaxHTMLBytes), &snapshot),
-	)
-	if err := chromedp.Run(tabCtx, actions); err != nil {
+	actions = append(actions, chromedp.Func(func(ctx context.Context, _ *chromedp.Target) error {
+		var err error
+		page.FinalURL, err = chromedp.Run(ctx, chromedp.Location())
+		if err != nil {
+			return err
+		}
+		snapshot, err = chromedp.Run(ctx, chromedp.Evaluate[renderSnapshot](renderSnapshotExpression(r.config.MaxHTMLBytes)))
+		return err
+	}))
+	if err := chromedp.Do(tabCtx, actions...); err != nil {
 		if budgetErr := firstRenderBudgetError(budget.Err(), tracker.Err()); budgetErr != nil {
 			return renderedPage{}, budgetErr
 		}
@@ -161,11 +175,33 @@ func (r *chromedpRenderer) Render(ctx context.Context, target *url.URL, options 
 	return page, nil
 }
 
+func renderCommand[P, R any](command cdp.Command[P, R], params P) chromedp.Action[chromedp.Void] {
+	return chromedp.Func(func(ctx context.Context, _ *chromedp.Target) error {
+		_, err := chromedp.Call(ctx, command, params)
+		return err
+	})
+}
+
+func watchRenderEvents[E any](ctx context.Context, event cdp.Event[E], tracker *renderTracker) {
+	events := chromedp.Events(ctx, event)
+	go func() {
+		for payload, err := range events {
+			if err != nil {
+				tracker.fail(err)
+				return
+			}
+			tracker.handleEvent(&payload)
+		}
+	}()
+}
+
 func handlePausedRequest(ctx context.Context, event *fetch.EventRequestPaused, allowPrivateNetworks bool, tracker *renderTracker) {
 	handlePausedRequestActions(event, allowPrivateNetworks, tracker, func() error {
-		return chromedp.Run(ctx, fetch.FailRequest(event.RequestID, network.ErrorReasonBlockedByClient))
+		_, err := chromedp.Call(ctx, fetch.FailRequest, fetch.FailRequestParams{RequestID: event.RequestID, ErrorReason: network.ErrorReasonBlockedByClient})
+		return err
 	}, func() error {
-		return chromedp.Run(ctx, fetch.ContinueRequest(event.RequestID))
+		_, err := chromedp.Call(ctx, fetch.ContinueRequest, fetch.ContinueRequestParams{RequestID: event.RequestID})
+		return err
 	})
 }
 
