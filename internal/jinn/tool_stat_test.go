@@ -1,12 +1,30 @@
 package jinn
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestAuditC205PartialSampleDoesNotClaimLines(t *testing.T) {
+	t.Parallel()
+	e, dir := testEngine(t)
+	writeTestFile(t, dir, "large.txt", strings.Repeat("a\n", 5000))
+	encoded, err := e.statFile(args("path", "large.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result map[string]any
+	if err := json.Unmarshal([]byte(encoded), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result["sample_complete"] != false || result["sample_lines"] == nil || result["lines"] != nil || strings.Contains(result["summary"].(string), "lines:") {
+		t.Fatalf("partial count misrepresented: %s", encoded)
+	}
+}
 
 func TestStatFile_Regular(t *testing.T) {
 	t.Parallel()

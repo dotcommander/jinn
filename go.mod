@@ -3,8 +3,8 @@ module github.com/dotcommander/jinn
 go 1.26.4
 
 require (
-	github.com/chromedp/cdproto v0.159.0
-	github.com/chromedp/chromedp v0.21.0
+	github.com/chromedp/cdproto v0.159.2
+	github.com/chromedp/chromedp v0.22.1
 	github.com/dotcommander/defuddle v0.16.1
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	github.com/tiktoken-go/tokenizer v0.10.0
@@ -48,7 +48,7 @@ require (
 	github.com/yosssi/gohtml v0.0.0-20201013000340-ee4748c638f4 // indirect
 	golang.org/x/sync v0.24.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
-	modernc.org/libc v1.79.1 // indirect
+	modernc.org/libc v1.80.1 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
 )

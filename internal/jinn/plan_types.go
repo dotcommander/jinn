@@ -1,5 +1,7 @@
 package jinn
 
+import "regexp"
+
 // DefaultMaxDepth mirrors predexec's DEFAULT_MAX_DEPTH.
 const DefaultMaxDepth = 8
 
@@ -56,6 +58,11 @@ type Condition struct {
 	Regex   string `json:"regex,omitempty"`
 	Stream  string `json:"stream,omitempty"` // match only: stdout|stderr
 	Negate  bool   `json:"negate,omitempty"`
+
+	// Precompiled condition regexes (Rec 2.3). Nil until validatePlan precompiles;
+	// evaluation falls back to compiling on first use. Excluded from wire JSON.
+	CompiledRegex   *regexp.Regexp `json:"-"`
+	CompiledExtract *regexp.Regexp `json:"-"`
 }
 
 // HighConfidenceKinds — "always" IS high-confidence (unconditional edges are

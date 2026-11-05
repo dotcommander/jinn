@@ -30,7 +30,7 @@ func Load(alias string) (Snapshot, bool, error) {
 	if err != nil {
 		return Snapshot{}, false, err
 	}
-	data, err := os.ReadFile(path)
+	data, err := readSnapshotFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return Snapshot{}, false, nil
 	}
@@ -53,6 +53,25 @@ func Load(alias string) (Snapshot, bool, error) {
 		return Snapshot{}, true, fmt.Errorf("invalid MCP snapshot: alias %q does not match requested alias %q", snapshot.Alias, alias)
 	}
 	return snapshot, true, nil
+}
+
+// Snapshot files are user configuration, capped before decoding to avoid unbounded allocation.
+const maxSnapshotFileBytes = 10 << 20
+
+func readSnapshotFile(path string) ([]byte, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = file.Close() }()
+	data, err := io.ReadAll(io.LimitReader(file, maxSnapshotFileBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxSnapshotFileBytes {
+		return nil, fmt.Errorf("MCP snapshot exceeds %d bytes", maxSnapshotFileBytes)
+	}
+	return data, nil
 }
 
 // Save replaces a valid snapshot atomically and leaves the last valid contents in .bak.

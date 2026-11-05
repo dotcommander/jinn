@@ -143,7 +143,11 @@ func (s *Service) Fetch(ctx context.Context, req FetchRequest) (Document, error)
 	}
 	if s.cache != nil {
 		if doc, ok := s.cache.load(target.String(), readerMode, s.reader.endpoint, renderOptions.Mode, renderOptions.Wait); ok {
-			return doc, nil
+			// A cache entry may have been written under a more permissive redirect policy.
+			// Treat an unsafe or missing final URL as a miss so the current policy governs the fetch.
+			if _, err := validateTarget(doc.FinalURL, s.client.allowPrivateNetworks); err == nil {
+				return doc, nil
+			}
 		}
 	}
 

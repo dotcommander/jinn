@@ -75,9 +75,8 @@ func openMCPProfileEngine(ldVersion string, profile mcpProfile, transportLabel s
 }
 
 // runMCP serves the current MCP 2026-07-28 protocol through the official SDK.
-// A first initialize-style request on the default profile is routed to the
-// legacy compatibility handler so existing jinn MCP clients can migrate
-// without a flag change.
+// Only clients explicitly requesting the legacy protocol on the default
+// profile are routed to the compatibility handler.
 func runMCP(ctx context.Context, in io.Reader, out io.Writer, ldVersion string, mode jinn.ShellMode) error {
 	return runMCPWithProfile(ctx, in, out, ldVersion, mode, mcpProfileDiscover)
 }
@@ -94,10 +93,25 @@ func runMCPWithProfile(ctx context.Context, in io.Reader, out io.Writer, ldVersi
 	}
 	input := io.MultiReader(bytes.NewReader(prefix), reader)
 	if legacy && allowsLegacyMCP(profile) {
-		// Legacy initialize-based clients retain the default compatibility
-		// surface. Opt-in profiles deliberately leave legacy traffic to the
+		// Explicit legacy-version clients retain the compatibility surface.
+		// Opt-in profiles deliberately leave legacy traffic to the
 		// current SDK, which rejects it before any route or tool dispatch.
 		return runLegacyMCP(ctx, input, out, ldVersion, mode)
+	}
+	// The current SDK uses server/discover rather than initialize. Answer a
+	// current-version initialize on this compatibility seam, then pass every
+	// subsequent message through the current SDK unchanged.
+	if line, remaining, ok := currentMCPInitializePrefix(prefix); ok && (profile == mcpProfileDiscover || !isLegacyMCPLine(line)) {
+		resp, respond := handleMCPLine(line, ldVersion, mode)
+		if respond {
+			if result, ok := resp.Result.(map[string]any); ok {
+				result["protocolVersion"] = protocol.Version
+			}
+			if err := json.NewEncoder(out).Encode(resp); err != nil {
+				return fmt.Errorf("write MCP initialize: %w", err)
+			}
+		}
+		input = io.MultiReader(bytes.NewReader(remaining), reader)
 	}
 
 	engine, err := openMCPProfileEngine(ldVersion, profile, "MCP")
@@ -117,6 +131,28 @@ func runMCPWithProfile(ctx context.Context, in io.Reader, out io.Writer, ldVersi
 		return fmt.Errorf("serve MCP: %w", err)
 	}
 	return nil
+}
+
+func currentMCPInitializePrefix(prefix []byte) ([]byte, []byte, bool) {
+	// readMCPPrefix may have consumed leading blank lines.
+	for start := 0; start < len(prefix); {
+		end := bytes.IndexByte(prefix[start:], '\n')
+		if end < 0 {
+			end = len(prefix) - start
+		}
+		line := prefix[start : start+end]
+		if len(bytes.TrimSpace(line)) != 0 {
+			var probe struct {
+				Method string `json:"method"`
+			}
+			if json.Unmarshal(line, &probe) == nil && probe.Method == mcpMethodInitialize {
+				return line, prefix[start+end:], true
+			}
+			break
+		}
+		start += end + 1
+	}
+	return nil, nil, false
 }
 
 func allowsLegacyMCP(profile mcpProfile) bool {
@@ -191,7 +227,10 @@ func isLegacyMCPLine(line []byte) bool {
 		return false
 	}
 	if probe.Method == "initialize" {
-		return true
+		var initialize struct {
+			ProtocolVersion string `json:"protocolVersion"`
+		}
+		return json.Unmarshal(probe.Params, &initialize) == nil && initialize.ProtocolVersion == mcpProtocolVersion
 	}
 	switch probe.Method {
 	case "ping", "tools/list", "tools/call", "resources/list":

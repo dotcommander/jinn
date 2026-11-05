@@ -9,6 +9,10 @@ import (
 	"strings"
 )
 
+// srExpansionCap bounds pre-filter discovery without imposing the 50-file
+// mutation limit on files excluded by include. Truncation fails closed.
+const srExpansionCap = 4096
+
 // collectSRFiles resolves the files argument into a list of candidates.
 // Supports: single path, glob pattern, or array of paths/globs.
 func (e *Engine) collectSRFiles(ctx context.Context, args map[string]interface{}) ([]searchReplaceCandidate, error) {
@@ -26,6 +30,13 @@ func (e *Engine) collectSRFiles(ctx context.Context, args map[string]interface{}
 		}
 	}
 
+	if len(candidates) > srExpansionCap {
+		return nil, fmt.Errorf("search_replace expansion exceeds %d candidates; narrow files", srExpansionCap)
+	}
+	candidates, err = filterSRInclude(candidates, args)
+	if err != nil {
+		return nil, err
+	}
 	if len(candidates) == 0 {
 		return nil, &ErrWithSuggestion{
 			Err:        errors.New("no files matched"),
@@ -104,7 +115,7 @@ func (e *Engine) collectSRPattern(ctx context.Context, pat string, seen map[stri
 	found, err := e.globExpand(ctx, pat)
 	if err != nil {
 		var sErr *ErrWithSuggestion
-		if errors.As(err, &sErr) && (sErr.Code == ErrCodeCanceled || sErr.Code == ErrCodeTimeout) {
+		if (errors.As(err, &sErr) && (sErr.Code == ErrCodeCanceled || sErr.Code == ErrCodeTimeout)) || strings.Contains(err.Error(), "expansion exceeds") {
 			return err
 		}
 		return &ErrWithSuggestion{
@@ -141,7 +152,7 @@ func (e *Engine) globExpand(ctx context.Context, pattern string) ([]string, erro
 	// Delegate to the existing findFiles infrastructure.
 	res, err := e.findFiles(ctx, map[string]interface{}{
 		"pattern": pattern,
-		"limit":   float64(srMaxFiles + 1),
+		"limit":   float64(srExpansionCap + 1),
 	})
 	if err != nil {
 		return nil, err
@@ -157,6 +168,9 @@ func (e *Engine) globExpand(ctx context.Context, pattern string) ([]string, erro
 	var found findFilesResult
 	if err := json.Unmarshal([]byte(raw), &found); err != nil {
 		return nil, fmt.Errorf("parse find_files result: %w", err)
+	}
+	if len(found.Files) > srExpansionCap || found.Truncated {
+		return nil, fmt.Errorf("search_replace expansion exceeds %d candidates; narrow files", srExpansionCap)
 	}
 	if len(found.Files) == 0 {
 		return nil, fmt.Errorf("no matches for %q", pattern)

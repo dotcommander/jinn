@@ -120,6 +120,10 @@ func validateMCPExplorerProjectionOptions(config mcpExplorerConfig) error {
 	if options.hasHead && !options.hasSelect {
 		return newMCPExplorerProjectionError("--head requires --select", "add --select RFC6901_POINTER before --head")
 	}
+	if options.hasSelect {
+		_, err := compileMCPExplorerJSONPointer(options.pointer)
+		return err
+	}
 	return nil
 }
 
@@ -184,19 +188,31 @@ func selectMCPExplorerCallOutput(output mcpExplorerCallOutput, pointer string) (
 	return resolveMCPExplorerJSONPointer(value, pointer)
 }
 
-func resolveMCPExplorerJSONPointer(value any, pointer string) (any, error) {
+func compileMCPExplorerJSONPointer(pointer string) ([]string, error) {
 	if pointer == "" {
-		return value, nil
+		return nil, nil
 	}
 	if !strings.HasPrefix(pointer, "/") {
 		return nil, newMCPExplorerProjectionError(fmt.Sprintf("invalid --select pointer %q: must be empty or start with '/'", pointer), "use an RFC 6901 JSON Pointer")
 	}
-	current := value
-	for _, rawToken := range strings.Split(pointer[1:], "/") {
-		token, err := decodeMCPExplorerPointerToken(pointer, rawToken)
+	tokens := make([]string, 0, strings.Count(pointer, "/"))
+	for _, raw := range strings.Split(pointer[1:], "/") {
+		token, err := decodeMCPExplorerPointerToken(pointer, raw)
 		if err != nil {
 			return nil, err
 		}
+		tokens = append(tokens, token)
+	}
+	return tokens, nil
+}
+
+func resolveMCPExplorerJSONPointer(value any, pointer string) (any, error) {
+	tokens, err := compileMCPExplorerJSONPointer(pointer)
+	if err != nil {
+		return nil, err
+	}
+	current := value
+	for _, token := range tokens {
 		switch node := current.(type) {
 		case map[string]any:
 			next, ok := node[token]

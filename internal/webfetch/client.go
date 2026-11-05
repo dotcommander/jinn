@@ -141,7 +141,7 @@ func (c *Client) Do(ctx context.Context, method, rawURL string, headers http.Hea
 			continue
 		}
 
-		body, readErr := readBounded(resp.Body, c.maxBodyBytes)
+		responseBody, readErr := readBounded(resp.Body, c.maxBodyBytes)
 		closeErr := resp.Body.Close()
 		if readErr != nil {
 			if errors.Is(readErr, ErrTooLarge) {
@@ -164,12 +164,12 @@ func (c *Client) Do(ctx context.Context, method, rawURL string, headers http.Hea
 			URL:        target.String(),
 			StatusCode: resp.StatusCode,
 			Header:     resp.Header.Clone(),
-			Body:       body,
+			Body:       responseBody,
 		}
 		if resp.Request != nil && resp.Request.URL != nil {
 			result.URL = resp.Request.URL.String()
 		}
-		if err := responseStatusError(result.URL, resp.StatusCode, resp.Status, string(body)); err != nil {
+		if err := responseStatusError(result.URL, resp.StatusCode, resp.Status, string(responseBody)); err != nil {
 			return httpResponse{}, err
 		}
 		return result, nil

@@ -311,7 +311,7 @@
     "type": "function",
     "function": {
       "name": "stat_file",
-      "description": "Get file metadata without reading contents. Returns size, line count, modification time, type, encoding (utf-8|binary), line_ending (lf|crlf|mixed), and bom (none|utf-8-bom|utf-16-le|utf-16-be) for regular files.",
+      "description": "Get file metadata without reading contents. Returns size, modification time, type, and sampled encoding/line_ending/bom for regular files. lines is present only when sample_complete=true; otherwise sample_lines is a partial count of the sampled bytes.",
       "parameters": {
         "type": "object",
         "properties": {

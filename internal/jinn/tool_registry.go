@@ -48,14 +48,23 @@ var toolCatalog = [...]toolDescriptor{
 	{name: webSearchTool, features: []string{"brave", "exa", "domain_filters", "result_limit"}, routeRisk: toolRouteRiskNetwork},
 }
 
-func lookupToolDescriptor(name string) (toolDescriptor, bool) {
-	for _, descriptor := range toolCatalog {
-		if descriptor.name == name {
-			descriptor.features = cloneStrings(descriptor.features)
-			return descriptor, true
-		}
+// toolDescriptorByName is built once at package init; lookup is O(1).
+// Features are shared read-only — callers that emit them copy at the
+// emission site (router.go / registeredToolFeatures) rather than here.
+var toolDescriptorByName = func() map[string]toolDescriptor {
+	m := make(map[string]toolDescriptor, len(toolCatalog))
+	for _, d := range toolCatalog {
+		m[d.name] = d
 	}
-	return toolDescriptor{}, false
+	return m
+}()
+
+func lookupToolDescriptor(name string) (toolDescriptor, bool) {
+	descriptor, ok := toolDescriptorByName[name]
+	if !ok {
+		return toolDescriptor{}, false
+	}
+	return descriptor, true
 }
 
 func (e *Engine) lookupToolDescriptor(name string) (toolDescriptor, bool) {

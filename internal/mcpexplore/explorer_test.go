@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -30,9 +31,37 @@ func TestTargetValidate(t *testing.T) {
 }
 
 func TestCommandEnvironmentRemovesToken(t *testing.T) {
+	t.Parallel()
 	got := CommandEnvironment([]string{"KEEP=one", HTTPTokenEnv + "=secret", "OTHER=two"})
 	if strings.Join(got, "\n") != "KEEP=one\nOTHER=two" {
 		t.Fatalf("CommandEnvironment = %#v", got)
+	}
+}
+
+func TestAuditC401CommandEnvironmentPlatformSemantics(t *testing.T) {
+	t.Parallel()
+	environ := []string{"KEEP=one", "jinn_mcp_http_token=mixed", HTTPTokenEnv + "=exact", "OTHER=two"}
+	for _, test := range []struct {
+		name      string
+		normalize func(string) string
+		want      string
+	}{
+		{"windows", strings.ToUpper, "KEEP=one\nOTHER=two"},
+		{"posix", func(name string) string { return name }, "KEEP=one\njinn_mcp_http_token=mixed\nOTHER=two"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if got := strings.Join(commandEnvironment(environ, test.normalize), "\n"); got != test.want {
+				t.Fatalf("commandEnvironment = %q, want %q", got, test.want)
+			}
+		})
+	}
+	want := "KEEP=one\njinn_mcp_http_token=mixed\nOTHER=two"
+	if runtime.GOOS == "windows" {
+		want = "KEEP=one\nOTHER=two"
+	}
+	if got := strings.Join(CommandEnvironment(environ), "\n"); got != want {
+		t.Fatalf("CommandEnvironment = %q, want %q", got, want)
 	}
 }
 

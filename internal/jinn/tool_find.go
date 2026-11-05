@@ -21,6 +21,16 @@ var findTimeout = 60 * time.Second
 
 var findExcludeDirs = []string{".git", ".ssh", ".aws", ".gnupg", "node_modules", "vendor", "__pycache__", ".cache", "dist", "build"}
 
+// findExcludeSet is the set form of findExcludeDirs, built once so
+// shouldPruneTraversal is a set lookup instead of a per-segment slice scan.
+var findExcludeSet = func() map[string]bool {
+	m := make(map[string]bool, len(findExcludeDirs))
+	for _, d := range findExcludeDirs {
+		m[d] = true
+	}
+	return m
+}()
+
 type findFilesResult struct {
 	Files           []string  `json:"files"`
 	Truncated       bool      `json:"truncated"`
@@ -94,6 +104,9 @@ func (e *Engine) walkNativeFiles(ctx context.Context, pattern, searchPath string
 	if err != nil {
 		return nil, 0, false, err
 	}
+	// Split the invariant pattern once (O(pattern)); per-file work is then
+	// candidate splitting + Match only (Rec 2.2).
+	patternParts := strings.Split(filepath.ToSlash(pattern), "/")
 	err = fs.WalkDir(e.root.FS(), rootPath, func(path string, entry fs.DirEntry, walkErr error) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -140,7 +153,7 @@ func (e *Engine) walkNativeFiles(ctx context.Context, pattern, searchPath string
 		if !strings.Contains(pattern, "/") {
 			candidate = filepath.Base(candidate)
 		}
-		if !globMatch(pattern, candidate) {
+		if !globMatchPreSplit(patternParts, candidate) {
 			return nil
 		}
 		if regularCandidate {
@@ -175,15 +188,17 @@ func shouldPruneTraversal(rel string, isDir bool) bool {
 		if strings.HasPrefix(segment, ".") {
 			return true
 		}
-		if isDir && slices.Contains(findExcludeDirs, segment) {
+		if isDir && findExcludeSet[segment] {
 			return true
 		}
 	}
 	return false
 }
 
-func globMatch(pattern, candidate string) bool {
-	patternParts := strings.Split(filepath.ToSlash(pattern), "/")
+// globMatchPreSplit matches a pre-split pattern against a candidate string.
+// The pattern is invariant across a find walk, so callers split it once
+// (O(pattern)) instead of per file.
+func globMatchPreSplit(patternParts []string, candidate string) bool {
 	candidateParts := strings.Split(filepath.ToSlash(candidate), "/")
 	var match func(int, int) bool
 	match = func(pi, ci int) bool {
@@ -200,6 +215,10 @@ func globMatch(pattern, candidate string) bool {
 		return err == nil && ok && match(pi+1, ci+1)
 	}
 	return match(0, 0)
+}
+
+func globMatch(pattern, candidate string) bool {
+	return globMatchPreSplit(strings.Split(filepath.ToSlash(pattern), "/"), candidate)
 }
 
 func classifyNativeFindErr(err error) error {

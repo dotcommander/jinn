@@ -165,7 +165,7 @@ func validateSearchRequest(req SearchRequest, defaultLimit int) (SearchRequest, 
 	req.IncludeDomains = append([]string(nil), req.IncludeDomains...)
 	for i := range req.IncludeDomains {
 		req.IncludeDomains[i] = strings.TrimSpace(req.IncludeDomains[i])
-		if req.IncludeDomains[i] == "" || strings.ContainsAny(req.IncludeDomains[i], " \t\r\n/") {
+		if !validSearchHostname(req.IncludeDomains[i]) {
 			return SearchRequest{}, newCodedError(fmt.Errorf("invalid search domain at index %d", i), ErrorCodeInvalidArgument, "use hostnames such as example.com without a scheme or path")
 		}
 	}
@@ -186,6 +186,29 @@ func validateSearchRequest(req SearchRequest, defaultLimit int) (SearchRequest, 
 		return SearchRequest{}, newCodedError(errors.New("highlight sentences must be between 1 and 10"), ErrorCodeInvalidArgument, "choose a highlight sentence count from 1 through 10")
 	}
 	return req, nil
+}
+
+// validSearchHostname keeps domain filters from introducing Brave query operators.
+func validSearchHostname(host string) bool {
+	if len(host) == 0 || len(host) > 253 {
+		return false
+	}
+	for label := range strings.SplitSeq(host, ".") {
+		if len(label) == 0 || len(label) > 63 {
+			return false
+		}
+		for i := 0; i < len(label); i++ {
+			edge := i == 0 || i == len(label)-1
+			if !asciiAlnum(label[i]) && (edge || label[i] != '-') {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func asciiAlnum(ch byte) bool {
+	return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9')
 }
 
 func normalizeSearchResults(results []SearchResult, limit int) []SearchResult {

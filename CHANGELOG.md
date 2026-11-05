@@ -7,6 +7,38 @@ and jinn adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-11-05
+
+### Added
+
+- Return `{"unchanged":true}` from image reads when `if_checksum` matches the
+  computed checksum, without re-decoding the image.
+
+### Changed
+
+- Cache the lean prompt-facing schema per shell mode within each process and
+  reuse parsed schema tools across routing calls, avoiding repeated
+  parse/transform of the embedded schema.
+- Precompile plan match/numeric condition regexes during validation and reuse
+  them during per-operation evaluation instead of recompiling per op.
+- Report `lines` from `stat_file` only for complete samples; partial samples
+  expose `sample_lines` with `sample_complete=false`.
+- Revalidate web-fetch cache hits against the current redirect and
+  private-network policy so a permissive earlier policy cannot serve a
+  now-unsafe final URL.
+- Classify `git diff`, `git show`, and `git log` with `--output` as caution
+  risk since they write diff output to a file.
+- Fall back to JSON signatures for composed tool schemas.
+- Refresh browser, extraction, MCP, SQLite, and Go support dependencies and
+  their transitive dependency graph.
+- Remove a double schema build on the first disabled-mode schema call and a
+  redundant feature-slice copy in tool descriptor lookup.
+
+### Fixed
+
+- Keep MCP explorer projection, registry, and snapshot storage consistent with
+  the current wire contracts, covered by new remediation and parity tests.
+
 ## [0.15.2] - 2026-11-01
 
 ### Changed
@@ -446,7 +478,8 @@ and jinn adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `--schema` flag to emit tool definitions
 - `--version` flag with ldflags and VCS fallback
 
-[Unreleased]: https://github.com/dotcommander/jinn/compare/v0.15.2...HEAD
+[Unreleased]: https://github.com/dotcommander/jinn/compare/v0.16.0...HEAD
+[0.16.0]: https://github.com/dotcommander/jinn/compare/v0.15.2...v0.16.0
 [0.15.2]: https://github.com/dotcommander/jinn/compare/v0.15.1...v0.15.2
 [0.15.1]: https://github.com/dotcommander/jinn/compare/v0.15.0...v0.15.1
 [0.15.0]: https://github.com/dotcommander/jinn/compare/v0.14.1...v0.15.0

@@ -63,6 +63,7 @@ type legacyMCPRunner struct {
 	mode                      jinn.ShellMode
 	clientSupportsElicitation bool
 	elicitationSequence       int
+	pending                   [][]byte
 }
 
 func runLegacyMCP(ctx context.Context, in io.Reader, out io.Writer, ldVersion string, mode jinn.ShellMode) error {
@@ -85,6 +86,18 @@ func runLegacyMCP(ctx context.Context, in io.Reader, out io.Writer, ldVersion st
 		}
 		if err := runner.encoder.Encode(resp); err != nil {
 			return fmt.Errorf("write mcp response: %w", err)
+		}
+		// Continue the elicitation first, then answer intervening requests
+		// in arrival order before reading another message from the scanner.
+		for len(runner.pending) > 0 {
+			queued := runner.pending[0]
+			runner.pending = runner.pending[1:]
+			answer, ok := runner.handleLine(ctx, queued)
+			if ok {
+				if err := runner.encoder.Encode(answer); err != nil {
+					return fmt.Errorf("write mcp response: %w", err)
+				}
+			}
 		}
 	}
 	if err := scanner.Err(); err != nil {
@@ -197,25 +210,31 @@ func (r *legacyMCPRunner) handleAskUser(ctx context.Context, msg mcpMessage) mcp
 		return mcpProtocolError(msg.ID, -32603, fmt.Sprintf("write elicitation request: %v", writeErr), nil)
 	}
 
-	result, err := readLegacyMCPElicitationResult(ctx, r.scanner, requestID)
+	result, err := r.readElicitationResult(ctx, requestID)
 	if err != nil {
 		return mcpProtocolError(msg.ID, -32603, err.Error(), nil)
 	}
 	return mcpResult(msg.ID, legacyMCPQuestionnaireToolResult(questionnaire, result))
 }
 
-func readLegacyMCPElicitationResult(ctx context.Context, scanner *bufio.Scanner, requestID json.RawMessage) (map[string]any, error) {
-	for scanner.Scan() {
+func (r *legacyMCPRunner) readElicitationResult(ctx context.Context, requestID json.RawMessage) (map[string]any, error) {
+	for r.scanner.Scan() {
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		default:
 		}
 		var msg mcpMessage
-		if err := json.Unmarshal(scanner.Bytes(), &msg); err != nil {
+		if err := json.Unmarshal(r.scanner.Bytes(), &msg); err != nil {
 			return nil, fmt.Errorf("decode elicitation response: %w", err)
 		}
 		if string(msg.ID) != string(requestID) || msg.Method != "" {
+			// Bound the queued requests while the client is waiting on a form.
+			// Beyond 16, fail the elicitation closed rather than grow memory.
+			if len(r.pending) == 16 {
+				return nil, errors.New("too many messages during MCP elicitation")
+			}
+			r.pending = append(r.pending, append([]byte(nil), r.scanner.Bytes()...))
 			continue
 		}
 		if msg.Error != nil {
@@ -227,7 +246,7 @@ func readLegacyMCPElicitationResult(ctx context.Context, scanner *bufio.Scanner,
 		}
 		return result, nil
 	}
-	if err := scanner.Err(); err != nil {
+	if err := r.scanner.Err(); err != nil {
 		return nil, fmt.Errorf("read elicitation response: %w", err)
 	}
 	return nil, errors.New("MCP client closed before returning elicitation input")

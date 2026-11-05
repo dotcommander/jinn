@@ -3,15 +3,12 @@ package main
 import (
 	"context"
 	"crypto/subtle"
-	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
-	"os/signal"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/dotcommander/jinn/internal/jinn"
@@ -113,9 +110,12 @@ func serveMCPHTTP(ctx context.Context, addr, ldVersion string, mode jinn.ShellMo
 	if err != nil {
 		return err
 	}
-	if engine != nil {
-		defer func() { _ = engine.Close() }()
-	}
+	engineOwnedHere := true
+	defer func() {
+		if engineOwnedHere && engine != nil {
+			_ = engine.Close()
+		}
+	}()
 
 	logger, err := newMCPLoggerFromEnv()
 	if err != nil {
@@ -130,24 +130,20 @@ func serveMCPHTTP(ctx context.Context, addr, ldVersion string, mode jinn.ShellMo
 	defer func() { _ = listener.Close() }()
 
 	fmt.Fprintf(os.Stderr, "jinn MCP HTTP listening on http://%s%s\n", config.addr, mcpHTTPPath)
-	return serveMCPHTTPServer(ctx, httpServer, listener)
+	engineOwnedHere = false
+	return serveMCPHTTPServerWithGrace(ctx, httpServer, listener, 5*time.Second, func() {
+		if engine != nil {
+			_ = engine.Close()
+		}
+	})
 }
 
 func serveMCPHTTPServer(ctx context.Context, httpServer *http.Server, listener net.Listener) error {
-	sigCtx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	shutdownDone := make(chan error, 1)
-	go func() {
-		<-sigCtx.Done()
-		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-		defer cancel()
-		shutdownDone <- httpServer.Shutdown(shutdownCtx)
-	}()
-	err := httpServer.Serve(listener)
-	if !errors.Is(err, http.ErrServerClosed) {
-		return err
-	}
-	return <-shutdownDone
+	return serveMCPHTTPServerWithGrace(ctx, httpServer, listener, 5*time.Second, nil)
+}
+
+func serveMCPHTTPServerWithGrace(ctx context.Context, httpServer *http.Server, listener net.Listener, grace time.Duration, onDrained func()) error {
+	return serveInspectorServerWithDrain(ctx, httpServer, listener, grace, onDrained)
 }
 
 func newMCPHTTPServer(addr string, handler http.Handler) *http.Server {

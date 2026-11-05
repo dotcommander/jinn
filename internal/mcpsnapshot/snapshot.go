@@ -25,7 +25,8 @@ type Snapshot struct {
 	Tools               []json.RawMessage `json:"tools"`
 }
 
-// Build captures a stable tool manifest without retaining any credential values.
+// Build captures a stable tool manifest without copying registry credential values.
+// Server-supplied identity and tool metadata are preserved verbatim and may contain secrets.
 func Build(alias string, target mcpexplore.Server, server *protocol.Implementation, tools []*protocol.Tool, capturedAt time.Time) (Snapshot, []Warning, error) {
 	if err := mcpexplore.ValidateAlias(alias); err != nil {
 		return Snapshot{}, nil, err

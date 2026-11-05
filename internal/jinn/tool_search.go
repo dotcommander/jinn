@@ -43,6 +43,10 @@ func (e *Engine) searchFilesContext(ctx context.Context, args map[string]interfa
 		return "", err
 	}
 	if !literal {
+		// Deliberate double-compile: this Go-side compile is the ErrCodeInvalidRegex
+		// trust boundary; the rg/grep subprocess compiles again as part of its scan.
+		// Removing this compile is a correctness risk, not an efficiency win, unless
+		// the subprocess spawn itself is replaced (see optimize Rec 2.4).
 		if _, err := regexp.Compile(pattern); err != nil {
 			return "", &ErrWithSuggestion{
 				Err:        fmt.Errorf("invalid regex: %w", err),
@@ -144,6 +148,9 @@ func (e *Engine) runSearch(ctx context.Context, req searchRequest, maxResults in
 	if runErr != nil {
 		return "", runErr
 	}
+	if err := searchGrepFailure(gr); err != nil {
+		return "", err
+	}
 	raw := gr.stdout
 	if maxResults > 0 {
 		raw += fmt.Sprintf("\n(results capped at max_results=%d, more matches may exist)", maxResults)
@@ -217,12 +224,19 @@ func (e *Engine) searchFilenamesOnly(ctx context.Context, req searchRequest) (st
 	if runErr != nil {
 		return "", runErr
 	}
-	// Exit code 1 with empty stdout = no matches (not an error).
-	// Any other non-zero exit with empty stdout is an error.
-	if gr.stdout == "" && gr.exitCode != 0 && gr.exitCode != 1 {
-		return "", fmt.Errorf("search failed: %s", gr.stderr)
+	if err := searchGrepFailure(gr); err != nil {
+		return "", err
 	}
 	return parseFilenamesOutput(gr.stdout, req.maxMatches), nil
+}
+
+// Exit 1 without diagnostics is grep's ordinary no-match result. Any other
+// non-zero status or stderr indicates a backend failure, even with partial output.
+func searchGrepFailure(gr grepResult) error {
+	if gr.exitCode == 0 && gr.stderr == "" || gr.exitCode == 1 && gr.stderr == "" {
+		return nil
+	}
+	return fmt.Errorf("search failed (exit %d): %s", gr.exitCode, strings.TrimSpace(gr.stderr))
 }
 
 // formatSearchJSON renders search output as the searchFilesResult JSON shape.

@@ -113,6 +113,30 @@ func TestMetadataLintSizeAndControlLimits(t *testing.T) {
 	}
 }
 
+func TestAuditC403SnapshotRejectsOversizedInput(t *testing.T) {
+	// t.Setenv changes process-global state; this test must remain serial.
+	t.Setenv("JINN_CONFIG_DIR", t.TempDir())
+	path, err := Path("local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Truncate(path, maxSnapshotFileBytes+1); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists, err := Load("local"); err == nil || exists || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("Load oversized = exists %v, err %v", exists, err)
+	}
+	if err := Save(testSnapshot(t, "local", "new")); err == nil || !strings.Contains(err.Error(), "refusing to overwrite corrupt") {
+		t.Fatalf("Save oversized = %v", err)
+	}
+}
+
 func TestSnapshotStoragePreservesLastKnownGoodAndRejectsCorruption(t *testing.T) {
 	t.Setenv("JINN_CONFIG_DIR", t.TempDir())
 	first := testSnapshot(t, "local", "first")

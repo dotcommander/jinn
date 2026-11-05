@@ -74,7 +74,7 @@ func scanGoTestLines(lines []string) goTestSummary {
 		if reGoTestPass.MatchString(line) {
 			t.passCount++
 		}
-		if reGoTestFail.MatchString(line) {
+		if reGoTestFail.MatchString(line) || line == "FAIL" || reGoTestFailPkg.MatchString(line) || strings.HasPrefix(line, "panic:") {
 			t.failCount++
 		}
 		if reGoTestOK.MatchString(line) {

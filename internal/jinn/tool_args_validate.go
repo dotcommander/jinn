@@ -16,24 +16,21 @@ func validateToolArgs(tool string, args map[string]interface{}) error {
 	if err := validateSuppliedNonNegativeNumbers(args); err != nil {
 		return &ErrWithSuggestion{Err: fmt.Errorf("%s: %w", tool, err), Suggestion: "omit optional numeric fields to use their defaults, or provide a non-negative value where supported", Code: ErrCodeInvalidArgs}
 	}
-	tools, err := parseSchemaTools()
+	candidate, ok, err := schemaToolByName(tool)
 	if err != nil {
 		return fmt.Errorf("validate %s args: %w", tool, err)
 	}
-	for _, candidate := range tools {
-		if candidate.Function.Name != tool {
-			continue
-		}
-		if err := validateSchemaValue("args", args, candidate.Function.Parameters); err != nil {
-			return &ErrWithSuggestion{
-				Err:        fmt.Errorf("%s: %w", tool, err),
-				Suggestion: "use list_tools with include_schema=true to inspect the accepted arguments",
-				Code:       ErrCodeInvalidArgs,
-			}
-		}
-		return nil
+	if !ok {
+		return fmt.Errorf("unknown tool: %s", tool)
 	}
-	return fmt.Errorf("unknown tool: %s", tool)
+	if err := validateSchemaValue("args", args, candidate.Function.Parameters); err != nil {
+		return &ErrWithSuggestion{
+			Err:        fmt.Errorf("%s: %w", tool, err),
+			Suggestion: "use list_tools with include_schema=true to inspect the accepted arguments",
+			Code:       ErrCodeInvalidArgs,
+		}
+	}
+	return nil
 }
 
 // Numeric defaults are represented by omitted fields. Supplied negative values

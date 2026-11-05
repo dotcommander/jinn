@@ -100,6 +100,7 @@ func TestMCPExplorerCallProjectionHead(t *testing.T) {
 }
 
 func TestMCPExplorerCallProjectionByteLimitAndErrorBypass(t *testing.T) {
+	t.Parallel()
 	output := mcpExplorerProjectionTestOutput()
 	options := mcpExplorerProjectionOptions{pointer: "/structuredContent/items", hasSelect: true}
 	var expected bytes.Buffer
@@ -124,15 +125,8 @@ func TestMCPExplorerCallProjectionByteLimitAndErrorBypass(t *testing.T) {
 	errorOutput := output
 	errorOutput.IsError = true
 	var bypass bytes.Buffer
-	if err := writeMCPExplorerCallOutput(&bypass, errorOutput, mcpExplorerProjectionOptions{pointer: "/missing", hasSelect: true, head: 0, hasHead: true, maxBytes: 0, hasMaxBytes: true}); err != nil {
-		t.Fatalf("isError bypass: %v", err)
-	}
-	var current bytes.Buffer
-	if err := json.NewEncoder(&current).Encode(errorOutput); err != nil {
-		t.Fatal(err)
-	}
-	if bypass.String() != current.String() {
-		t.Fatalf("isError bypass = %q, want current output %q", bypass.String(), current.String())
+	if err := writeMCPExplorerCallOutput(&bypass, errorOutput, mcpExplorerProjectionOptions{pointer: "/missing", hasSelect: true, head: 0, hasHead: true, maxBytes: 0, hasMaxBytes: true}); err == nil || bypass.Len() != 0 {
+		t.Fatalf("unrepresentable error cap = %v/%q", err, bypass.String())
 	}
 }
 

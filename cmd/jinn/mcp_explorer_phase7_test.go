@@ -103,15 +103,13 @@ func TestMCPExplorerFormatParserCompatibility(t *testing.T) {
 	}
 }
 
-func TestMCPExplorerHumanToolErrorBypassesProjectionAndByteLimit(t *testing.T) {
+func TestMCPExplorerHumanToolErrorRespectsByteLimit(t *testing.T) {
+	t.Parallel()
 	var output bytes.Buffer
 	projection := mcpExplorerProjectionOptions{pointer: "/missing", hasSelect: true, maxBytes: 0, hasMaxBytes: true}
 	err := writeMCPExplorerCallFormattedOutput(&output, mcpExplorerFormatHuman, mcpExplorerCallOutput{ResultType: "complete", IsError: true}, projection)
-	if err != nil {
-		t.Fatalf("human tool error was projected or limited: %v", err)
-	}
-	if !strings.Contains(output.String(), `"isError": true`) {
-		t.Fatalf("human tool error output = %q", output.String())
+	if err == nil || output.Len() != 0 {
+		t.Fatalf("unrepresentable human error cap = %v/%q", err, output.String())
 	}
 }
 

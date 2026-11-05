@@ -212,11 +212,7 @@ func DecodeRouteRequest(data []byte) (RouteRequest, error) {
 }
 
 func parseSchemaTools() ([]schemaTool, error) {
-	var tools []schemaTool
-	if err := json.Unmarshal([]byte(Schema), &tools); err != nil {
-		return nil, fmt.Errorf("parse schema tools: %w", err)
-	}
-	return tools, nil
+	return parsedSchemaTools()
 }
 
 func scoreRouteCandidate(tool schemaTool, descriptor toolDescriptor, queryTokens map[string]bool, queryLower string) routeCandidate {

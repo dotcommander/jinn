@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -96,6 +97,22 @@ func TestBraveSearchSupportsDomainFiltersAsSiteQueries(t *testing.T) {
 	}
 	if got := braveSearchQuery("writing benchmark", []string{"github.com", "huggingface.co"}); got != "(site:github.com OR site:huggingface.co) writing benchmark" {
 		t.Fatalf("multi-domain query = %q", got)
+	}
+}
+
+func TestAuditC503SearchDomainsAreHostnames(t *testing.T) {
+	t.Parallel()
+	for _, host := range []string{"go.dev", "sub.example.com", "a-b.example", "XN--BCHER-KVA.example", "localhost"} {
+		if _, err := validateSearchRequest(SearchRequest{Query: "go", IncludeDomains: []string{host}}, DefaultSearchLimit); err != nil {
+			t.Errorf("valid hostname %q: %v", host, err)
+		}
+	}
+	for _, host := range []string{"example.com)", "example.com:evil", "(example.com", "example.com|site:other.com", "example_com", "-example.com", "example-.com", "example..com", "example.com.", "https://example.com", "example.com/path", "example.com OR other.com", "例子.com", strings.Repeat("a", 64) + ".com"} {
+		_, err := validateSearchRequest(SearchRequest{Query: "go", IncludeDomains: []string{host}}, DefaultSearchLimit)
+		var coded *CodedError
+		if !errors.As(err, &coded) || coded.Code != ErrorCodeInvalidArgument {
+			t.Errorf("invalid hostname %q: error = %v", host, err)
+		}
 	}
 }
 

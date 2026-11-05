@@ -22,8 +22,8 @@ type grepResult struct {
 }
 
 // runGrep runs cmd with cmdArgs under searchTimeout, bounded to 1 MB of output.
-// Returns a grepResult and an error. error is non-nil only on cancellation or
-// timeout; non-zero grep/rg exits are returned via grepResult.exitCode.
+// Returns non-zero grep/rg exits via grepResult.exitCode; start and wait
+// failures that are not process exits return an error.
 func (e *Engine) runGrep(ctx context.Context, cmd string, cmdArgs []string) (grepResult, error) {
 	outBuf := &boundedWriter{limit: 1 << 20}
 	errBuf := &boundedWriter{limit: 1 << 20}
@@ -63,7 +63,7 @@ func (e *Engine) runGrep(ctx context.Context, cmd string, cmdArgs []string) (gre
 		if errors.As(runErr, &exitErr) {
 			exitCode = exitErr.ExitCode()
 		} else {
-			exitCode = 1
+			return grepResult{}, fmt.Errorf("search backend %q: %w", cmd, runErr)
 		}
 	}
 	return grepResult{stdout: out, stderr: errBuf.String(), exitCode: exitCode}, nil

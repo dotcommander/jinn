@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -324,26 +323,50 @@ func TestMCPNotificationsProduceNoResponse(t *testing.T) {
 
 func TestMCPRunLoopMultipleMessages(t *testing.T) {
 	t.Parallel()
+	inputReader, inputWriter := io.Pipe()
+	outputReader, outputWriter := io.Pipe()
+	t.Cleanup(func() {
+		_ = inputReader.Close()
+		_ = inputWriter.Close()
+		_ = outputReader.Close()
+		_ = outputWriter.Close()
+	})
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	t.Cleanup(cancel)
+	done := make(chan error, 1)
+	go func() { done <- runMCP(ctx, inputReader, outputWriter, "test", jinn.ShellModeDisabled) }()
 	input := strings.Join([]string{
 		`{"jsonrpc":"2.0","id":1,"method":"initialize"}`,
 		`{"jsonrpc":"2.0","method":"notifications/initialized"}`,
-		`{"jsonrpc":"2.0","id":2,"method":"tools/list"}`,
+		`{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{` + currentMCPMeta + `}}`,
 		"",
 	}, "\n")
-	var out bytes.Buffer
-	if err := runMCP(t.Context(), strings.NewReader(input), &out, "test", jinn.ShellModeDisabled); err != nil {
-		t.Fatalf("runMCP: %v", err)
+	if _, err := io.WriteString(inputWriter, input); err != nil {
+		t.Fatal(err)
 	}
-	scanner := bufio.NewScanner(&out)
-	count := 0
-	for scanner.Scan() {
-		count++
+	decoder := json.NewDecoder(outputReader)
+	responses := make(chan error, 1)
+	go func() {
+		for range 2 {
+			var reply mcpResponse
+			if err := decoder.Decode(&reply); err != nil {
+				responses <- err
+				return
+			}
+		}
+		responses <- nil
+	}()
+	select {
+	case err := <-responses:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-ctx.Done():
+		t.Fatalf("timed out waiting for two MCP responses: %v", ctx.Err())
 	}
-	if err := scanner.Err(); err != nil {
-		t.Fatalf("scan output: %v", err)
-	}
-	if count != 2 {
-		t.Fatalf("response count = %d, want 2; output=%q", count, out.String())
+	_ = inputWriter.Close()
+	if err := <-done; err != nil {
+		t.Fatal(err)
 	}
 }
 

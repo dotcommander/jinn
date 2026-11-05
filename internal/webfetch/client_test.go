@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -117,6 +118,40 @@ func TestClientTransportErrorReportsActualMethod(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Fatalf("POST attempts = %d, want 1", calls)
+	}
+}
+
+func TestAuditC502GETRetryKeepsOriginalEmptyBody(t *testing.T) {
+	t.Parallel()
+	client := NewClient(ClientConfig{})
+	calls := 0
+	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		calls++
+		var data []byte
+		var err error
+		if req.Body != nil {
+			data, err = io.ReadAll(req.Body)
+		}
+		if err != nil || len(data) != 0 || req.ContentLength != 0 {
+			t.Errorf("GET attempt %d: body = %q, length = %d, error = %v", calls, data, req.ContentLength, err)
+		}
+		status := http.StatusTooManyRequests
+		content := "retry error body"
+		if calls == 2 {
+			status = http.StatusOK
+			content = "success"
+		}
+		return &http.Response{
+			StatusCode: status,
+			Status:     http.StatusText(status),
+			Header:     http.Header{"Retry-After": []string{"0"}},
+			Body:       io.NopCloser(strings.NewReader(content)),
+			Request:    req,
+		}, nil
+	})
+	resp, err := client.Get(context.Background(), "https://example.com/article", nil)
+	if err != nil || calls != 2 || string(resp.Body) != "success" {
+		t.Fatalf("GET = (%+v, %v), calls = %d", resp, err, calls)
 	}
 }
 

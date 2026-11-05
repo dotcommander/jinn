@@ -8,6 +8,28 @@ import (
 	"testing"
 )
 
+func TestAuditC204ImageConditionalChecksum(t *testing.T) {
+	t.Parallel()
+	e, dir := testEngine(t)
+	data := []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n', 0, 0, 0, 0}
+	writeTestFile(t, dir, "image.png", string(data))
+	h := sha256.Sum256(data)
+	checksum := hex.EncodeToString(h[:])
+	matched, err := e.readFile(args("path", "image.png", "if_checksum", checksum))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(matched.Text, `"unchanged":true`) || len(matched.Content) != 0 {
+		t.Fatalf("expected unchanged without image payload: %+v", matched)
+	}
+	for _, conditional := range []string{"different", ""} {
+		image, err := e.readFile(args("path", "image.png", "if_checksum", conditional))
+		if err != nil || len(image.Content) != 1 || image.Content[0].Type != "image" {
+			t.Fatalf("conditional %q: %+v, %v", conditional, image, err)
+		}
+	}
+}
+
 func TestReadFile_IncludeChecksumAddsMeta(t *testing.T) {
 	t.Parallel()
 	e, _ := testEngine(t)

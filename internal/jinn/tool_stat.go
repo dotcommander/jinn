@@ -105,16 +105,20 @@ func (e *Engine) statFile(args map[string]interface{}) (string, error) {
 			} else {
 				data = data[:n]
 				stats := detectContentStats(data)
+				lines := countDataLines(data)
 				result["sample_bytes"] = n
 				result["sample_complete"] = int64(n) == info.Size()
-				result["sample_lines"] = countDataLines(data)
+				result["sample_lines"] = lines
 				result["encoding"] = stats.encoding
 				result["line_ending"] = stats.lineEnding
 				result["bom"] = stats.bom
+				// Only complete samples have a full-file line count; partial
+				// samples remain available as sample_lines with sample_complete=false.
 				if int64(n) == info.Size() {
-					result["lines"] = countDataLines(data)
+					result["lines"] = lines
+					summary += fmt.Sprintf("\nlines: %d", lines)
 				}
-				summary += fmt.Sprintf("\nlines: %d\nencoding: %s\nline_ending: %s\nbom: %s", countDataLines(data), stats.encoding, stats.lineEnding, stats.bom)
+				summary += fmt.Sprintf("\nencoding: %s\nline_ending: %s\nbom: %s", stats.encoding, stats.lineEnding, stats.bom)
 			}
 		}
 	}

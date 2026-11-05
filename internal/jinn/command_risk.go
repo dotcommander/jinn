@@ -763,6 +763,18 @@ func applySubcommandRule(verb string, tokens []string) (RiskLevel, string, bool)
 	if !ok {
 		return 0, "", false
 	}
+	// git diff, show, and log share diff output options. An output target
+	// writes a file even though these subcommands are ordinarily read-only.
+	if verb == "git" && (subcommand == "diff" || subcommand == "show" || subcommand == "log") {
+		for _, tok := range tokens[1:] {
+			if tok == "--" {
+				break // Remaining arguments are pathspecs, not options.
+			}
+			if tok == "--output" || strings.HasPrefix(tok, "--output=") {
+				return RiskCaution, "git --output — writes diff output to a file", true
+			}
+		}
+	}
 	return rule.Level, rule.Reason, true
 }
 

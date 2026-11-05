@@ -138,9 +138,12 @@ func (e *Engine) readImageFile(resolved, path, detected string, args map[string]
 	}
 
 	var checksum string
-	if inc, _ := args["include_checksum"].(bool); inc {
+	if checksumRequested(args) {
 		h := sha256.Sum256(data)
 		checksum = hex.EncodeToString(h[:])
+	}
+	if ifChecksum, _ := args["if_checksum"].(string); ifChecksum != "" && ifChecksum == checksum {
+		return &ToolResult{Text: fmt.Sprintf(`{"unchanged":true,"path":%q,"checksum":%q}`, resolved, checksum)}, nil
 	}
 
 	mime := "image/svg+xml"

@@ -202,9 +202,13 @@ func validatePlan(plan *PlanTree) error {
 	}
 
 	// Check edges target known nodes and tier rules.
-	for _, n := range plan.Nodes {
-		for _, e := range n.Edges {
-			if err := validateCondition(e.When); err != nil {
+	for ni := range plan.Nodes {
+		n := &plan.Nodes[ni]
+		for ei := range n.Edges {
+			e := &n.Edges[ei]
+			// validateCondition compiles Regex/Extract once here so per-op
+			// evaluation reuses the compiled regexp instead of recompiling.
+			if err := validateCondition(&e.When); err != nil {
 				return planInvalid("edge from %s has invalid condition: %v", n.ID, err)
 			}
 			if !seen[e.To] {
@@ -280,7 +284,9 @@ func numericPlanValue(value any, integer bool) (float64, bool) {
 }
 
 //nolint:funlen,gocognit,gocyclo,revive,perfsprint // condition variants map directly to their wire contract.
-func validateCondition(cond Condition) error {
+// validateCondition validates cond and, for match/numeric kinds, stores the
+// compiled Regex/Extract on cond for later per-op evaluation.
+func validateCondition(cond *Condition) error {
 	switch cond.Kind {
 	case "always":
 		if cond.Op != "" || cond.Value != nil || cond.Path != "" || cond.Extract != "" || cond.Regex != "" || cond.Stream != "" {
@@ -319,6 +325,7 @@ func validateCondition(cond Condition) error {
 			if re.NumSubexp() == 0 {
 				return fmt.Errorf("numeric extract regex requires a capture group")
 			}
+			cond.CompiledExtract = re
 		}
 		if cond.Path != "" || cond.Regex != "" || cond.Stream != "" {
 			return fmt.Errorf("numeric does not accept path, regex, or stream")
@@ -345,9 +352,11 @@ func validateCondition(cond Condition) error {
 		if cond.Stream != "stdout" && cond.Stream != "stderr" {
 			return fmt.Errorf("match requires stream stdout or stderr")
 		}
-		if _, err := regexp.Compile(cond.Regex); err != nil {
+		re, err := regexp.Compile(cond.Regex)
+		if err != nil {
 			return fmt.Errorf("match regex: %w", err)
 		}
+		cond.CompiledRegex = re
 		if cond.Op != "" || cond.Value != nil || cond.Path != "" || cond.Extract != "" {
 			return fmt.Errorf("match does not accept comparison fields")
 		}
@@ -616,9 +625,13 @@ func (e *Engine) evaluateCondition(last PlanOpResult, cond Condition) (bool, err
 			return false, err
 		}
 	case "match":
-		re, err := regexp.Compile(cond.Regex)
-		if err != nil {
-			return false, err
+		re := cond.CompiledRegex
+		if re == nil {
+			var err error
+			re, err = regexp.Compile(cond.Regex)
+			if err != nil {
+				return false, err
+			}
 		}
 		stream := last.Result
 		if last.Classification != "" || last.Stdout != "" || last.Stderr != "" {
@@ -632,9 +645,13 @@ func (e *Engine) evaluateCondition(last PlanOpResult, cond Condition) (bool, err
 		}
 		var s string
 		if cond.Extract != "" {
-			re, err := regexp.Compile(cond.Extract)
-			if err != nil {
-				return false, err
+			re := cond.CompiledExtract
+			if re == nil {
+				var err error
+				re, err = regexp.Compile(cond.Extract)
+				if err != nil {
+					return false, err
+				}
 			}
 			m := re.FindStringSubmatch(raw)
 			if len(m) < 2 {

@@ -161,20 +161,17 @@ type contextLine struct {
 	lineNum int
 }
 
-// parseContextLine parses a context line "file-NUM-text" emitted with the '-'
-// separator. ok is false when the segment after the first '-' lacks a line number.
+// parseContextLine locates a -NUM- separator rather than splitting on the
+// first filename hyphen. A filename containing -NUM- remains ambiguous in
+// grep's unescaped output; prefer the rightmost numeric segment.
 func parseContextLine(line string) (contextLine, bool) {
-	idx := strings.Index(line, "-")
-	if idx <= 0 {
-		return contextLine{}, false
+	for idx := strings.LastIndex(line, "-"); idx > 0; idx = strings.LastIndex(line[:idx], "-") {
+		lineNum, text, ok := splitLeadingInt(line[idx+1:])
+		if ok && strings.HasPrefix(text, "-") {
+			return contextLine{file: line[:idx], text: text[1:], lineNum: lineNum}, true
+		}
 	}
-	lineNum, text, ok := splitLeadingInt(line[idx+1:])
-	if !ok {
-		return contextLine{}, false
-	}
-	// Strip the leading '-' separator between linenum and text.
-	text = strings.TrimPrefix(text, "-")
-	return contextLine{file: line[:idx], text: text, lineNum: lineNum}, true
+	return contextLine{}, false
 }
 
 // joinLines concatenates lines with a trailing newline after each.

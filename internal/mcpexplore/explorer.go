@@ -145,10 +145,15 @@ func NewCommandContext(ctx context.Context, name string, args ...string) *exec.C
 
 // CommandEnvironment removes the HTTP bearer token before launching subprocesses.
 func CommandEnvironment(environ []string) []string {
-	tokenPrefix := HTTPTokenEnv + "="
+	return commandEnvironment(environ, normalizedEnvironmentName)
+}
+
+func commandEnvironment(environ []string, normalize func(string) string) []string {
+	tokenName := normalize(HTTPTokenEnv)
 	filtered := make([]string, 0, len(environ))
 	for _, entry := range environ {
-		if !strings.HasPrefix(entry, tokenPrefix) {
+		name, _, _ := strings.Cut(entry, "=")
+		if normalize(name) != tokenName {
 			filtered = append(filtered, entry)
 		}
 	}

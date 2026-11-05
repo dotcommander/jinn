@@ -82,6 +82,30 @@ func TestRegistryWritesPrivateDurableBackup(t *testing.T) {
 	}
 }
 
+func TestAuditC403RegistryRejectsOversizedInput(t *testing.T) {
+	// t.Setenv changes process-global state; this test must remain serial.
+	t.Setenv("JINN_CONFIG_DIR", t.TempDir())
+	path, err := RegistryPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Truncate(path, maxRegistryFileBytes+1); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := LoadRegistry(); err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("LoadRegistry oversized = %v", err)
+	}
+	if err := UpdateRegistry(func(*Registry) error { t.Fatal("updated oversized registry"); return nil }); err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("UpdateRegistry oversized = %v", err)
+	}
+}
+
 func TestRegistryNeverOverwritesCorruptCurrentFile(t *testing.T) {
 	t.Setenv("JINN_CONFIG_DIR", t.TempDir())
 	path, err := RegistryPath()

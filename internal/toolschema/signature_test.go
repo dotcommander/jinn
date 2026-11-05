@@ -3,6 +3,7 @@ package toolschema
 import "testing"
 
 func TestRender(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name   string
 		schema map[string]any
@@ -21,8 +22,22 @@ func TestRender(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			if got := Render("tool", tt.schema); got != tt.want {
 				t.Fatalf("Render() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestAuditC402RootCompositionFallsBack(t *testing.T) {
+	t.Parallel()
+	for _, composition := range []string{"oneOf", "anyOf", "allOf"} {
+		t.Run(composition, func(t *testing.T) {
+			t.Parallel()
+			schema := map[string]any{"type": "object", "properties": map[string]any{"x": map[string]any{"type": "string"}}, composition: []any{}}
+			if got := Render("tool", schema); got != "tool(json)" {
+				t.Fatalf("Render root %s = %q, want tool(json)", composition, got)
 			}
 		})
 	}

@@ -122,7 +122,7 @@ func runMCPExplorer(ctx context.Context, args []string) error {
 		}
 		return writeMCPExplorerOutput(os.Stdout, config.format, tool)
 	case mcpExplorerActionCall:
-		result, err := c.Call(ctx, config.tool, config.arguments)
+		result, err := callMCPExplorerTool(ctx, config, c.Call)
 		if err != nil {
 			return fmt.Errorf("MCP tools/call %q: %w", config.tool, err)
 		}
@@ -134,6 +134,15 @@ func runMCPExplorer(ctx context.Context, args []string) error {
 	}
 }
 
+// Keep argument validation ahead of the remote dispatch even for callers that
+// construct a config without the CLI parser.
+func callMCPExplorerTool(ctx context.Context, config mcpExplorerConfig, call func(context.Context, string, map[string]any) (*protocol.CallToolResult, error)) (*protocol.CallToolResult, error) {
+	if err := validateMCPExplorerProjectionOptions(config); err != nil {
+		return nil, err
+	}
+	return call(ctx, config.tool, config.arguments)
+}
+
 func mcpExplorerProjectionCLIError(err error) error {
 	var projectionErr *mcpExplorerProjectionError
 	if !errors.As(err, &projectionErr) {
@@ -143,7 +152,10 @@ func mcpExplorerProjectionCLIError(err error) error {
 }
 
 func writeMCPExplorerCallOutput(writer io.Writer, output mcpExplorerCallOutput, projection mcpExplorerProjectionOptions) error {
-	if output.IsError || (!projection.hasSelect && !projection.hasMaxBytes) {
+	if output.IsError {
+		return writeMCPExplorerErrorOutput(writer, mcpExplorerFormatJSON, output, projection)
+	}
+	if !projection.hasSelect && !projection.hasMaxBytes {
 		return json.NewEncoder(writer).Encode(output)
 	}
 	return renderMCPExplorerProjectedCallOutput(writer, output, projection)
@@ -154,7 +166,7 @@ func writeMCPExplorerCallFormattedOutput(writer io.Writer, format string, output
 		return writeMCPExplorerCallOutput(writer, output, projection)
 	}
 	if output.IsError {
-		return writeMCPExplorerOutput(writer, format, output)
+		return writeMCPExplorerErrorOutput(writer, format, output, projection)
 	}
 	value, err := projectMCPExplorerCallValue(output, projection)
 	if err != nil {
@@ -171,6 +183,80 @@ func writeMCPExplorerCallFormattedOutput(writer io.Writer, format string, output
 		return newMCPExplorerProjectionError(fmt.Sprintf("MCP call output is %d bytes, exceeding --max-bytes %d", len(rendered), projection.maxBytes), "increase --max-bytes or use --select and --head to reduce the output")
 	}
 	_, err = writer.Write(rendered)
+	return err
+}
+
+// Error results remain errors even when their potentially enormous text is
+// shortened. Encode each candidate before comparing to the final-output cap.
+func writeMCPExplorerErrorOutput(writer io.Writer, format string, output mcpExplorerCallOutput, options mcpExplorerProjectionOptions) error {
+	if format != "" && format != mcpExplorerFormatJSON && format != mcpExplorerFormatHuman {
+		return fmt.Errorf("invalid --format %q: use json or human", format)
+	}
+	encode := func(value mcpExplorerCallOutput) ([]byte, error) {
+		if format == mcpExplorerFormatHuman {
+			return renderMCPExplorerHuman(value)
+		}
+		data, err := json.Marshal(value)
+		if err != nil {
+			return nil, err
+		}
+		return append(data, '\n'), nil
+	}
+	data, err := encode(output)
+	if err != nil {
+		return err
+	}
+	if !options.hasMaxBytes || len(data) <= options.maxBytes {
+		_, err = writer.Write(data)
+		return err
+	}
+	// Preserve the structured error identity where one was provided. The
+	// original content text supplies the message/code head in both formats.
+	minimal := output
+	minimal.StructuredContent = nil
+	if fields, ok := output.StructuredContent.(map[string]any); ok {
+		identity := make(map[string]any)
+		for _, key := range []string{"code", "error_code", "type"} {
+			if value, exists := fields[key]; exists {
+				identity[key] = value
+			}
+		}
+		if len(identity) > 0 {
+			minimal.StructuredContent = identity
+		}
+	}
+	message := ""
+	if len(output.Content) > 0 {
+		if raw, marshalErr := json.Marshal(output.Content[0]); marshalErr == nil {
+			var block struct {
+				Text string `json:"text"`
+			}
+			if json.Unmarshal(raw, &block) == nil {
+				message = block.Text
+			}
+		}
+	}
+	const marker = "…[truncated]"
+	best := []byte(nil)
+	for low, high := 0, len(message); low <= high; {
+		size := low + (high-low)/2
+		// A byte slice may end inside a rune; JSON encoding repairs it safely.
+		minimal.Content = protocol.ContentList{protocol.NewTextContent(message[:size] + marker)}
+		candidate, encodeErr := encode(minimal)
+		if encodeErr != nil {
+			return encodeErr
+		}
+		if len(candidate) <= options.maxBytes {
+			best = candidate
+			low = size + 1
+		} else {
+			high = size - 1
+		}
+	}
+	if best == nil {
+		return newMCPExplorerProjectionError("--max-bytes is too small for the MCP tool error", "increase --max-bytes to retain the error identity")
+	}
+	_, err = writer.Write(best)
 	return err
 }
 

@@ -25,6 +25,9 @@ const (
 // Render returns a compact signature for name and its JSON Schema input.
 // Malformed and unsupported schema constructs deliberately fall back to json.
 func Render(name string, schema map[string]any) string {
+	if hasComposition(schema) {
+		return renderName(name) + "(" + signatureJSON + ")"
+	}
 	properties, ok := schema["properties"].(map[string]any)
 	if !ok && schema["properties"] != nil {
 		return renderName(name) + "(" + signatureJSON + ")"

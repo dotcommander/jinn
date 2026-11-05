@@ -86,12 +86,6 @@ func (e *Engine) searchReplaceDiscovered(ctx context.Context, args map[string]in
 		return nil, err
 	}
 
-	// --- Optional: include glob filter ---
-	candidates, err = filterSRInclude(candidates, args)
-	if err != nil {
-		return nil, err
-	}
-
 	dryRun := boolArg(args, "dry_run")
 	targets := make([]string, len(candidates))
 	for i := range candidates {

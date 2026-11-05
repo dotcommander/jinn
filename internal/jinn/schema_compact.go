@@ -4,26 +4,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"sync"
 )
 
 // SchemaToolNames returns the ordered tool names declared by the embedded wire
 // schema. The runtime registry validates exact parity with this declaration.
 func SchemaToolNames() ([]string, error) {
-	var raw []struct {
-		Function struct {
-			Name string `json:"name"`
-		} `json:"function"`
-	}
-	if err := json.Unmarshal([]byte(Schema), &raw); err != nil {
-		return nil, fmt.Errorf("parse schema for tool names: %w", err)
-	}
-	names := make([]string, 0, len(raw))
-	for _, t := range raw {
-		if t.Function.Name != "" {
-			names = append(names, t.Function.Name)
-		}
-	}
-	return names, nil
+	return schemaToolNamesCached()
 }
 
 // CompactSchema returns Schema without insignificant JSON whitespace.
@@ -42,11 +29,32 @@ func LeanSchema() (string, error) {
 	return LeanSchemaForMode(ShellModeUnsafe)
 }
 
+type leanCacheEntry struct {
+	s string
+	err error
+}
+
+var (
+	leanDisabledCache = sync.OnceValue(func() leanCacheEntry { return buildLeanSchema(ShellModeDisabled) })
+	leanEnabledCache  = sync.OnceValue(func() leanCacheEntry { return buildLeanSchema(ShellModeUnsafe) })
+)
+
 // LeanSchemaForMode returns the prompt-facing schema for an execution policy.
+// The embedded schema is immutable, so each mode variant is computed once
+// per process and shared (strings are immutable in Go).
 func LeanSchemaForMode(mode ShellMode) (string, error) {
+	if mode == ShellModeDisabled {
+		entry := leanDisabledCache()
+		return entry.s, entry.err
+	}
+	entry := leanEnabledCache()
+	return entry.s, entry.err
+}
+
+func buildLeanSchema(mode ShellMode) leanCacheEntry {
 	var schema any
 	if err := json.Unmarshal([]byte(Schema), &schema); err != nil {
-		return "", err
+		return leanCacheEntry{err: err}
 	}
 	stripParameterDescriptions(schema)
 	closeSchemaObjects(schema)
@@ -67,9 +75,9 @@ func LeanSchemaForMode(mode ShellMode) (string, error) {
 	}
 	out, err := json.Marshal(schema)
 	if err != nil {
-		return "", fmt.Errorf("marshal lean schema: %w", err)
+		return leanCacheEntry{err: fmt.Errorf("marshal lean schema: %w", err)}
 	}
-	return string(out), nil
+	return leanCacheEntry{s: string(out)}
 }
 
 // stripShellPlanOperations removes the shell-shaped branch from run_plan's

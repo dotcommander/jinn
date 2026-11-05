@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 )
@@ -27,7 +28,7 @@ func LoadRegistry() (registry Registry, exists bool, err error) {
 	if err != nil {
 		return Registry{}, false, err
 	}
-	data, err := os.ReadFile(path)
+	data, err := readRegistryFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return Registry{Version: registryVersion, Servers: map[string]Server{}}, false, nil
 	}
@@ -39,6 +40,25 @@ func LoadRegistry() (registry Registry, exists bool, err error) {
 		return Registry{}, true, fmt.Errorf("invalid MCP server registry: %w", err)
 	}
 	return registry, true, nil
+}
+
+// Registry files are user configuration, capped before decoding or backup.
+const maxRegistryFileBytes = 10 << 20
+
+func readRegistryFile(path string) ([]byte, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = file.Close() }()
+	data, err := io.ReadAll(io.LimitReader(file, maxRegistryFileBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxRegistryFileBytes {
+		return nil, fmt.Errorf("MCP server registry exceeds %d bytes", maxRegistryFileBytes)
+	}
+	return data, nil
 }
 
 // SaveRegistry replaces a valid registry through a durable lock, backup, and rename.
@@ -67,7 +87,7 @@ func mutateRegistry(update func(*Registry) error) error {
 		return fmt.Errorf("set MCP registry directory permissions: %w", err)
 	}
 	return withRegistryLock(path+".lock", func() error {
-		current, err := os.ReadFile(path)
+		current, err := readRegistryFile(path)
 		registry := Registry{Version: registryVersion, Servers: map[string]Server{}}
 		if err == nil {
 			registry, err = decodeRegistry(current)

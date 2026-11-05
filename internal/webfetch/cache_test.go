@@ -3,6 +3,7 @@ package webfetch
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -208,6 +209,56 @@ func TestServiceFetchUsesURLCache(t *testing.T) {
 	}
 	if got := requests.Load(); got != 1 {
 		t.Fatalf("reader requests = %d, want one", got)
+	}
+}
+
+func TestAuditC501CachedFinalURLRespectsCallerPolicy(t *testing.T) {
+	t.Parallel()
+	const target = "https://example.com/article"
+	const endpoint = "https://reader.example"
+	cacheDir := filepath.Join(t.TempDir(), "cache")
+	seed := NewService(Config{AllowPrivateNetworks: true, ReaderEndpoint: endpoint, URLCacheTTL: time.Hour, URLCacheDir: cacheDir})
+	private := sampleCachedDocument()
+	private.URL = target
+	private.FinalURL = "http://127.0.0.1/private"
+	private.Content = "private body"
+	seed.cache.store(target, ReaderModeDefuddle, endpoint, private)
+
+	permissive := NewService(Config{AllowPrivateNetworks: true, ReaderEndpoint: endpoint, URLCacheTTL: time.Hour, URLCacheDir: cacheDir})
+	got, err := permissive.Fetch(context.Background(), FetchRequest{URL: target, Reader: ReaderModeDefuddle})
+	if err != nil || got.Content != private.Content {
+		t.Fatalf("permissive cache hit = (%+v, %v)", got, err)
+	}
+
+	strict := NewService(Config{ReaderEndpoint: endpoint, URLCacheTTL: time.Hour, URLCacheDir: cacheDir})
+	calls := 0
+	strict.client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		calls++
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"text/html"}},
+			Body:       io.NopCloser(strings.NewReader("<html><body><p>public content</p></body></html>")),
+			Request:    req,
+		}, nil
+	})
+	// Service.client and Service.reader share the same *http.Client, so the
+	// transport injected above is already visible to the reader.
+	got, err = strict.Fetch(context.Background(), FetchRequest{URL: target, Reader: ReaderModeDefuddle})
+	if err != nil || got.Content == private.Content || calls != 1 {
+		t.Fatalf("strict fetch = (%+v, %v), network calls = %d", got, err, calls)
+	}
+	got, err = strict.Fetch(context.Background(), FetchRequest{URL: target, Reader: ReaderModeDefuddle})
+	if err != nil || calls != 1 || got.Content == private.Content {
+		t.Fatalf("strict public cache hit = (%+v, %v), network calls = %d", got, err, calls)
+	}
+
+	// A legacy or malformed entry without a final URL must also miss.
+	missing := private
+	missing.FinalURL = ""
+	strict.cache.store(target, ReaderModeDefuddle, endpoint, missing)
+	_, err = strict.Fetch(context.Background(), FetchRequest{URL: target, Reader: ReaderModeDefuddle})
+	if err != nil || calls != 2 {
+		t.Fatalf("missing final URL: error = %v, network calls = %d", err, calls)
 	}
 }
 
