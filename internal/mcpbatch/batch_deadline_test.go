@@ -10,7 +10,7 @@ import (
 	"github.com/voocel/mcp-sdk-go/protocol"
 )
 
-func TestAuditC405CallDeadline(t *testing.T) {
+func TestBatchCallDeadline(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {
 		name   string
@@ -40,7 +40,7 @@ func (auditC405CanceledCaller) Call(ctx context.Context, _ string, _ map[string]
 	return nil, context.Canceled
 }
 
-func TestAuditC405ParentCancellation(t *testing.T) {
+func TestBatchParentCancellation(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())

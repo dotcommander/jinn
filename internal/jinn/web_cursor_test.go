@@ -10,7 +10,7 @@ import (
 	"github.com/dotcommander/jinn/internal/webfetch"
 )
 
-func TestAuditC503ToolCursorMetadata(t *testing.T) {
+func TestToolCursorMetadata(t *testing.T) {
 	t.Parallel()
 	content := "abcdefghijklmnop\nnext\n"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

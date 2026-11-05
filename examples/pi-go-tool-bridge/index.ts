@@ -3,7 +3,7 @@
  *
  * Each tool's execute() spawns ./bin/bridge-bin, writes a JSON request to its
  * stdin, and reads a JSON response from its stdout — the same wire protocol the
- * production `jinn` extension (dc-jinn) uses. The TypeScript here is a thin
+ * production `jinn` extension uses. The TypeScript here is a thin
  * shim; all tool logic lives in Go (see bin/main.go).
  *
  * Build the binary first:  (cd bin && go build -o bridge-bin .)

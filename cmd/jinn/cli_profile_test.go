@@ -12,8 +12,8 @@ import (
 )
 
 // This helper runs only in an owned subprocess to exercise actual CLI streams.
-func TestAuditCLIProcess(t *testing.T) {
-	encoded := os.Getenv("JINN_AUDIT_CLI_ARGUMENTS")
+func TestCLIProcessHelper(t *testing.T) {
+	encoded := os.Getenv("JINN_CLI_TEST_ARGUMENTS")
 	if encoded == "" {
 		return
 	}
@@ -29,7 +29,7 @@ func TestAuditCLIProcess(t *testing.T) {
 	os.Exit(0)
 }
 
-func runAuditCLI(t *testing.T, input string, arguments ...string) (string, string, int) {
+func runCLIRequest(t *testing.T, input string, arguments ...string) (string, string, int) {
 	t.Helper()
 	executable, err := os.Executable()
 	if err != nil {
@@ -39,8 +39,8 @@ func runAuditCLI(t *testing.T, input string, arguments ...string) (string, strin
 	if err != nil {
 		t.Fatal(err)
 	}
-	command := exec.Command(executable, "-test.run=^TestAuditCLIProcess$")
-	command.Env = append(os.Environ(), "JINN_AUDIT_CLI_ARGUMENTS="+string(encoded))
+	command := exec.Command(executable, "-test.run=^TestCLIProcessHelper$")
+	command.Env = append(os.Environ(), "JINN_CLI_TEST_ARGUMENTS="+string(encoded))
 	command.Stdin = strings.NewReader(input)
 	var stdout, stderr bytes.Buffer
 	command.Stdout, command.Stderr = &stdout, &stderr
@@ -56,7 +56,7 @@ func runAuditCLI(t *testing.T, input string, arguments ...string) (string, strin
 	return stdout.String(), stderr.String(), status
 }
 
-func TestAuditC106(t *testing.T) {
+func TestMCPProfileReadOnlyCLI(t *testing.T) {
 	t.Parallel()
 	for _, arguments := range [][]string{{"--mcp-profile=read-only"}, {"--mcp", "--mcp-profile=read-only"}, {"--mcp-http", "--mcp-profile=read-only"}} {
 		_, profile, _, err := parseCLIArgs(arguments)
@@ -66,20 +66,20 @@ func TestAuditC106(t *testing.T) {
 	}
 	input := `{"jsonrpc":"2.0","id":"audit","method":"tools/list","params":{` + currentMCPMeta + `}}` + "\n"
 	for _, arguments := range [][]string{{"--mcp-profile=read-only"}, {"--mcp", "--mcp-profile=read-only"}} {
-		stdout, stderr, status := runAuditMCPCLI(t, input, arguments...)
+		stdout, stderr, status := runMCPCLI(t, input, arguments...)
 		if status != 0 || stderr != "" || !strings.Contains(stdout, "jinn_call") {
 			t.Fatalf("MCP args=%q status=%d stdout=%q stderr=%q", arguments, status, stdout, stderr)
 		}
 	}
 	for _, profile := range []string{"discover", "read-only"} {
-		stdout, stderr, status := runAuditCLI(t, `{"tool":"list_tools"}`, "--mcp-profile="+profile)
+		stdout, stderr, status := runCLIRequest(t, `{"tool":"list_tools"}`, "--mcp-profile="+profile)
 		if status != 1 || stderr != "" || !strings.Contains(stdout, "requires --mcp or --mcp-http") {
 			t.Fatalf("CLI profile=%s status=%d stdout=%q stderr=%q", profile, status, stdout, stderr)
 		}
 	}
 }
 
-func runAuditMCPCLI(t *testing.T, input string, arguments ...string) (string, string, int) {
+func runMCPCLI(t *testing.T, input string, arguments ...string) (string, string, int) {
 	t.Helper()
 	executable, err := os.Executable()
 	if err != nil {
@@ -91,8 +91,8 @@ func runAuditMCPCLI(t *testing.T, input string, arguments ...string) (string, st
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	t.Cleanup(cancel)
-	command := exec.CommandContext(ctx, executable, "-test.run=^TestAuditCLIProcess$")
-	command.Env = append(os.Environ(), "JINN_AUDIT_CLI_ARGUMENTS="+string(encoded))
+	command := exec.CommandContext(ctx, executable, "-test.run=^TestCLIProcessHelper$")
+	command.Env = append(os.Environ(), "JINN_CLI_TEST_ARGUMENTS="+string(encoded))
 	stdin, err := command.StdinPipe()
 	if err != nil {
 		t.Fatal(err)
@@ -134,7 +134,7 @@ func runAuditMCPCLI(t *testing.T, input string, arguments ...string) (string, st
 	return string(response), stderr.String(), status
 }
 
-func TestAuditC1R02(t *testing.T) {
+func TestWebCLIUsageOutput(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {
 		name string
@@ -155,7 +155,7 @@ func TestAuditC1R02(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			stdout, stderr, status := runAuditCLI(t, "", test.args...)
+			stdout, stderr, status := runCLIRequest(t, "", test.args...)
 			if status != 1 {
 				t.Fatalf("status=%d stdout=%q stderr=%q", status, stdout, stderr)
 			}

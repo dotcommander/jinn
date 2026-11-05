@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-func writeExpiredAuditEntry(t *testing.T, cache *urlCache, index int) string {
+func writeExpiredCacheEntry(t *testing.T, cache *urlCache, index int) string {
 	t.Helper()
 	doc := sampleCachedDocument()
 	doc.URL = fmt.Sprintf("https://example.com/%d", index)
@@ -28,13 +28,13 @@ func writeExpiredAuditEntry(t *testing.T, cache *urlCache, index int) string {
 	return path
 }
 
-func TestAuditC5R01BoundedSweepAdvancesAndCloses(t *testing.T) {
+func TestCacheBoundedSweepAdvancesAndCloses(t *testing.T) {
 	t.Parallel()
 	cache := newURLCache(time.Hour, t.TempDir(), 1024)
 	t.Cleanup(cache.close)
 	var paths []string
 	for i := range 2 * cacheCleanupBatch {
-		paths = append(paths, writeExpiredAuditEntry(t, cache, i))
+		paths = append(paths, writeExpiredCacheEntry(t, cache, i))
 	}
 	cache.cleanup()
 	removed := 0
@@ -127,11 +127,11 @@ func TestCleanupFreshPrefixBoundedAndExpiredFallback(t *testing.T) {
 	}
 }
 
-func TestAuditC5R01FreshReplacementSurvivesStaleCleanup(t *testing.T) {
+func TestCacheFreshReplacementSurvivesStaleCleanup(t *testing.T) {
 	t.Parallel()
 	cache := newURLCache(time.Hour, t.TempDir(), 1024)
 	t.Cleanup(cache.close)
-	path := writeExpiredAuditEntry(t, cache, 0)
+	path := writeExpiredCacheEntry(t, cache, 0)
 	// The scanner may have observed the path before another cache owner replaces it.
 	other := newURLCache(time.Hour, cache.dir, 1024)
 	t.Cleanup(other.close)

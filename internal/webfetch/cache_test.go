@@ -212,7 +212,7 @@ func TestServiceFetchUsesURLCache(t *testing.T) {
 	}
 }
 
-func TestAuditC501CachedFinalURLRespectsCallerPolicy(t *testing.T) {
+func TestCachedFinalURLRespectsCallerPolicy(t *testing.T) {
 	t.Parallel()
 	const target = "https://example.com/article"
 	const endpoint = "https://reader.example"

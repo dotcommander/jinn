@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-func TestAuditC5R01ExpiredEntryIsRemoved(t *testing.T) {
+func TestCacheExpiredEntryIsRemoved(t *testing.T) {
 	t.Parallel()
 	cache := newURLCache(time.Hour, t.TempDir(), 1024)
 	t.Cleanup(cache.close)
@@ -44,7 +44,7 @@ func TestAuditC5R01ExpiredEntryIsRemoved(t *testing.T) {
 	}
 }
 
-func TestAuditC5R02StaticAndRenderedHTTPStatusAgree(t *testing.T) {
+func TestStaticAndRenderedHTTPStatusAgree(t *testing.T) {
 	t.Parallel()
 	for _, status := range []int{http.StatusNotFound, http.StatusInternalServerError} {
 		t.Run(fmt.Sprint(status), func(t *testing.T) {

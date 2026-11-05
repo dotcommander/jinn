@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestAuditC204ImageConditionalChecksum(t *testing.T) {
+func TestImageConditionalChecksum(t *testing.T) {
 	t.Parallel()
 	e, dir := testEngine(t)
 	data := []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n', 0, 0, 0, 0}

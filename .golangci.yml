@@ -1,6 +1,5 @@
 # Self-contained golangci-lint config for jinn (v2).
-# Mirrors the ~/go/src workspace policy.
-# Source: ~/.claude/rules/go-lint-pack.md
+# Self-contained; mirrors the standard Go workspace lint policy.
 
 version: "2"
 

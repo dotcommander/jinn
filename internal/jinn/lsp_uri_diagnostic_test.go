@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestAuditC402ResourceOperations(t *testing.T) {
+func TestLSPResourceOperations(t *testing.T) {
 	t.Parallel()
 	var edit lspWorkspaceEdit
 	fixture := map[string]any{"documentChanges": []any{
@@ -44,7 +44,7 @@ func TestAuditC402ResourceOperations(t *testing.T) {
 	}
 }
 
-func TestAuditC403IdentifierCandidates(t *testing.T) {
+func TestLSPIdentifierCandidates(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {
 		name, text, symbol string
@@ -73,14 +73,14 @@ func TestAuditC403IdentifierCandidates(t *testing.T) {
 	}
 }
 
-func TestAuditC404WindowsDriveEncoding(t *testing.T) {
+func TestWindowsDriveURIEncoding(t *testing.T) {
 	t.Parallel()
 	if got := pathToURI(`C:\work\a b#%.go`); got != "file:///C:/work/a%20b%23%25.go" {
 		t.Fatalf("Windows file URI = %q", got)
 	}
 }
 
-func TestAuditC404PlatformRoundTrips(t *testing.T) {
+func TestFileURIPlatformRoundTrips(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct{ goos, path, uri string }{
 		{"windows", `C:\work\a b#%é.go`, "file:///C:/work/a%20b%23%25%C3%A9.go"},
@@ -105,7 +105,7 @@ func TestAuditC404PlatformRoundTrips(t *testing.T) {
 	}
 }
 
-func TestAuditC4I01MalformedOptionalData(t *testing.T) {
+func TestDiagnosticTargetURLMalformedData(t *testing.T) {
 	t.Parallel()
 	for _, value := range []any{nil, "bad", map[string]any{"href": 42}, map[string]any{"href": "%invalid"}, map[string]any{"href": "javascript:alert(1)"}} {
 		if got := diagnosticTargetURL(value); got != "" {
@@ -122,7 +122,7 @@ func TestAuditC4I01MalformedOptionalData(t *testing.T) {
 	}
 }
 
-func TestAuditC4I01DiagnosticCodeDescription(t *testing.T) {
+func TestDiagnosticCodeDescriptionURL(t *testing.T) {
 	t.Parallel()
 	var diagnostics []lspDiagnostic
 	fixture := []map[string]any{{"code": 42, "message": "problem", "codeDescription": map[string]any{"href": "https://example.test/rule/42"}}}

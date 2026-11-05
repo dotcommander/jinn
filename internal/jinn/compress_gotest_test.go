@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestCompressAuditC302(t *testing.T) {
+func TestCompressGoTestOutput(t *testing.T) {
 	t.Parallel()
 	base := "=== RUN   TestOne\n--- PASS: TestOne (0.00s)\n=== RUN   TestTwo\n--- PASS: TestTwo (0.00s)\n=== RUN   TestThree\n--- PASS: TestThree (0.00s)\n"
 	for _, tc := range []struct {

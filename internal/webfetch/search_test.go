@@ -100,7 +100,7 @@ func TestBraveSearchSupportsDomainFiltersAsSiteQueries(t *testing.T) {
 	}
 }
 
-func TestAuditC503SearchDomainsAreHostnames(t *testing.T) {
+func TestSearchDomainsAreHostnames(t *testing.T) {
 	t.Parallel()
 	for _, host := range []string{"go.dev", "sub.example.com", "a-b.example", "XN--BCHER-KVA.example", "localhost"} {
 		if _, err := validateSearchRequest(SearchRequest{Query: "go", IncludeDomains: []string{host}}, DefaultSearchLimit); err != nil {

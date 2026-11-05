@@ -14,40 +14,40 @@ import (
 	"time"
 )
 
-func TestAuditC401HungServerProcess(t *testing.T) {
-	if len(os.Args) > 1 && os.Args[len(os.Args)-1] == "jinn-audit-hung-lsp" {
+func TestHungLSPServerProcess(t *testing.T) {
+	if len(os.Args) > 1 && os.Args[len(os.Args)-1] == "jinn-test-hung-lsp" {
 		_, _ = io.Copy(io.Discard, os.Stdin)
 		os.Exit(0)
 	}
 	t.Parallel()
 }
 
-type auditLSPWritePipe struct {
+type lspWritePipe struct {
 	io.WriteCloser
 	closed  atomic.Bool
 	cleanup chan struct{}
 	once    sync.Once
 }
 
-func (pipe *auditLSPWritePipe) Close() error {
+func (pipe *lspWritePipe) Close() error {
 	pipe.closed.Store(true)
 	return pipe.WriteCloser.Close()
 }
-func (pipe *auditLSPWritePipe) Write(data []byte) (int, error) {
+func (pipe *lspWritePipe) Write(data []byte) (int, error) {
 	if pipe.closed.Load() {
 		pipe.once.Do(func() { close(pipe.cleanup) })
 	}
 	return pipe.WriteCloser.Write(data)
 }
 
-type auditLSPReadPipe struct {
+type lspReadPipe struct {
 	io.ReadCloser
 	closed atomic.Bool
 }
 
-func (pipe *auditLSPReadPipe) Close() error { pipe.closed.Store(true); return pipe.ReadCloser.Close() }
+func (pipe *lspReadPipe) Close() error { pipe.closed.Store(true); return pipe.ReadCloser.Close() }
 
-func TestAuditC401TimeoutCleanup(t *testing.T) {
+func TestLSPTimeoutCleansUpProcess(t *testing.T) {
 	t.Parallel()
 	if testing.Short() {
 		t.Skip("controlled subprocess integration")
@@ -59,20 +59,20 @@ func TestAuditC401TimeoutCleanup(t *testing.T) {
 			t.Cleanup(func() { _ = engine.Close() })
 			engine.LSPTimeoutSec = 1
 			writeLSPFile(t, engine.workDir, "source.go")
-			var stdin *auditLSPWritePipe
-			var stdout *auditLSPReadPipe
+			var stdin *lspWritePipe
+			var stdout *lspReadPipe
 			reaped := make(chan struct{})
 			launcher := func(ctx context.Context, _ []string) (lspProc, error) {
 				executable, err := os.Executable()
 				if err != nil {
 					return lspProc{}, err
 				}
-				proc, err := launchLSP(ctx, []string{executable, "-test.run=^TestAuditC401HungServerProcess$", "--", "jinn-audit-hung-lsp"}, os.Environ())
+				proc, err := launchLSP(ctx, []string{executable, "-test.run=^TestHungLSPServerProcess$", "--", "jinn-test-hung-lsp"}, os.Environ())
 				if err != nil {
 					return lspProc{}, err
 				}
-				stdin = &auditLSPWritePipe{WriteCloser: proc.stdin, cleanup: make(chan struct{})}
-				stdout = &auditLSPReadPipe{ReadCloser: proc.stdout}
+				stdin = &lspWritePipe{WriteCloser: proc.stdin, cleanup: make(chan struct{})}
+				stdout = &lspReadPipe{ReadCloser: proc.stdout}
 				wait := proc.wait
 				proc.stdin, proc.stdout = stdin, stdout
 				proc.wait = func() error { err := wait(); close(reaped); return err }
@@ -110,7 +110,7 @@ func TestAuditC401TimeoutCleanup(t *testing.T) {
 	}
 }
 
-func TestAuditC4R01DiskSnapshots(t *testing.T) {
+func TestLSPDiskSnapshotDiagnostics(t *testing.T) {
 	t.Parallel()
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX executable fixture; no native Windows claim")

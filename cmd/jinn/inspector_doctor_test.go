@@ -16,7 +16,7 @@ import (
 	"github.com/dotcommander/jinn/internal/jinn"
 )
 
-func TestAuditC101(t *testing.T) {
+func TestInspectorRunOriginAndContentType(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {
 		name, origin, site, contentType, host string
@@ -37,7 +37,7 @@ func TestAuditC101(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
-			engine := jinn.New(root, "audit")
+			engine := jinn.New(root, "test")
 			t.Cleanup(func() { _ = engine.Close() })
 			request := httptest.NewRequest(http.MethodPost, "http://localhost:8787/api/run", strings.NewReader(`{"tool":"write_file","args":{"path":"probe.txt","content":"probe","if_absent":true}}`))
 			if test.host != "" {
@@ -49,7 +49,7 @@ func TestAuditC101(t *testing.T) {
 			request.Header.Set("Sec-Fetch-Site", test.site)
 			request.Header.Set("Content-Type", test.contentType)
 			response := httptest.NewRecorder()
-			newInspectorHandler(engine, "audit").ServeHTTP(response, request)
+			newInspectorHandler(engine, "test").ServeHTTP(response, request)
 			if response.Code != test.status {
 				t.Fatalf("status=%d want=%d: %s", response.Code, test.status, response.Body)
 			}
@@ -73,7 +73,7 @@ func TestAuditC101(t *testing.T) {
 	})
 }
 
-func TestAuditC102(t *testing.T) {
+func TestDoctorModeMismatchWindows(t *testing.T) {
 	t.Parallel()
 	if doctorModeMismatch("windows", 0o666, 0o600) || doctorModeMismatch("windows", 0o777, 0o700) {
 		t.Fatal("Windows mode bits interpreted as ACL failures")
@@ -83,7 +83,7 @@ func TestAuditC102(t *testing.T) {
 	}
 }
 
-func TestAuditC103(t *testing.T) {
+func TestQuestionnaireConsolePaths(t *testing.T) {
 	t.Parallel()
 	for _, paths := range [][2]string{{"/dev/tty", "/dev/tty"}, {"CONIN$", "CONOUT$"}} {
 		t.Run(paths[0], func(t *testing.T) {
@@ -133,7 +133,7 @@ func TestAuditC103(t *testing.T) {
 	}
 }
 
-func TestAuditC104(t *testing.T) {
+func TestRenderMCPExplorerHumanEscapes(t *testing.T) {
 	t.Parallel()
 	value := map[string]string{"text": "newline\nbackslash\\quote\"Unicode日本語\x1b[31m\u202e\U0001d173"}
 	encoded, err := renderMCPExplorerHuman(value)
@@ -154,7 +154,7 @@ func TestAuditC104(t *testing.T) {
 	}
 }
 
-func TestAuditC107(t *testing.T) {
+func TestDoctorCommandExecutable(t *testing.T) {
 	t.Parallel()
 	command := "go"
 	if err := doctorCommandExecutable(command); err != nil {
@@ -174,7 +174,7 @@ func TestAuditC107(t *testing.T) {
 	}
 }
 
-func TestAuditC1I01(t *testing.T) {
+func TestDecodeQuestionnaireExample(t *testing.T) {
 	t.Parallel()
 	questionnaire, err := jinn.DecodeQuestionnaire([]byte(questionnaireJSON))
 	if err != nil {

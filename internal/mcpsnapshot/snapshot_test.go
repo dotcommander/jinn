@@ -113,7 +113,7 @@ func TestMetadataLintSizeAndControlLimits(t *testing.T) {
 	}
 }
 
-func TestAuditC403SnapshotRejectsOversizedInput(t *testing.T) {
+func TestSnapshotRejectsOversizedInput(t *testing.T) {
 	// t.Setenv changes process-global state; this test must remain serial.
 	t.Setenv("JINN_CONFIG_DIR", t.TempDir())
 	path, err := Path("local")

@@ -18,7 +18,7 @@ import (
 	"github.com/voocel/mcp-sdk-go/protocol"
 )
 
-func TestMCPAuditC101InitializeNegotiation(t *testing.T) {
+func TestMCPInitializeNegotiation(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct{ name, params, version string }{
 		{"bare", `{}`, protocol.Version},
@@ -57,7 +57,7 @@ func TestMCPAuditC101InitializeNegotiation(t *testing.T) {
 	}
 }
 
-func TestLegacyAuditC102InterleavedPing(t *testing.T) {
+func TestLegacyMCPInterleavedPing(t *testing.T) {
 	t.Parallel()
 	input := strings.Join([]string{
 		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{"elicitation":{"form":{}}}}}`,
@@ -90,7 +90,7 @@ func TestLegacyAuditC102InterleavedPing(t *testing.T) {
 	}
 }
 
-func TestMCPHTTPAuditC103UncooperativeHandlerRetainsEngine(t *testing.T) {
+func TestMCPHTTPUncooperativeHandlerRetainsEngine(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "probe.txt"), []byte("available"), 0o600); err != nil {
@@ -153,7 +153,7 @@ func TestMCPHTTPAuditC103UncooperativeHandlerRetainsEngine(t *testing.T) {
 	<-requestDone
 }
 
-func TestMCPExplorerAuditC104InvalidPointerBeforeCall(t *testing.T) {
+func TestMCPExplorerInvalidPointerBeforeCall(t *testing.T) {
 	t.Parallel()
 	for _, pointer := range []string{"invalid", "/a~2b"} {
 		t.Run(pointer, func(t *testing.T) {
@@ -193,7 +193,7 @@ func TestMCPExplorerAuditC104InvalidPointerBeforeCall(t *testing.T) {
 	}
 }
 
-func TestMCPExplorerAuditC105ErrorMaxBytes(t *testing.T) {
+func TestMCPExplorerErrorMaxBytes(t *testing.T) {
 	t.Parallel()
 	output := mcpExplorerCallOutput{ResultType: protocol.ResultTypeComplete, IsError: true, Content: protocol.ContentList{protocol.NewTextContent("E_TOOL: " + strings.Repeat("long error ", 1000))}}
 	for _, format := range []string{mcpExplorerFormatJSON, mcpExplorerFormatHuman} {

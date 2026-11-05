@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestAuditC301GitDiffOutput(t *testing.T) {
+func TestCommandRiskGitDiffOutput(t *testing.T) {
 	t.Parallel()
 
 	for _, tc := range []struct {

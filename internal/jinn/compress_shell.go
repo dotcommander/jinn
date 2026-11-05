@@ -134,7 +134,6 @@ func compressShellOutput(raw, command string) (out string) {
 		}
 	case "git":
 		raw = condenseGitLog(raw)
-		// TODO: golangci-lint/eslint/tsc -> group findings by file. (Modest gain, fragile parsing — deferred.)
 	}
 
 	out, _ = defaultCompressor.Compress(raw, "run_shell")

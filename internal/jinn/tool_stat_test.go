@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-func TestAuditC205PartialSampleDoesNotClaimLines(t *testing.T) {
+func TestStatPartialSampleDoesNotClaimLines(t *testing.T) {
 	t.Parallel()
 	e, dir := testEngine(t)
 	writeTestFile(t, dir, "large.txt", strings.Repeat("a\n", 5000))

@@ -16,7 +16,7 @@ import (
 	"time"
 )
 
-func TestAuditC5NativeChromeLocalSafetyAndStatus(t *testing.T) {
+func TestNativeChromeLocalSafetyAndStatus(t *testing.T) {
 	t.Parallel()
 	if testing.Short() {
 		t.Skip("native browser integration")

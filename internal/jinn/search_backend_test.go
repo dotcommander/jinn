@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-func TestAuditC201BackendFailureAndNoMatch(t *testing.T) {
+func TestSearchBackendFailureAndNoMatch(t *testing.T) {
 	t.Parallel()
 	e, dir := testEngine(t)
 	writeTestFile(t, dir, "a.txt", "needle\n")
@@ -45,7 +45,7 @@ func TestAuditC201BackendFailureAndNoMatch(t *testing.T) {
 	}
 }
 
-func TestAuditC202HyphenatedContext(t *testing.T) {
+func TestSearchHyphenatedContext(t *testing.T) {
 	t.Parallel()
 	e, dir := testEngine(t)
 	writeTestFile(t, dir, "my-file.go", "before\nMATCH\nafter\n")
@@ -62,7 +62,7 @@ func TestAuditC202HyphenatedContext(t *testing.T) {
 	}
 }
 
-func TestAuditC203IncludeBeforeFileLimit(t *testing.T) {
+func TestSearchIncludeBeforeFileLimit(t *testing.T) {
 	t.Parallel()
 	e, dir := testEngine(t)
 	for i := range 60 {

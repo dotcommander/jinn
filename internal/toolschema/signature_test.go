@@ -30,7 +30,7 @@ func TestRender(t *testing.T) {
 	}
 }
 
-func TestAuditC402RootCompositionFallsBack(t *testing.T) {
+func TestRootCompositionFallsBack(t *testing.T) {
 	t.Parallel()
 	for _, composition := range []string{"oneOf", "anyOf", "allOf"} {
 		t.Run(composition, func(t *testing.T) {

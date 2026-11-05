@@ -7,6 +7,19 @@ and jinn adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.16.1] - 2026-11-05
+
+### Changed
+
+- Rename audit/investigation-named test files and functions to behavior-based
+  names across `cmd/jinn`, `internal/jinn`, `internal/mcpbatch`, and
+  `internal/webfetch`; no test behavior changes.
+- Remove private workspace references from public docs: drop the personal
+  paths at the end of `AGENTS.md`, the personal email from `SECURITY.md`,
+  the local lint-rule source from `.golangci.yml`, and the `dc-jinn`
+  extension references from the pi-go-tool-bridge example.
+- Drop a deferred-work TODO from the shell-output compressor.
+
 ## [0.16.0] - 2026-11-05
 
 ### Added

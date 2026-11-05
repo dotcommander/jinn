@@ -38,7 +38,7 @@ func TestCommandEnvironmentRemovesToken(t *testing.T) {
 	}
 }
 
-func TestAuditC401CommandEnvironmentPlatformSemantics(t *testing.T) {
+func TestCommandEnvironmentPlatformSemantics(t *testing.T) {
 	t.Parallel()
 	environ := []string{"KEEP=one", "jinn_mcp_http_token=mixed", HTTPTokenEnv + "=exact", "OTHER=two"}
 	for _, test := range []struct {

@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-func TestAuditC201(t *testing.T) {
+func TestDiffFirstChangedLine(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name, old, new string
@@ -32,7 +32,7 @@ func TestAuditC201(t *testing.T) {
 	}
 }
 
-func TestAuditC202(t *testing.T) {
+func TestGenerateDiff(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct{ name, old, match, replacement string }{
 		{"delete", "a\nb\nc\n", "a\n", ""},
@@ -56,7 +56,7 @@ func TestAuditC202(t *testing.T) {
 	}
 }
 
-func TestAuditC203(t *testing.T) {
+func TestFuzzyOverlapIntervals(t *testing.T) {
 	t.Parallel()
 	original := "“a”   \r\nsecond\r\n“third”\r\n"
 	entries := []rawEntry{
@@ -73,7 +73,7 @@ func TestAuditC203(t *testing.T) {
 	}
 }
 
-func TestAuditC204(t *testing.T) {
+func TestMutationPreconditionsDryRunAndChecksum(t *testing.T) {
 	t.Parallel()
 	e, dir := testEngine(t)
 	e.requireMutationPreconditions = true
@@ -96,7 +96,7 @@ func TestAuditC204(t *testing.T) {
 	}
 }
 
-func TestAuditC205(t *testing.T) {
+func TestBlockCutFallback(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct{ name, literal string }{
 		{"char", "x := '}'"},
@@ -124,7 +124,7 @@ func TestAuditC205(t *testing.T) {
 	}
 }
 
-func TestAuditC2I01(t *testing.T) {
+func TestAppendEnsuresTrailingNewline(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct{ old, want string }{
 		{"a\r\n", "a\r\nb\r\n"},
@@ -139,7 +139,7 @@ func TestAuditC2I01(t *testing.T) {
 	}
 }
 
-func TestAuditC2I02(t *testing.T) {
+func TestPartialApplyErrorIncludesUndoIDs(t *testing.T) {
 	t.Parallel()
 	err := partialApplyErr("patch", []appliedRef{
 		{path: "a", resolved: "/root/a", undoID: "one"},
@@ -152,7 +152,7 @@ func TestAuditC2I02(t *testing.T) {
 	}
 }
 
-func TestAuditC2R01(t *testing.T) {
+func TestSpillRemainderRegistered(t *testing.T) {
 	// Serial: the spill registry root is process-global environment state.
 	t.Setenv("JINN_CONFIG_DIR", t.TempDir())
 	lines := []string{"one", strings.Repeat("界", 10000), "three"}
@@ -174,7 +174,7 @@ func TestAuditC2R01(t *testing.T) {
 	}
 }
 
-func TestAuditC2R02(t *testing.T) {
+func TestMultiEditDuplicateTargetPreflight(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct{ name, body string }{
 		{"independent", "*** Update File: a\n@@\n-one\n+ONE\n*** Update File: a\n@@\n-two\n+TWO\n"},
@@ -207,7 +207,7 @@ func TestAuditC2R02(t *testing.T) {
 	}
 }
 
-func TestAuditC2R02OrderedChunks(t *testing.T) {
+func TestMultiEditOrderedChunks(t *testing.T) {
 	t.Parallel()
 	e, dir := testEngine(t)
 	writeTestFile(t, dir, "a", "one\ntwo\nthree\n")

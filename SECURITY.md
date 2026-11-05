@@ -9,7 +9,6 @@ highest-priority issues.
 **Please report privately** via one of:
 
 - GitHub Security Advisories: https://github.com/dotcommander/jinn/security/advisories/new
-- Email: brujah@gmail.com
 
 Please do not open public issues for suspected vulnerabilities until a fix
 is available.

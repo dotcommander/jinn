@@ -12,7 +12,7 @@ import (
 	"unicode/utf8"
 )
 
-func TestAuditC301(t *testing.T) {
+func TestHistoryNestedIdentityAndEscape(t *testing.T) {
 	// Serial: isolates the process-wide history configuration.
 	e, dir := historyEngine(t)
 	if err := os.MkdirAll(filepath.Join(dir, "sub", "nested"), 0o700); err != nil {
@@ -55,7 +55,7 @@ func TestAuditC301(t *testing.T) {
 	}
 }
 
-func TestAuditC302(t *testing.T) {
+func TestPlanRecoveryEvidence(t *testing.T) {
 	t.Parallel()
 	e, _ := testEngine(t)
 	plan := &PlanTree{Root: "missing", Nodes: []PlanNode{
@@ -82,7 +82,7 @@ func TestAuditC302(t *testing.T) {
 	}
 }
 
-func TestAuditC303(t *testing.T) {
+func TestPlanToolMatchCondition(t *testing.T) {
 	t.Parallel()
 	e, dir := testEngine(t)
 	writeTestFile(t, dir, "text", "needle")
@@ -102,7 +102,7 @@ func TestAuditC303(t *testing.T) {
 	}
 }
 
-func TestAuditC304(t *testing.T) {
+func TestCommandFunctionRisk(t *testing.T) {
 	t.Parallel()
 	for _, command := range []string{"f() { rm -rf /fixture; }", "f() ( rm -rf /fixture )", "f() ( g() ( rm -rf /fixture ); g )", "f() ( rm -rf /fixture", "function f ( rm -rf /fixture )"} {
 		if risk, _ := ClassifyCommand(command); risk != RiskDangerous {
@@ -116,7 +116,7 @@ func TestAuditC304(t *testing.T) {
 	}
 }
 
-func TestAuditC3I01(t *testing.T) {
+func TestMemoryAbsentAndCanceledOpen(t *testing.T) {
 	// Serial: isolates the process-wide memory configuration.
 	t.Setenv("JINN_CONFIG_DIR", t.TempDir())
 	absent, _ := testEngine(t)
@@ -158,7 +158,7 @@ func TestAuditC3I01(t *testing.T) {
 	}
 }
 
-func TestAuditC3I02(t *testing.T) {
+func TestBoundPlanOpResultUTF8Boundary(t *testing.T) {
 	t.Parallel()
 	value := strings.Repeat("a", 1023) + "界end"
 	got := boundPlanOpResult(PlanOpResult{Result: value}).Result
@@ -167,7 +167,7 @@ func TestAuditC3I02(t *testing.T) {
 	}
 }
 
-func TestAuditC3R01(t *testing.T) {
+func TestPlanRegexSlashShorthand(t *testing.T) {
 	t.Parallel()
 	e, _ := testEngine(t)
 	for _, shorthand := range []string{`stdout =~ /a/b/`, `stdout =~ /a\/b/`, `stdout =~ /https://example\.com/path/`} {
@@ -194,7 +194,7 @@ func TestAuditC3R01(t *testing.T) {
 	}
 }
 
-func TestAuditC3R02(t *testing.T) {
+func TestExitCodeGrepScopedClassification(t *testing.T) {
 	t.Parallel()
 	for _, command := range []string{"grep missing file", "FOO=1 grep missing file", `"/usr/bin/grep" missing file`, `'/path with spaces/grep' missing file`, `env FOO=1 grep missing file`} {
 		class, _ := classifyExitCode(extractArgv0(command), 1)
@@ -216,7 +216,7 @@ func TestAuditC3R02(t *testing.T) {
 	}
 }
 
-func TestAuditC3R03(t *testing.T) {
+func TestMemoryDBPanicPropagation(t *testing.T) {
 	t.Parallel()
 	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "panic.db"))
 	if err != nil {

@@ -15,7 +15,7 @@ import (
 	"github.com/chromedp/cdproto/network"
 )
 
-func TestAuditC501RejectsSubresourcesWithoutCancelingDocument(t *testing.T) {
+func TestRenderRejectsSubresourcesWithoutCancelingDocument(t *testing.T) {
 	t.Parallel()
 	for _, resource := range []network.ResourceType{network.ResourceTypeImage, network.ResourceTypeScript, network.ResourceTypeDocument} {
 		for _, rawURL := range []string{"http://127.0.0.1/private", "data:image/png;base64,eA=="} {
@@ -46,7 +46,7 @@ func TestAuditC501RejectsSubresourcesWithoutCancelingDocument(t *testing.T) {
 	}
 }
 
-func TestAuditC502AttributeTokens(t *testing.T) {
+func TestAttributeTokens(t *testing.T) {
 	t.Parallel()
 	for _, marker := range []string{"apple", "appointment", "root-cause", "myapp", "reactive"} {
 		if got := classifyHTML(`<div id="` + marker + `">Static article</div>`); got != shellClassStatic {
@@ -63,7 +63,7 @@ func TestAuditC502AttributeTokens(t *testing.T) {
 	}
 }
 
-func TestAuditC504TunnelRefreshesIdleDeadlineAndCancels(t *testing.T) {
+func TestRenderTunnelRefreshesIdleDeadlineAndCancels(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		upstream, origin := net.Pipe()
@@ -97,7 +97,7 @@ func TestAuditC504TunnelRefreshesIdleDeadlineAndCancels(t *testing.T) {
 	})
 }
 
-func TestAuditC504IdleTunnelCloses(t *testing.T) {
+func TestRenderIdleTunnelCloses(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		upstream, origin := net.Pipe()

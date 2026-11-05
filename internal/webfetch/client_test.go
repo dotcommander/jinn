@@ -121,7 +121,7 @@ func TestClientTransportErrorReportsActualMethod(t *testing.T) {
 	}
 }
 
-func TestAuditC502GETRetryKeepsOriginalEmptyBody(t *testing.T) {
+func TestGETRetryKeepsOriginalEmptyBody(t *testing.T) {
 	t.Parallel()
 	client := NewClient(ClientConfig{})
 	calls := 0

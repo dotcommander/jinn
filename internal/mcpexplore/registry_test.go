@@ -82,7 +82,7 @@ func TestRegistryWritesPrivateDurableBackup(t *testing.T) {
 	}
 }
 
-func TestAuditC403RegistryRejectsOversizedInput(t *testing.T) {
+func TestRegistryRejectsOversizedInput(t *testing.T) {
 	// t.Setenv changes process-global state; this test must remain serial.
 	t.Setenv("JINN_CONFIG_DIR", t.TempDir())
 	path, err := RegistryPath()

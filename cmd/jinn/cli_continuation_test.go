@@ -9,7 +9,7 @@ import (
 	"github.com/dotcommander/jinn/internal/webfetch"
 )
 
-func TestAuditC503CLIContinuation(t *testing.T) {
+func TestCLIWebContinuation(t *testing.T) {
 	t.Parallel()
 	doc := webfetch.Document{Content: "abcdefghijk"}
 	var out bytes.Buffer

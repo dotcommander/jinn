@@ -15,7 +15,7 @@ import (
 	"github.com/dotcommander/jinn/internal/jinn"
 )
 
-func TestAuditC105(t *testing.T) {
+func TestInspectorServerGracefulAndForcedShutdown(t *testing.T) {
 	t.Parallel()
 	for _, forced := range []bool{false, true} {
 		name := "graceful"
@@ -87,13 +87,13 @@ func TestAuditC105(t *testing.T) {
 	}
 }
 
-func TestAuditC105UncooperativeHandlerRetainsEngine(t *testing.T) {
+func TestInspectorServerUncooperativeHandlerRetainsEngine(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "probe.txt"), []byte("still available"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	engine := jinn.New(root, "audit")
+	engine := jinn.New(root, "test")
 	entered, release := make(chan struct{}), make(chan struct{})
 	handlerResult, engineClosed := make(chan error, 1), make(chan error, 1)
 	srv := &http.Server{ReadHeaderTimeout: time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -154,7 +154,7 @@ func TestAuditC105UncooperativeHandlerRetainsEngine(t *testing.T) {
 	<-requestDone
 }
 
-func TestAuditC1R01(t *testing.T) {
+func TestInspectorSecurityHeadersLoopbackHosts(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {
 		host string
@@ -165,7 +165,7 @@ func TestAuditC1R01(t *testing.T) {
 			request := httptest.NewRequest("GET", "http://localhost/", nil)
 			request.Host = test.host
 			response := httptest.NewRecorder()
-			inspectorSecurityHeaders("audit", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			inspectorSecurityHeaders("test", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.WriteHeader(http.StatusNoContent)
 			})).ServeHTTP(response, request)
 			if response.Code != test.want {

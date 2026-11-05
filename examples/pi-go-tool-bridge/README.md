@@ -7,8 +7,8 @@ pi extensions are TypeScript. This example keeps the TypeScript to a thin shim:
 each tool spawns a small Go binary, hands it a JSON request on stdin, and reads a
 JSON response from stdout. **All the real logic lives in Go** — the place a Go
 developer is fluent — and the ~95 lines of TypeScript are boilerplate you copy
-once. This is the same pattern the production `jinn` binary uses (wrapped by the
-`dc-jinn` extension); this directory is the stripped-down teaching version.
+once. This is the same pattern the production `jinn` binary uses; this directory is
+the stripped-down teaching version.
 
 ## The wire contract
 
@@ -110,5 +110,4 @@ This example hardcodes two tools. For a real tool surface you don't want to
 hand-maintain schemas on both sides. The production `jinn` binary makes the Go
 side the single source of truth: it self-describes with `jinn --schema`
 (OpenAI function-calling format), so an extension can fetch the schema once at
-startup and register every tool dynamically. See the `jinn` binary and the
-`dc-jinn` extension for that production-scale variant of this same pattern.
+startup and register every tool dynamically. See the `jinn` binary for that production-scale variant of this same pattern.

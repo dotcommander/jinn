@@ -6,7 +6,7 @@ import (
 	"unicode/utf8"
 )
 
-func TestAuditC503ReconstructsCappedContent(t *testing.T) {
+func TestProjectionReconstructsCappedContent(t *testing.T) {
 	t.Parallel()
 	for _, content := range []string{"abcdefghijk", "😀😀😀\nlast", "a\r\nb\r\n", "a\n", "", "prefix\n" + strings.Repeat("é", 30) + "\nend"} {
 		var output strings.Builder
@@ -37,7 +37,7 @@ func TestAuditC503ReconstructsCappedContent(t *testing.T) {
 	}
 }
 
-func TestAuditC503RejectsInvalidCursorAndInsufficientBudget(t *testing.T) {
+func TestProjectionRejectsInvalidCursorAndBudget(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct{ line, offset, cap int }{{0, -1, 0}, {0, 1, 0}, {0, 6, 0}, {0, 0, 1}, {1, 1, 0}} {
 		if _, err := ProjectFetchContentAt("😀\n", "markdown", tc.line, tc.offset, OutputLimits{MaxBytes: tc.cap}); err == nil {
@@ -54,7 +54,7 @@ func TestAuditC503RejectsInvalidCursorAndInsufficientBudget(t *testing.T) {
 	}
 }
 
-func TestAuditC5I01IterativeHeaders(t *testing.T) {
+func TestProjectionIterativeHeaders(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct{ input, title, headings string }{
 		{"", "", ""},
