@@ -36,3 +36,8 @@ __pycache__/
 
 # Agent instructions (local only)
 CLAUDE.md
+
+# Agent artifacts (local only, never public)
+docs/specs/
+docs/similar.md
+docs/gsi-strengths-port.md
