@@ -38,13 +38,13 @@ func TestMCPAskUserQuestionSchemaIncludesValueAndRecommendation(t *testing.T) {
 
 func TestMCPAskUserQuestionRequiresElicitationCapability(t *testing.T) {
 	t.Parallel()
-	response := handleMCPServerTestLine(t, newMCPServer("test", jinn.ShellModeDisabled), mcpToolCallRequest(t, "ask", mcpAskUserTool, questionnaireArguments()))
+	response := handleMCPServerTestLine(t, newMCPServerWithProfileAndLogger("test", jinn.ShellModeDisabled, mcpProfileDiscover, nil, nil), mcpToolCallRequest(t, "ask", mcpAskUserTool, questionnaireArguments()))
 	assertMCPToolErrorContains(t, response, "form elicitation support")
 }
 
 func TestMCPAskUserQuestionCompletesMRTR(t *testing.T) {
 	t.Parallel()
-	srv := newMCPServer("test", jinn.ShellModeDisabled)
+	srv := newMCPServerWithProfileAndLogger("test", jinn.ShellModeDisabled, mcpProfileDiscover, nil, nil)
 	mcpClient := client.New(mem.New(srv), &client.Options{
 		Info: &protocol.Implementation{Name: "questionnaire-test", Version: "1"},
 		Elicitor: func(_ context.Context, params *protocol.ElicitParams) (*protocol.ElicitResult, error) {

@@ -186,7 +186,7 @@ func TestMCPHTTPAuthRejectsBeforeDispatch(t *testing.T) {
 
 func TestMCPHTTPHandlerAuthenticatesBeforeMCPValidation(t *testing.T) {
 	t.Parallel()
-	handler := newMCPHTTPHandler(newMCPServer("test", jinn.ShellModeDisabled), mcpHTTPConfig{
+	handler := newMCPHTTPHandler(newMCPServerWithProfileAndLogger("test", jinn.ShellModeDisabled, mcpProfileDiscover, nil, nil), mcpHTTPConfig{
 		addr:    "127.0.0.1:8788",
 		token:   "secret",
 		origins: []string{"https://allowed.example.com"},
@@ -211,7 +211,7 @@ func TestMCPHTTPHandlerAuthenticatesBeforeMCPValidation(t *testing.T) {
 
 func TestMCPHTTPDefaultProfileServesCompactSurface(t *testing.T) {
 	t.Parallel()
-	handler := newMCPHTTPHandler(newMCPServer("test", jinn.ShellModeDisabled), mcpHTTPConfig{addr: "127.0.0.1:8788"})
+	handler := newMCPHTTPHandler(newMCPServerWithProfileAndLogger("test", jinn.ShellModeDisabled, mcpProfileDiscover, nil, nil), mcpHTTPConfig{addr: "127.0.0.1:8788"})
 	status, body := mcpHTTPPost(t, handler, "/mcp", "server/discover", "", nil)
 	if status != http.StatusOK {
 		t.Fatalf("discover status = %d, body = %s", status, body)
@@ -254,7 +254,7 @@ func TestMCPHTTPReadOnlyProfileExecutesReadOnlyTool(t *testing.T) {
 		t.Fatalf("new engine: %v", err)
 	}
 	defer func() { _ = engine.Close() }()
-	handler := newMCPHTTPHandler(newMCPServerWithProfile("test", jinn.ShellModeUnsafe, mcpProfileReadOnly, engine), mcpHTTPConfig{addr: "127.0.0.1:8788", token: "secret"})
+	handler := newMCPHTTPHandler(newMCPServerWithProfileAndLogger("test", jinn.ShellModeUnsafe, mcpProfileReadOnly, engine, nil), mcpHTTPConfig{addr: "127.0.0.1:8788", token: "secret"})
 
 	headers := map[string]string{"Authorization": "Bearer secret"}
 	status, body := mcpHTTPPost(t, handler, "/mcp", "tools/call", `"name":"jinn_call","arguments":{"tool":"read_file","arguments":{"path":"hello.txt"},"compress":false}`, headers)
@@ -309,7 +309,7 @@ func TestMCPHTTPReadOnlyProfileExecutesReadOnlyTool(t *testing.T) {
 
 func TestMCPHTTPOriginRejectsUnlistedBrowser(t *testing.T) {
 	t.Parallel()
-	handler := newMCPHTTPHandler(newMCPServer("test", jinn.ShellModeDisabled), mcpHTTPConfig{
+	handler := newMCPHTTPHandler(newMCPServerWithProfileAndLogger("test", jinn.ShellModeDisabled, mcpProfileDiscover, nil, nil), mcpHTTPConfig{
 		addr:    "127.0.0.1:8788",
 		origins: []string{"https://allowed.example.com"},
 	})
@@ -329,7 +329,7 @@ func TestMCPHTTPOriginRejectsUnlistedBrowser(t *testing.T) {
 
 func TestMCPHTTPOriginRejectsBrowserWhenUnconfigured(t *testing.T) {
 	t.Parallel()
-	handler := newMCPHTTPHandler(newMCPServer("test", jinn.ShellModeDisabled), mcpHTTPConfig{addr: "127.0.0.1:8788"})
+	handler := newMCPHTTPHandler(newMCPServerWithProfileAndLogger("test", jinn.ShellModeDisabled, mcpProfileDiscover, nil, nil), mcpHTTPConfig{addr: "127.0.0.1:8788"})
 	status, body := mcpHTTPPost(t, handler, "/mcp", "server/discover", "", map[string]string{"Origin": "http://localhost:3000"})
 	if status != http.StatusForbidden || !strings.Contains(string(body), "origin not allowed") {
 		t.Fatalf("unconfigured browser origin status/body = %d/%s", status, body)

@@ -13,7 +13,7 @@ import (
 
 func TestMCPRouteReturnsAdaptiveExecutionPacket(t *testing.T) {
 	t.Parallel()
-	srv := newMCPServerWithProfile("test", jinn.ShellModeDisabled, mcpProfileDiscover, nil)
+	srv := newMCPServerWithProfileAndLogger("test", jinn.ShellModeDisabled, mcpProfileDiscover, nil, nil)
 	response := handleMCPServerTestLine(t, srv, mcpToolCallRequest(t, "route", mcpRouteTool, map[string]any{
 		"need": "read a file", "include_call": true,
 	}))
@@ -34,7 +34,7 @@ func TestMCPCallPreservesStructuredRecovery(t *testing.T) {
 	t.Parallel()
 	routeID := strings.Repeat("a", 32)
 	engine, _ := newMCPTestEngine(t)
-	srv := newMCPServerWithProfile("test", jinn.ShellModeDisabled, mcpProfileReadOnly, engine)
+	srv := newMCPServerWithProfileAndLogger("test", jinn.ShellModeDisabled, mcpProfileReadOnly, engine, nil)
 	response := handleMCPServerTestLine(t, srv, mcpToolCallRequest(t, "call", mcpCallTool, map[string]any{
 		"tool": "read_file", "route_id": routeID, "arguments": map[string]any{"path": "missing.txt"},
 	}))
@@ -55,7 +55,7 @@ func TestMCPCallPreservesStructuredRecovery(t *testing.T) {
 func TestMCPCallRejectsUntrustedRouteID(t *testing.T) {
 	t.Parallel()
 	engine, _ := newMCPTestEngine(t)
-	srv := newMCPServerWithProfile("test", jinn.ShellModeDisabled, mcpProfileReadOnly, engine)
+	srv := newMCPServerWithProfileAndLogger("test", jinn.ShellModeDisabled, mcpProfileReadOnly, engine, nil)
 	response := handleMCPServerTestLine(t, srv, mcpToolCallRequest(t, "call", mcpCallTool, map[string]any{
 		"tool": "read_file", "route_id": "private.txt", "arguments": map[string]any{"path": "missing.txt"},
 	}))

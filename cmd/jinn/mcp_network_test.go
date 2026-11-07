@@ -60,7 +60,7 @@ func TestMCPNetworkCallIsOpenWorld(t *testing.T) {
 		t.Fatalf("new engine: %v", err)
 	}
 	t.Cleanup(func() { _ = engine.Close() })
-	resp := handleMCPServerTestLine(t, newMCPServerWithProfile("test", jinn.ShellModeDisabled, mcpProfileNetwork, engine), `{"jsonrpc":"2.0","id":"tools","method":"tools/list","params":{`+currentMCPMeta+`}}`)
+	resp := handleMCPServerTestLine(t, newMCPServerWithProfileAndLogger("test", jinn.ShellModeDisabled, mcpProfileNetwork, engine, nil), `{"jsonrpc":"2.0","id":"tools","method":"tools/list","params":{`+currentMCPMeta+`}}`)
 	tools := resp["result"].(map[string]any)["tools"].([]any)
 	for _, raw := range tools {
 		tool := raw.(map[string]any)

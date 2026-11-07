@@ -169,7 +169,7 @@ func TestMCPReadOnlyProfileAddsCallToolWithReadOnlyAllowlist(t *testing.T) {
 	}
 	defer func() { _ = engine.Close() }()
 
-	resp := handleMCPServerTestLine(t, newMCPServerWithProfile("test", jinn.ShellModeDisabled, mcpProfileReadOnly, engine), `{"jsonrpc":"2.0","id":"tools","method":"tools/list","params":{`+currentMCPMeta+`}}`)
+	resp := handleMCPServerTestLine(t, newMCPServerWithProfileAndLogger("test", jinn.ShellModeDisabled, mcpProfileReadOnly, engine, nil), `{"jsonrpc":"2.0","id":"tools","method":"tools/list","params":{`+currentMCPMeta+`}}`)
 	result := resp["result"].(map[string]any)
 	tools := result["tools"].([]any)
 	if len(tools) != 3 {
@@ -222,7 +222,7 @@ func TestMCPReadOnlyProfileCallExecutesReadOnlyToolAndRejectsMutation(t *testing
 		t.Fatalf("new engine: %v", err)
 	}
 	defer func() { _ = engine.Close() }()
-	srv := newMCPServerWithProfile("test", jinn.ShellModeDisabled, mcpProfileReadOnly, engine)
+	srv := newMCPServerWithProfileAndLogger("test", jinn.ShellModeDisabled, mcpProfileReadOnly, engine, nil)
 
 	readResp := handleMCPServerTestLine(t, srv, `{"jsonrpc":"2.0","id":"read","method":"tools/call","params":{`+currentMCPMeta+`,"name":"jinn_call","arguments":{"tool":"read_file","arguments":{"path":"hello.txt"},"compress":false}}}`)
 	readResult := readResp["result"].(map[string]any)
@@ -254,7 +254,7 @@ func TestMCPReadOnlyProfileForcesRouteAndShellPolicy(t *testing.T) {
 	}
 	defer func() { _ = engine.Close() }()
 
-	srv := newMCPServerWithProfile("test", jinn.ShellModeUnsafe, mcpProfileReadOnly, engine)
+	srv := newMCPServerWithProfileAndLogger("test", jinn.ShellModeUnsafe, mcpProfileReadOnly, engine, nil)
 	resp := handleMCPServerTestLine(t, srv, `{"jsonrpc":"2.0","id":"route","method":"tools/call","params":{`+currentMCPMeta+`,"name":"jinn_route","arguments":{"need":"write files and run shell commands","include_mutating":true}}}`)
 	result := resp["result"].(map[string]any)
 	if result["isError"] == true {
@@ -340,7 +340,7 @@ func TestMCPReadOnlyCallRejectsUnknownOuterArgument(t *testing.T) {
 	}
 	defer func() { _ = engine.Close() }()
 
-	resp := handleMCPServerTestLine(t, newMCPServerWithProfile("test", jinn.ShellModeDisabled, mcpProfileReadOnly, engine), `{"jsonrpc":"2.0","id":"call","method":"tools/call","params":{`+currentMCPMeta+`,"name":"jinn_call","arguments":{"tool":"read_file","unexpected":true}}}`)
+	resp := handleMCPServerTestLine(t, newMCPServerWithProfileAndLogger("test", jinn.ShellModeDisabled, mcpProfileReadOnly, engine, nil), `{"jsonrpc":"2.0","id":"call","method":"tools/call","params":{`+currentMCPMeta+`,"name":"jinn_call","arguments":{"tool":"read_file","unexpected":true}}}`)
 	assertMCPToolErrorContains(t, resp, "unknown field")
 }
 
@@ -411,7 +411,7 @@ func TestMCPCurrentRejectsMissingMeta(t *testing.T) {
 
 func handleCurrentMCPTestLine(t *testing.T, line string) map[string]any {
 	t.Helper()
-	return handleMCPServerTestLine(t, newMCPServer("test", jinn.ShellModeDisabled), line)
+	return handleMCPServerTestLine(t, newMCPServerWithProfileAndLogger("test", jinn.ShellModeDisabled, mcpProfileDiscover, nil, nil), line)
 }
 
 func handleMCPServerTestLine(t *testing.T, srv *server.Server, line string) map[string]any {
