@@ -10,7 +10,18 @@ import (
 // bounded content and a narrower-window hint. offsets carries absolute byte
 // line starts recorded by the cursor pass so the continuation can be resumed
 // by digest cursor; spill never produces a path.
-func byteTruncateResult(content string, startLine, total int, sequential bool, spill func(int) (string, error), offsets map[int]int64) *readContentResult {
+// byteTruncateParams bundles the byte-truncation window context.
+type byteTruncateParams struct {
+	content    string
+	startLine  int
+	total      int
+	sequential bool
+	spill      func(int) (string, error)
+	offsets    map[int]int64
+}
+
+func byteTruncateResult(params byteTruncateParams) *readContentResult {
+	content, startLine, total, sequential, spill, offsets := params.content, params.startLine, params.total, params.sequential, params.spill, params.offsets
 	if len(content) <= readMaxBytes {
 		return nil
 	}

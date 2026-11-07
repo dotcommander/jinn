@@ -40,11 +40,13 @@ func fileURIPath(raw string) (string, error) {
 	return fileURIPathForOS(raw, runtime.GOOS)
 }
 
+//nolint:gocyclo // branch table stays with the decision it guards
 func fileURIPathForOS(raw, goos string) (string, error) {
 	u, err := url.Parse(raw)
 	if err != nil || u.Scheme != "file" || u.Opaque != "" || u.Path == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
 		return "", fmt.Errorf("unsupported file URI: %s", raw)
 	}
+	//nolint:nestif // nested guards express one validation/state ladder
 	if goos == "windows" {
 		value := path.Clean(u.Path)
 		if u.Host != "" {

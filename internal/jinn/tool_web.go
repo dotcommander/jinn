@@ -26,6 +26,7 @@ func (e *Engine) webService() *webfetch.Service {
 	return e.web
 }
 
+//nolint:gocognit,revive // branchy by design; splitting would scatter one sequential algorithm
 func (e *Engine) dispatchWeb(ctx context.Context, args map[string]any, tool string) (*ToolResult, bool, error) {
 	switch tool {
 	case webFetchTool:
@@ -224,9 +225,9 @@ func dispatchWebView(doc webfetch.Document, args map[string]any, view string) (*
 		}
 		hits := make([]webfetch.ProbeHit, 0, len(clean))
 		for _, term := range clean {
-			hit, err := webfetch.ProbeDocument(doc.Content, term)
-			if err != nil {
-				return nil, true, mapWebError(err)
+			hit, probeErr := webfetch.ProbeDocument(doc.Content, term)
+			if probeErr != nil {
+				return nil, true, mapWebError(probeErr)
 			}
 			hits = append(hits, hit)
 		}

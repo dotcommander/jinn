@@ -1,7 +1,6 @@
 package webfetch
 
 import (
-	"fmt"
 	"strings"
 )
 
@@ -97,9 +96,4 @@ func endpointFor(cfg Config, name string) string {
 	default:
 		return ""
 	}
-}
-
-// unsupportedSearchProviderError preserves the historical error shape.
-func unsupportedName(name string) error {
-	return fmt.Errorf("unsupported search provider %q", name)
 }

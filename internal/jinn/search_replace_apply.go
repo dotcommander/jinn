@@ -280,7 +280,7 @@ func (e *Engine) srApplyWrites(fileResults []searchReplaceFileResult, pending []
 			updated:    p.updated,
 		}
 	}
-	if err := e.commitPreparedWrites("search_replace", len(pending), writes, nil); err != nil {
+	if err := e.commitPreparedWrites("search_replace", writes, nil); err != nil {
 		return nil, err
 	}
 	for _, p := range pending {

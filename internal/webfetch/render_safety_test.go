@@ -34,10 +34,10 @@ func TestRenderRejectsCrossHostMainDocument(t *testing.T) {
 	tracker := newRenderTracker(10, cancel)
 	tracker.mainFrameID = "main"
 	rejected := false
-	handlePausedRequestActions(
-		&fetch.EventRequestPaused{ResourceType: network.ResourceTypeDocument, FrameID: "main", Request: &network.Request{URL: "http://other.example/page"}},
-		target, true, tracker,
-		func() error { rejected = true; return nil }, func() error { t.Fatal("cross-host document continued"); return nil })
+	handlePausedRequestActions(pausedRequestActions{
+		event:  &fetch.EventRequestPaused{ResourceType: network.ResourceTypeDocument, FrameID: "main", Request: &network.Request{URL: "http://other.example/page"}},
+		target: target, allowPrivateNetworks: true, tracker: tracker,
+		reject: func() error { rejected = true; return nil }, proceed: func() error { t.Fatal("cross-host document continued"); return nil }})
 	if !rejected {
 		t.Fatal("cross-host main document was not rejected")
 	}
@@ -51,10 +51,10 @@ func TestRenderRejectsCrossHostMainDocument(t *testing.T) {
 	tracker = newRenderTracker(10, nil)
 	tracker.mainFrameID = "main"
 	continued := false
-	handlePausedRequestActions(
-		&fetch.EventRequestPaused{ResourceType: network.ResourceTypeImage, FrameID: "main", Request: &network.Request{URL: "http://cdn.example/image.png"}},
-		target, true, tracker,
-		func() error { t.Fatal("cross-host subresource rejected"); return nil }, func() error { continued = true; return nil })
+	handlePausedRequestActions(pausedRequestActions{
+		event:  &fetch.EventRequestPaused{ResourceType: network.ResourceTypeImage, FrameID: "main", Request: &network.Request{URL: "http://cdn.example/image.png"}},
+		target: target, allowPrivateNetworks: true, tracker: tracker,
+		reject: func() error { t.Fatal("cross-host subresource rejected"); return nil }, proceed: func() error { continued = true; return nil }})
 	if !continued || tracker.Err() != nil {
 		t.Fatalf("cross-host subresource: continued=%v error=%v", continued, tracker.Err())
 	}
@@ -89,8 +89,9 @@ func TestRenderRejectsSubresourcesWithoutCancelingDocument(t *testing.T) {
 			}
 			rejected := false
 			targetURL := "http://127.0.0.1/"
-			handlePausedRequestActions(&fetch.EventRequestPaused{ResourceType: resource, FrameID: frame, Request: &network.Request{URL: rawURL}}, mustParseURL(t, targetURL), false, tracker,
-				func() error { rejected = true; return nil }, func() error { t.Fatal("unsafe request continued"); return nil })
+			handlePausedRequestActions(pausedRequestActions{
+				event: &fetch.EventRequestPaused{ResourceType: resource, FrameID: frame, Request: &network.Request{URL: rawURL}}, target: mustParseURL(t, targetURL), allowPrivateNetworks: false, tracker: tracker,
+				reject: func() error { rejected = true; return nil }, proceed: func() error { t.Fatal("unsafe request continued"); return nil }})
 			if !rejected || (tracker.Err() != nil) != (resource == network.ResourceTypeDocument) {
 				t.Fatalf("resource %s: rejected=%v error=%v", resource, rejected, tracker.Err())
 			}
@@ -101,8 +102,9 @@ func TestRenderRejectsSubresourcesWithoutCancelingDocument(t *testing.T) {
 		}
 	}
 	tracker := newRenderTracker(10, nil)
-	handlePausedRequestActions(&fetch.EventRequestPaused{ResourceType: network.ResourceTypeImage, Request: &network.Request{URL: "http://127.0.0.1/"}}, mustParseURL(t, "http://127.0.0.1/"), false, tracker,
-		func() error { return errors.New("CDP unavailable") }, func() error { return nil })
+	handlePausedRequestActions(pausedRequestActions{
+		event: &fetch.EventRequestPaused{ResourceType: network.ResourceTypeImage, Request: &network.Request{URL: "http://127.0.0.1/"}}, target: mustParseURL(t, "http://127.0.0.1/"), allowPrivateNetworks: false, tracker: tracker,
+		reject: func() error { return errors.New("CDP unavailable") }, proceed: func() error { return nil }})
 	if tracker.Err() == nil {
 		t.Fatal("infrastructure failure was ignored")
 	}
@@ -134,7 +136,7 @@ func TestRenderTunnelRefreshesIdleDeadlineAndCancels(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		done := make(chan struct{})
 		go func() {
-			forwardProxyTunnel(ctx, upstream, downstream, strings.NewReader(""), newProxyBudget(0, 100, nil), 10*time.Second)
+			forwardProxyTunnel(ctx, proxyTunnelParams{upstream: upstream, downstream: downstream, buffered: strings.NewReader(""), budget: newProxyBudget(0, 100, nil), idle: 10 * time.Second})
 			close(done)
 		}()
 		for range 3 {
@@ -167,7 +169,7 @@ func TestRenderIdleTunnelCloses(t *testing.T) {
 		t.Cleanup(func() { _ = origin.Close(); _ = browser.Close() })
 		done := make(chan struct{})
 		go func() {
-			forwardProxyTunnel(t.Context(), upstream, downstream, strings.NewReader(""), newProxyBudget(0, 100, nil), time.Second)
+			forwardProxyTunnel(t.Context(), proxyTunnelParams{upstream: upstream, downstream: downstream, buffered: strings.NewReader(""), budget: newProxyBudget(0, 100, nil), idle: time.Second})
 			close(done)
 		}()
 		time.Sleep(2 * time.Second)

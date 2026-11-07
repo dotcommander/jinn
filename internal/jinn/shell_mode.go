@@ -21,7 +21,7 @@ func sanitizeExecutablePath(raw string) []string {
 		if _, ok := seen[clean]; ok {
 			continue
 		}
-		info, err := os.Stat(clean)
+		info, err := os.Stat(clean) //nolint:gosec // clean is already a sanitized PATH component; IsAbs checked above
 		if err != nil || !info.IsDir() {
 			continue
 		}

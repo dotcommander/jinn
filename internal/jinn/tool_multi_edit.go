@@ -66,6 +66,8 @@ func batchStatusError(statuses []editStatus, total int) error {
 // Validation is exhaustive: every member's failure is collected into
 // statuses (one code per member) instead of failing fast, so callers can
 // reject the whole batch with per-file reasons and publish nothing.
+//
+//nolint:gocognit,revive // branchy by design; splitting would scatter one sequential algorithm
 func (e *Engine) parseAndResolveEdits(editsRaw []interface{}, requireChecksums bool) (
 	entries []rawEntry,
 	originalContent map[string]string,

@@ -133,14 +133,15 @@ func (executor *executor) executeCall(index int) Result {
 	cancel()
 	output := Result{ID: call.ID, DurationMS: time.Since(started).Milliseconds()}
 	if err != nil {
-		if executor.ctx.Err() != nil {
+		switch {
+		case executor.ctx.Err() != nil:
 			output.Status = statusCanceled
 			output.Error = err.Error()
-		} else if errors.Is(callContextErr, context.DeadlineExceeded) || errors.Is(err, context.DeadlineExceeded) {
+		case errors.Is(callContextErr, context.DeadlineExceeded) || errors.Is(err, context.DeadlineExceeded):
 			output.Status, output.Error = statusTimeout, context.DeadlineExceeded.Error()
-		} else if errors.Is(err, context.Canceled) {
+		case errors.Is(err, context.Canceled):
 			output.Status, output.Error = statusCanceled, err.Error()
-		} else {
+		default:
 			output.Status, output.Error = statusTransportError, err.Error()
 		}
 		return output

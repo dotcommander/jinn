@@ -11,7 +11,7 @@ import (
 // restoreFixture creates target.txt with "original", performs the mutating
 // write to "v2" (recording the snapshot), and returns the snapshot id plus
 // the recorded before-hash. Must NOT use t.Parallel() (t.Setenv).
-func restoreFixture(t *testing.T, name string) (*Engine, string, string, string) {
+func restoreFixture(t *testing.T, name string) (*Engine, string, string) {
 	t.Helper()
 	e, workDir := undoEngine(t)
 	p := undoMkFile(t, e, workDir, name, "original")
@@ -19,7 +19,7 @@ func restoreFixture(t *testing.T, name string) (*Engine, string, string, string)
 		t.Fatalf("writeFile: %v", err)
 	}
 	id := firstSnapshotID(t, e)
-	return e, workDir, p, id
+	return e, p, id
 }
 
 func setLive(t *testing.T, e *Engine, p, content string) {
@@ -35,7 +35,7 @@ func setLive(t *testing.T, e *Engine, p, content string) {
 }
 
 func TestUndoRestore_IfVersionAccept(t *testing.T) {
-	e, _, p, id := restoreFixture(t, "v-accept.txt")
+	e, p, id := restoreFixture(t, "v-accept.txt")
 	// No observed change since the snapshot: live still matches the recorded
 	// pre-state identity, and the guard accepts.
 	setLive(t, e, p, "original")
@@ -50,7 +50,7 @@ func TestUndoRestore_IfVersionAccept(t *testing.T) {
 }
 
 func TestUndoRestore_IfVersionWrongSnapshot(t *testing.T) {
-	e, _, p, id := restoreFixture(t, "v-wrong.txt")
+	e, p, id := restoreFixture(t, "v-wrong.txt")
 	setLive(t, e, p, "original")
 	_, err := e.undoTool(args("action", "restore", "id", id, "if_version", strings.Repeat("0", 64)))
 	if err == nil {
@@ -64,7 +64,7 @@ func TestUndoRestore_IfVersionWrongSnapshot(t *testing.T) {
 }
 
 func TestUndoRestore_IfVersionStale(t *testing.T) {
-	e, _, p, id := restoreFixture(t, "v-stale.txt")
+	e, p, id := restoreFixture(t, "v-stale.txt")
 	// An unobserved change since the snapshot: the live digest no longer
 	// matches the recorded identity.
 	setLive(t, e, p, "v3-unobserved")
@@ -79,7 +79,7 @@ func TestUndoRestore_IfVersionStale(t *testing.T) {
 }
 
 func TestUndoRestore_IfVersionMutualExclusion(t *testing.T) {
-	e, _, _, id := restoreFixture(t, "v-mutex.txt")
+	e, _, id := restoreFixture(t, "v-mutex.txt")
 	_, err := e.undoTool(args("action", "restore", "id", id, "if_version", "x", "if_checksum", "y"))
 	if err == nil {
 		t.Fatal("expected mutual-exclusion error")
@@ -92,7 +92,7 @@ func TestUndoRestore_IfVersionMutualExclusion(t *testing.T) {
 }
 
 func TestUndoRestore_IfVersionRequiredWhenGuarded(t *testing.T) {
-	e, _, _, id := restoreFixture(t, "v-required.txt")
+	e, _, id := restoreFixture(t, "v-required.txt")
 	e.requireMutationPreconditions = true
 	_, err := e.undoTool(args("action", "restore", "id", id))
 	if err == nil {
@@ -104,7 +104,7 @@ func TestUndoRestore_IfVersionRequiredWhenGuarded(t *testing.T) {
 }
 
 func TestUndoRestore_IfVersionSatisfiesGuardedPrecondition(t *testing.T) {
-	e, _, p, id := restoreFixture(t, "v-satisfies.txt")
+	e, p, id := restoreFixture(t, "v-satisfies.txt")
 	e.requireMutationPreconditions = true
 	setLive(t, e, p, "original")
 	version := sha256HexBytes([]byte("original"))

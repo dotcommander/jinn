@@ -11,16 +11,16 @@ type preparedWrite struct {
 	updated    string
 }
 
-// commitPreparedWrites applies prepared writes in order. The legacy input count
-// is replaced by the canonical target count for partial-apply reporting when a
-// caller coalesces several inputs into one file write. committed runs after each
-// successful write and before the next preflight, preserving caller-owned timing.
-func (e *Engine) commitPreparedWrites(op string, total int, writes []preparedWrite, committed func(index int)) error {
+// commitPreparedWrites applies prepared writes in order, reporting partial
+// applies against the canonical target count (callers may coalesce several
+// inputs into one file write). committed runs after each successful write
+// and before the next preflight, preserving caller-owned timing.
+func (e *Engine) commitPreparedWrites(op string, writes []preparedWrite, committed func(index int)) error {
 	targets := make(map[string]bool)
 	for _, write := range writes {
 		targets[write.resolved] = true
 	}
-	total = len(targets)
+	total := len(targets)
 	var applied []appliedRef
 	for index, write := range writes {
 		unstarted := make([]string, 0, len(writes)-index-1)
@@ -28,11 +28,11 @@ func (e *Engine) commitPreparedWrites(op string, total int, writes []preparedWri
 			unstarted = append(unstarted, rest.path)
 		}
 		if err := e.verifyPreflightState(write.resolved, write.preContent, true); err != nil {
-			return partialApplyErr(op, applied, unstarted, write.path, total, fmt.Errorf("%s: %w", write.path, err))
+			return partialApplyErr(partialApplyInfo{op: op, applied: applied, unstarted: unstarted, failed: write.path, total: total}, fmt.Errorf("%s: %w", write.path, err))
 		}
 		id, err := e.snapshotAndWrite(write.resolved, write.path, op, write.preContent, write.updated)
 		if err != nil {
-			return partialApplyErr(op, applied, unstarted, write.path, total, fmt.Errorf("%s: %w", write.path, err))
+			return partialApplyErr(partialApplyInfo{op: op, applied: applied, unstarted: unstarted, failed: write.path, total: total}, fmt.Errorf("%s: %w", write.path, err))
 		}
 		applied = append(applied, appliedRef{path: write.path, undoID: id, resolved: write.resolved})
 		if committed != nil {

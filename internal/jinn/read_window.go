@@ -33,6 +33,8 @@ func oversizedLineResult(resolved, firstLine string, startLine, total int) *read
 // continuation hint when the window or the truncation strategy dropped
 // lines. offsets carries absolute byte line starts from the cursor pass;
 // spill never produces a path (resume is by cursor).
+//
+//nolint:gocyclo // branch table stays with the decision it guards
 func assembleReadResult(w readWindow, tr truncateResult, truncateMode string, spill func(int) (string, error), offsets map[int]int64) *readContentResult {
 	// Determine if the file itself is longer than the window requested.
 	windowTruncated := w.total > w.endLine

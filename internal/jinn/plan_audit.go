@@ -67,7 +67,7 @@ func (a *planAudit) appendEvent(ev planAuditEvent) {
 	_, _ = a.file.Write(append(line, '\n'))
 }
 
-func (a *planAudit) nodeEvent(nodeResult PlanNodeResult, edgesEvaluated, edgesMatched int) {
+func (a *planAudit) nodeEvent(nodeResult PlanNodeResult, _, _ int) {
 	a.appendEvent(planAuditEvent{
 		Type: "node", NodeID: nodeResult.NodeID, Depth: nodeResult.Depth, Ops: nodeResult.Ops,
 	})

@@ -15,6 +15,7 @@ import (
 	"github.com/dotcommander/jinn/internal/jinn"
 )
 
+//nolint:gocognit,revive // branchy by design; splitting would scatter one sequential algorithm
 func TestInspectorServerGracefulAndForcedShutdown(t *testing.T) {
 	t.Parallel()
 	for _, forced := range []bool{false, true} {
@@ -53,9 +54,9 @@ func TestInspectorServerGracefulAndForcedShutdown(t *testing.T) {
 			responseDone := make(chan string, 1)
 			go func() {
 				// Request completion ends this owned client goroutine.
-				response, err := http.Get("http://" + listener.Addr().String())
-				if err != nil {
-					responseDone <- err.Error()
+				response, getErr := http.Get("http://" + listener.Addr().String())
+				if getErr != nil {
+					responseDone <- getErr.Error()
 					return
 				}
 				body, _ := io.ReadAll(response.Body)
@@ -66,8 +67,8 @@ func TestInspectorServerGracefulAndForcedShutdown(t *testing.T) {
 			cancel()
 			if !forced {
 				select {
-				case err := <-done:
-					t.Fatalf("returned before handler completion: %v", err)
+				case doneErr := <-done:
+					t.Fatalf("returned before handler completion: %v", doneErr)
 				default:
 				}
 				close(release)

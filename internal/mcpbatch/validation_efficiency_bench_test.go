@@ -10,6 +10,8 @@ import (
 // BenchmarkValidateRepeatedToolSchema compares the HEAD compile-per-call path
 // with the per-preflight schema reuse path. It excludes manifest lookup and
 // execution; both variants validate the same 20 argument maps each iteration.
+//
+//nolint:gocognit // branchy by design; splitting would scatter one sequential algorithm
 func BenchmarkValidateRepeatedToolSchema(b *testing.B) {
 	tool := &protocol.Tool{Name: "read", InputSchema: protocol.JSONSchema{
 		"type": "object", "properties": map[string]any{

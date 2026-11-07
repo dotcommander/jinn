@@ -133,7 +133,7 @@ func listTruncationHint(reason string) string {
 	}
 }
 
-//nolint:gocognit,gocyclo,revive // directory traversal limits and rendering decisions share one ordered walk callback and result shape.
+//nolint:gocognit,gocyclo,revive,funlen // directory traversal limits and rendering decisions share one ordered walk callback and result shape.
 func (e *Engine) collectListEntries(ctx context.Context, resolved string, p listParams) (entries []string, total int, exact bool, reason string, symlinks map[string]string, err error) {
 	rootPath, err := e.rootRelative(resolved)
 	if err != nil {

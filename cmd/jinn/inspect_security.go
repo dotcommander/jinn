@@ -7,6 +7,9 @@ import (
 	"strings"
 )
 
+const inspectorHTTPS = "https"
+
+//nolint:gocyclo // branch table stays with the decision it guards
 func inspectorRunAllowed(w http.ResponseWriter, r *http.Request) bool {
 	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil || mediaType != "application/json" {
@@ -23,7 +26,7 @@ func inspectorRunAllowed(w http.ResponseWriter, r *http.Request) bool {
 	}
 	scheme := "http"
 	if r.TLS != nil {
-		scheme = "https"
+		scheme = inspectorHTTPS
 	}
 	origin, err := url.Parse(origins[0])
 	target := &url.URL{Scheme: scheme, Host: r.Host}
@@ -41,7 +44,7 @@ func inspectorOriginPort(value *url.URL) string {
 	if port := value.Port(); port != "" {
 		return port
 	}
-	if value.Scheme == "https" {
+	if value.Scheme == inspectorHTTPS {
 		return "443"
 	}
 	return "80"

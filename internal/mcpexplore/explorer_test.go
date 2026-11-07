@@ -51,8 +51,8 @@ func TestCommandEnvironmentPlatformSemantics(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			if got := strings.Join(commandEnvironment(environ, test.normalize), "\n"); got != test.want {
-				t.Fatalf("commandEnvironment = %q, want %q", got, test.want)
+			if got := strings.Join(commandEnvFiltered(environ, test.normalize), "\n"); got != test.want {
+				t.Fatalf("commandEnvFiltered = %q, want %q", got, test.want)
 			}
 		})
 	}

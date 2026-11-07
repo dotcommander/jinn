@@ -141,7 +141,7 @@ func planToolRisk(tool string, args map[string]any) (RiskLevel, error) {
 	return RiskSafe, nil
 }
 
-//nolint:gocognit,gocyclo,revive // validation follows the ordered graph invariants reported to callers.
+//nolint:gocognit,gocyclo,revive,funlen // validation follows the ordered graph invariants reported to callers.
 func validatePlan(plan *PlanTree) error {
 	if len(plan.Nodes) > maxPlanNodes {
 		return planInvalid("plan has %d nodes; maximum is %d", len(plan.Nodes), maxPlanNodes)
@@ -657,6 +657,7 @@ func (e *Engine) evaluateCondition(last PlanOpResult, cond Condition) (bool, err
 			raw = last.Result
 		}
 		var s string
+		//nolint:nestif // nested guards express one validation/state ladder
 		if cond.Extract != "" {
 			re := cond.CompiledExtract
 			if re == nil {
@@ -807,8 +808,6 @@ func (e *Engine) scopedPlanEngine(cwd string) (*Engine, error) {
 
 //nolint:funlen,gocognit,gocyclo,nestif,revive // execution ordering, cancellation, and first-match edges form one state machine.
 func (e *Engine) runPlanTree(ctx context.Context, plan *PlanTree) (result *PlanRunResult, err error) {
-	result = nil
-	err = nil
 	opCtx := planExecutionContextFor(ctx, plan)
 	if opCtx.depth > opCtx.maxDepth {
 		return newPlanRunResult(nil, nil, opCtx.depth, StopMaxDepth, 0, 0, 0, 0), nil

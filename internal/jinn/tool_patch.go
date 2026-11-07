@@ -230,7 +230,7 @@ func (e *Engine) applyPatchOps(resolved []resolvedOp, preflights []preflightResu
 		}
 		res, err := h.apply(e, r, preflights[i])
 		if err != nil {
-			return nil, partialApplyErr("apply_patch", applied, unstarted, r.op.path, len(targets), err)
+			return nil, partialApplyErr(partialApplyInfo{op: "apply_patch", applied: applied, unstarted: unstarted, failed: r.op.path, total: len(targets)}, err)
 		}
 		applied = append(applied, appliedRef{path: r.op.path, undoID: res.undoID, resolved: r.resolved})
 		results = append(results, res.summary)

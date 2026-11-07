@@ -188,6 +188,8 @@ func writeMCPExplorerCallFormattedOutput(writer io.Writer, format string, output
 
 // Error results remain errors even when their potentially enormous text is
 // shortened. Encode each candidate before comparing to the final-output cap.
+//
+//nolint:gocognit,gocyclo,revive // branchy by design; splitting would scatter one sequential algorithm
 func writeMCPExplorerErrorOutput(writer io.Writer, format string, output mcpExplorerCallOutput, options mcpExplorerProjectionOptions) error {
 	if format != "" && format != mcpExplorerFormatJSON && format != mcpExplorerFormatHuman {
 		return fmt.Errorf("invalid --format %q: use json or human", format)
@@ -216,7 +218,7 @@ func writeMCPExplorerErrorOutput(writer io.Writer, format string, output mcpExpl
 	minimal.StructuredContent = nil
 	if fields, ok := output.StructuredContent.(map[string]any); ok {
 		identity := make(map[string]any)
-		for _, key := range []string{"code", "error_code", "type"} {
+		for _, key := range []string{"code", "error_code", mcpResultType} {
 			if value, exists := fields[key]; exists {
 				identity[key] = value
 			}

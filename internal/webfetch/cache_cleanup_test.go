@@ -59,6 +59,7 @@ func TestCacheBoundedSweepAdvancesAndCloses(t *testing.T) {
 	}
 }
 
+//nolint:gocyclo // branch table stays with the decision it guards
 func TestCleanupFreshPrefixBoundedAndExpiredFallback(t *testing.T) {
 	t.Parallel()
 	cache := newURLCache(time.Hour, t.TempDir(), 128<<10)
@@ -79,14 +80,14 @@ func TestCleanupFreshPrefixBoundedAndExpiredFallback(t *testing.T) {
 		t.Fatalf("probe consumed %d of %d bytes", consumed, len(data))
 	}
 	cache.cleanup()
-	if _, err := os.Stat(path); err != nil {
-		t.Fatalf("fresh entry removed: %v", err)
+	if _, statErr := os.Stat(path); statErr != nil {
+		t.Fatalf("fresh entry removed: %v", statErr)
 	}
 
 	// A reordered, valid envelope still receives full validation and deletion.
 	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(data, &fields); err != nil {
-		t.Fatal(err)
+	if unmarshalErr := json.Unmarshal(data, &fields); unmarshalErr != nil {
+		t.Fatal(unmarshalErr)
 	}
 	freshStoredAt := fields["stored_at"]
 	fields["stored_at"], err = json.Marshal(time.Now().Add(-2 * cache.ttl))

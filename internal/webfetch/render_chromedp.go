@@ -199,16 +199,32 @@ func watchRenderEvents[E any](ctx context.Context, event cdp.Event[E], tracker *
 }
 
 func handlePausedRequest(ctx context.Context, event *fetch.EventRequestPaused, target *url.URL, allowPrivateNetworks bool, tracker *renderTracker) {
-	handlePausedRequestActions(event, target, allowPrivateNetworks, tracker, func() error {
-		_, err := chromedp.Call(ctx, fetch.FailRequest, fetch.FailRequestParams{RequestID: event.RequestID, ErrorReason: network.ErrorReasonBlockedByClient})
-		return err
-	}, func() error {
-		_, err := chromedp.Call(ctx, fetch.ContinueRequest, fetch.ContinueRequestParams{RequestID: event.RequestID})
-		return err
+	handlePausedRequestActions(pausedRequestActions{
+		event: event, target: target, allowPrivateNetworks: allowPrivateNetworks, tracker: tracker,
+		reject: func() error {
+			_, err := chromedp.Call(ctx, fetch.FailRequest, fetch.FailRequestParams{RequestID: event.RequestID, ErrorReason: network.ErrorReasonBlockedByClient})
+			return err
+		},
+		proceed: func() error {
+			_, err := chromedp.Call(ctx, fetch.ContinueRequest, fetch.ContinueRequestParams{RequestID: event.RequestID})
+			return err
+		},
 	})
 }
 
-func handlePausedRequestActions(event *fetch.EventRequestPaused, target *url.URL, allowPrivateNetworks bool, tracker *renderTracker, reject, proceed func() error) {
+// pausedRequestActions bundles one paused-request decision: the event, the
+// validated target + network policy, the tracker, and the reject/proceed
+// callbacks that answer the browser.
+type pausedRequestActions struct {
+	event                *fetch.EventRequestPaused
+	target               *url.URL
+	allowPrivateNetworks bool
+	tracker              *renderTracker
+	reject, proceed      func() error
+}
+
+func handlePausedRequestActions(actions pausedRequestActions) {
+	event, target, allowPrivateNetworks, tracker, reject, proceed := actions.event, actions.target, actions.allowPrivateNetworks, actions.tracker, actions.reject, actions.proceed
 	if event == nil || event.Request == nil {
 		err := newCodedError(errors.New("browser paused request is missing URL details"), ErrorCodeInvalidURL, "retry the page or use a standard HTTP or HTTPS URL")
 		if event != nil {
@@ -227,6 +243,7 @@ func handlePausedRequestActions(event *fetch.EventRequestPaused, target *url.URL
 		}
 		return
 	}
+	//nolint:nestif // nested guards express one validation/state ladder
 	if tracker.isMainDocument(event) && target != nil {
 		if redirected, parseErr := url.Parse(event.Request.URL); parseErr == nil && !sameHost(target, redirected) {
 			crossErr := newCodedError(
@@ -258,11 +275,8 @@ func checkRenderedFinalURL(target *url.URL, finalURL string) error {
 		return nil
 	}
 	final, err := url.Parse(finalURL)
-	if err != nil {
-		// Ignore malformed final URLs, matching the redirect handler.
-		return nil
-	}
-	if sameHost(target, final) {
+	// Malformed final URLs are ignored, matching the redirect handler.
+	if err == nil && sameHost(target, final) {
 		return nil
 	}
 	return newCodedError(

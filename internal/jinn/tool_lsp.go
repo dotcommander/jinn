@@ -261,7 +261,7 @@ func (e *Engine) runLSPQueryInSession(client *lspClient, req lspRequest) (string
 	if err != nil {
 		return "", fmt.Errorf("lsp didOpen read: %w", err)
 	}
-	if err := client.didOpenText(req.absPath, langIDForExt(req.ext), data); err != nil {
+	if openErr := client.didOpenText(req.absPath, langIDForExt(req.ext), data); openErr != nil {
 		return "", err
 	}
 	defer func() { _ = client.didClose(req.absPath) }()

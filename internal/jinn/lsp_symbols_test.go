@@ -48,17 +48,17 @@ func TestDocumentSymbolsCoordinates(t *testing.T) {
 			if !strings.Contains(out, "Greet (line 7)") {
 				t.Fatalf("symbol coordinates lost: %s", out)
 			}
-			line, character, flat, err := symbolReplyClient(t, symbols).resolveSymbolPosition("main.go", "Greet")
+			position, flat, err := symbolReplyClient(t, symbols).resolveSymbolPosition("main.go", "Greet")
 			if err != nil {
 				t.Fatal(err)
 			}
-			if line != 7 || character != 4 || flat != (shape == "flat") {
-				t.Fatalf("resolved %d:%d flat=%v, want 7:4 flat=%v", line, character, flat, shape == "flat")
+			if position.line != 7 || position.character != 4 || flat != (shape == "flat") {
+				t.Fatalf("resolved %d:%d flat=%v, want 7:4 flat=%v", position.line, position.character, flat, shape == "flat")
 			}
 			e, dir := testEngine(t)
 			path := filepath.Join(dir, "main.go")
-			if err := os.WriteFile(path, []byte(strings.Repeat("\n", 6)+"func Greet() {}\n"), 0o600); err != nil {
-				t.Fatal(err)
+			if writeErr := os.WriteFile(path, []byte(strings.Repeat("\n", 6)+"func Greet() {}\n"), 0o600); writeErr != nil {
+				t.Fatal(writeErr)
 			}
 			req, err := e.resolveSymbolRequest(symbolReplyClient(t, symbols), lspRequest{
 				action: "hover", absPath: path, symbol: "Greet",

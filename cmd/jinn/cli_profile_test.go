@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"strings"
@@ -29,7 +30,7 @@ func TestCLIProcessHelper(t *testing.T) {
 	os.Exit(0)
 }
 
-func runCLIRequest(t *testing.T, input string, arguments ...string) (string, string, int) {
+func runCLIRequest(t *testing.T, input string, arguments ...string) (out, errOut string, code int) {
 	t.Helper()
 	executable, err := os.Executable()
 	if err != nil {
@@ -47,7 +48,8 @@ func runCLIRequest(t *testing.T, input string, arguments ...string) (string, str
 	err = command.Run()
 	status := 0
 	if err != nil {
-		if exit, ok := err.(*exec.ExitError); ok {
+		var exit *exec.ExitError
+		if errors.As(err, &exit) {
 			status = exit.ExitCode()
 		} else {
 			t.Fatal(err)
@@ -79,32 +81,32 @@ func TestMCPProfileReadOnlyCLI(t *testing.T) {
 	}
 }
 
-func runMCPCLI(t *testing.T, input string, arguments ...string) (string, string, int) {
+func runMCPCLI(t *testing.T, input string, arguments ...string) (out, errOut string, code int) {
 	t.Helper()
 	executable, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded, err := json.Marshal(arguments)
-	if err != nil {
-		t.Fatal(err)
+	encoded, marshalErr := json.Marshal(arguments)
+	if marshalErr != nil {
+		t.Fatal(marshalErr)
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	t.Cleanup(cancel)
 	command := exec.CommandContext(ctx, executable, "-test.run=^TestCLIProcessHelper$")
 	command.Env = append(os.Environ(), "JINN_CLI_TEST_ARGUMENTS="+string(encoded))
-	stdin, err := command.StdinPipe()
-	if err != nil {
-		t.Fatal(err)
+	stdin, stdinErr := command.StdinPipe()
+	if stdinErr != nil {
+		t.Fatal(stdinErr)
 	}
-	stdout, err := command.StdoutPipe()
-	if err != nil {
-		t.Fatal(err)
+	stdout, stdoutErr := command.StdoutPipe()
+	if stdoutErr != nil {
+		t.Fatal(stdoutErr)
 	}
 	var stderr bytes.Buffer
 	command.Stderr = &stderr
-	if err := command.Start(); err != nil {
-		t.Fatal(err)
+	if startErr := command.Start(); startErr != nil {
+		t.Fatal(startErr)
 	}
 	t.Cleanup(func() {
 		_ = stdin.Close()
@@ -113,19 +115,20 @@ func runMCPCLI(t *testing.T, input string, arguments ...string) (string, string,
 			_ = command.Wait()
 		}
 	})
-	if _, err := stdin.Write([]byte(input)); err != nil {
-		t.Fatal(err)
+	if _, writeErr := stdin.Write([]byte(input)); writeErr != nil {
+		t.Fatal(writeErr)
 	}
 	// Keep the transport open until the SDK's asynchronous response is received.
 	var response json.RawMessage
-	if err := json.NewDecoder(stdout).Decode(&response); err != nil {
-		t.Fatalf("decode live MCP response: %v", err)
+	if decodeErr := json.NewDecoder(stdout).Decode(&response); decodeErr != nil {
+		t.Fatalf("decode live MCP response: %v", decodeErr)
 	}
 	_ = stdin.Close()
 	err = command.Wait()
 	status := 0
 	if err != nil {
-		if exit, ok := err.(*exec.ExitError); ok {
+		var exit *exec.ExitError
+		if errors.As(err, &exit) {
 			status = exit.ExitCode()
 		} else {
 			t.Fatal(err)

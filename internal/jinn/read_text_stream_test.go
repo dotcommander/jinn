@@ -13,7 +13,7 @@ import (
 
 // legacyReadContent reconstructs the previous whole-file retention path.
 func legacyReadContent(e *Engine, path string, args map[string]interface{}, sum bool) (*readContentResult, error) {
-	lines, _, checksum, err := e.streamTextLines(path, sum)
+	lines, checksum, err := e.streamTextLines(path, sum)
 	if err != nil {
 		return &readContentResult{Checksum: checksum}, err
 	}
@@ -48,7 +48,7 @@ func legacyReadContent(e *Engine, path string, args map[string]interface{}, sum 
 			off += int64(len(l) + 1) // each non-final line ends with a newline; harmless otherwise
 		}
 	}
-	if result := byteTruncateResult(tr.Content, start, total, sequential, noSpill, offsets); result != nil {
+	if result := byteTruncateResult(byteTruncateParams{content: tr.Content, startLine: start, total: total, sequential: sequential, spill: noSpill, offsets: offsets}); result != nil {
 		result.Checksum = checksum
 		return result, nil
 	}

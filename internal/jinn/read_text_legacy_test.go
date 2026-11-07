@@ -20,13 +20,13 @@ import (
 // binary files, without holding a whole-file byte slice.
 //
 //nolint:funlen,gocognit,gocyclo,revive // streaming checksum, MIME gates, and line collection must share one bounded descriptor and result shape.
-func (e *Engine) streamTextLines(resolved string, needChecksum bool) ([]string, os.FileInfo, string, error) {
+func (e *Engine) streamTextLines(resolved string, needChecksum bool) ([]string, string, error) {
 	file, info, err := e.openRegularFile(resolved, maxFileSize, true)
 	if err != nil {
 		if os.IsPermission(err) {
-			return nil, info, "", permissionDeniedErr(resolved)
+			return nil, "", permissionDeniedErr(resolved)
 		}
-		return nil, info, "", err
+		return nil, "", err
 	}
 	defer func() { _ = file.Close() }()
 
@@ -38,7 +38,7 @@ func (e *Engine) streamTextLines(resolved string, needChecksum bool) ([]string, 
 	reader := bufio.NewReaderSize(source, 32<<10)
 	sample, sampleErr := reader.Peek(8192)
 	if sampleErr != nil && !errors.Is(sampleErr, io.EOF) {
-		return nil, info, "", sampleErr
+		return nil, "", sampleErr
 	}
 	checksum := func() string {
 		if needChecksum {
@@ -57,11 +57,11 @@ func (e *Engine) streamTextLines(resolved string, needChecksum bool) ([]string, 
 	// Either the content detector or the extension is sufficient evidence.
 	if detected == "application/pdf" || ext == ".pdf" {
 		if needChecksum {
-			if _, err := io.Copy(io.Discard, reader); err != nil {
-				return nil, info, "", err
+			if _, copyErr := io.Copy(io.Discard, reader); copyErr != nil {
+				return nil, "", copyErr
 			}
 		}
-		return nil, info, checksum(), &ErrWithSuggestion{
+		return nil, checksum(), &ErrWithSuggestion{
 			Err:        errors.New("pdf extraction not supported in zero-dep mode"),
 			Suggestion: "convert the PDF to text first (pdftotext, pdftk, or a cloud OCR service) and read the text file",
 			Code:       ErrCodeBinaryFile,
@@ -72,11 +72,11 @@ func (e *Engine) streamTextLines(resolved string, needChecksum bool) ([]string, 
 	// Binary detection: return an error so the caller can decide how to present it.
 	if isBinaryContent(sample) {
 		if needChecksum {
-			if _, err := io.Copy(io.Discard, reader); err != nil {
-				return nil, info, "", err
+			if _, copyErr := io.Copy(io.Discard, reader); copyErr != nil {
+				return nil, "", copyErr
 			}
 		}
-		return nil, info, checksum(), &ErrWithSuggestion{
+		return nil, checksum(), &ErrWithSuggestion{
 			Err:        fmt.Errorf("binary file: %d bytes", info.Size()),
 			Suggestion: "use stat_file for metadata or skip content reads",
 			Code:       ErrCodeBinaryFile,
@@ -95,17 +95,17 @@ func (e *Engine) streamTextLines(resolved string, needChecksum bool) ([]string, 
 			break
 		}
 		if readErr != nil {
-			return nil, info, "", readErr
+			return nil, "", readErr
 		}
 	}
 	finalInfo, err := file.Stat()
 	if err != nil {
-		return nil, info, checksum(), err
+		return nil, checksum(), err
 	}
 	if finalInfo.Size() != info.Size() || !finalInfo.ModTime().Equal(info.ModTime()) {
-		return nil, finalInfo, checksum(), &ErrWithSuggestion{Err: fmt.Errorf("file changed while reading: %s", resolved), Suggestion: "retry the read against stable bytes", Code: ErrCodeStaleFile}
+		return nil, checksum(), &ErrWithSuggestion{Err: fmt.Errorf("file changed while reading: %s", resolved), Suggestion: "retry the read against stable bytes", Code: ErrCodeStaleFile}
 	}
-	return lines, finalInfo, checksum(), nil
+	return lines, checksum(), nil
 }
 
 // renderWindow formats lines[startLine-1:endLine] with optional line numbers

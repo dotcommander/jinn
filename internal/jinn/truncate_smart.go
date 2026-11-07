@@ -102,19 +102,6 @@ func braceCutLine(lines []string, limit int) (int, bool) {
 	return lastBoundary, lastBoundary > 0
 }
 
-// lineBraceDepth computes the net brace depth change for a single line,
-// ignoring braces inside double-quoted strings, backtick strings, and
-// line comments.
-func lineBraceDepth(line string) int {
-	s := braceScanner{}
-	for i := 0; i < len(line); i++ {
-		if s.step(line, &i) {
-			break
-		}
-	}
-	return s.depth
-}
-
 // braceScanner retains lexical state across lines while counting braces outside
 // quoted/raw literals and block or line comments.
 type braceScanner struct {
@@ -127,6 +114,8 @@ type braceScanner struct {
 // step advances the scanner by the character at *i, mutating *i to consume
 // extra characters (escapes, the second comment slash). It returns true when
 // the rest of the line is a comment and scanning should stop.
+//
+//nolint:gocognit,gocyclo,revive,funlen // branchy by design; splitting would scatter one sequential algorithm
 func (s *braceScanner) step(line string, i *int) bool {
 	ch := line[*i]
 
@@ -148,9 +137,10 @@ func (s *braceScanner) step(line string, i *int) bool {
 		return false
 	}
 	if s.quote != 0 {
-		if ch == '\\' {
+		switch ch {
+		case '\\':
 			*i++
-		} else if ch == s.quote {
+		case s.quote:
 			s.quote = 0
 		}
 		return false

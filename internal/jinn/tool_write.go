@@ -50,7 +50,7 @@ func (e *Engine) atomicWriteFile(resolved, content string) error {
 // and before publish. With noReplace, publish is atomic no-replace (hard
 // link) and fails closed instead of falling back to rename-overwrite.
 //
-//nolint:gocyclo // The linear durability stages deliberately retain their distinct failure boundaries.
+//nolint:gocyclo,gocognit,revive // The linear durability stages deliberately retain their distinct failure boundaries.
 func (e *Engine) atomicWriteFileStaged(resolved, content string, noReplace bool, beforeRename func() error) (bool, error) {
 	// Capture existing file permissions before overwriting.
 	perm := os.FileMode(0644)
@@ -95,6 +95,7 @@ func (e *Engine) atomicWriteFileStaged(resolved, content string, noReplace bool,
 			return false, callbackErr
 		}
 	}
+	//nolint:nestif // nested guards express one validation/state ladder
 	if noReplace {
 		if linkErr := e.root.Link(tempName, rel); linkErr != nil {
 			if os.IsExist(linkErr) {

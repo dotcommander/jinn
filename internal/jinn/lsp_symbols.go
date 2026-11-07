@@ -87,10 +87,16 @@ func (c *lspClient) symbols(absPath string) (string, error) {
 // declaration by name from the file's document symbols. It returns a clear
 // error when the name matches zero or multiple declarations rather than
 // guessing a position.
-func (c *lspClient) resolveSymbolPosition(absPath, symbol string) (line, char int, flat bool, err error) {
+// lspLineChar is a 1-based line/character position.
+type lspLineChar struct {
+	line      int
+	character int
+}
+
+func (c *lspClient) resolveSymbolPosition(absPath, symbol string) (lspLineChar, bool, error) {
 	docSyms, err := c.documentSymbols(absPath)
 	if err != nil {
-		return 0, 0, false, err
+		return lspLineChar{}, false, err
 	}
 	var matches []lspDocSymbol
 	collectSymbolMatches(docSyms, symbol, &matches)
@@ -98,9 +104,9 @@ func (c *lspClient) resolveSymbolPosition(absPath, symbol string) (line, char in
 	switch len(matches) {
 	case 1:
 		sel := matches[0].SelectionRange.Start
-		return sel.Line + 1, sel.Character + 1, matches[0].flat, nil
+		return lspLineChar{line: sel.Line + 1, character: sel.Character + 1}, matches[0].flat, nil
 	case 0:
-		return 0, 0, false, &ErrWithSuggestion{
+		return lspLineChar{}, false, &ErrWithSuggestion{
 			Err:        fmt.Errorf("lsp_query: symbol %q not found in the file", symbol),
 			Suggestion: "run action \"symbols\" to list the file's declarations, or pass an explicit 'line'",
 			Code:       ErrCodeInvalidArgs,
@@ -110,7 +116,7 @@ func (c *lspClient) resolveSymbolPosition(absPath, symbol string) (line, char in
 		for i, m := range matches {
 			lines[i] = strconv.Itoa(m.SelectionRange.Start.Line + 1)
 		}
-		return 0, 0, false, &ErrWithSuggestion{
+		return lspLineChar{}, false, &ErrWithSuggestion{
 			Err:        fmt.Errorf("lsp_query: symbol %q is ambiguous — declared on lines %s", symbol, strings.Join(lines, ", ")),
 			Suggestion: "pass an explicit 'line' (with 'symbol' or 'character') to select the intended declaration",
 			Code:       ErrCodeInvalidArgs,
@@ -134,10 +140,11 @@ func collectSymbolMatches(syms []lspDocSymbol, name string, out *[]lspDocSymbol)
 // resolveSymbolRequest preserves exact hierarchical selections while resolving
 // a flat declaration range to the identifier column in the rooted source.
 func (e *Engine) resolveSymbolRequest(client *lspClient, req lspRequest) (lspRequest, error) {
-	line, char, flat, err := client.resolveSymbolPosition(req.absPath, req.symbol)
+	position, flat, err := client.resolveSymbolPosition(req.absPath, req.symbol)
+	char := position.character
 	if err == nil && flat {
-		char, err = e.resolveLSPPosition(req.action, req.absPath, line, 0, req.symbol)
+		char, err = e.resolveLSPPosition(req.action, req.absPath, position.line, 0, req.symbol)
 	}
-	req.line, req.char = line, char
+	req.line, req.char = position.line, char
 	return req, err
 }

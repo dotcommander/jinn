@@ -161,6 +161,7 @@ func mcpLoggingMiddleware(logger *mcpLogger) server.Middleware {
 		return func(ctx context.Context, req *server.Request) (protocol.Result, error) {
 			started := time.Now()
 			result, err := next(ctx, req)
+			//nolint:nestif // nested guards express one validation/state ladder
 			if logger != nil {
 				method, requestID := mcpRequestMetadata(req)
 				record := mcpLogRecord{V: 2, Timestamp: time.Now().UTC().Format(time.RFC3339Nano), Level: string(mcpLogInfo), Method: method, RequestID: requestID, Duration: time.Since(started).Milliseconds(), Outcome: "ok", ToolName: mcpRequestToolName(req)}

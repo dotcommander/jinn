@@ -135,7 +135,7 @@ func loadLaunchPolicy() (*launchPolicy, error) {
 	}
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
-	if err := dec.Decode(&doc); err != nil {
+	if decodeErr := dec.Decode(&doc); decodeErr != nil {
 		return nil, fmt.Errorf("invalid launch policy %s: %w", path, err)
 	}
 	if doc.Rules == nil {

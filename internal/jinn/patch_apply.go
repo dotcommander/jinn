@@ -48,6 +48,8 @@ func resolveChunk(lines []string, chunk updateChunk, lineIndex int, filePath str
 
 // deriveUpdatedContent applies update chunks to the current file content,
 // producing the new content. Returns the updated content with BOM preserved.
+//
+//nolint:gocognit,gocyclo,revive // branchy by design; splitting would scatter one sequential algorithm
 func deriveUpdatedContent(filePath string, content string, chunks []updateChunk) (string, error) {
 	raw, bom := stripBom(content)
 	records := splitLineRecords(raw)

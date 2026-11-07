@@ -118,11 +118,12 @@ linters:
       - path: cmd/
         linters:
           - gochecknoglobals
-      # jinn: short dispatch-key/extension literals recur across unrelated
-      # switches (const-hoisting them is misleading coupling), and package
-      # globals are intentional single-source-of-truth tables (riskTable,
-      # mutatingActions, toolFeatures, shellAllowList, exitTable, ...).
-      - path: internal/jinn/
+      # jinn + webfetch: short dispatch-key/extension literals recur across
+      # unrelated switches (const-hoisting them is misleading coupling),
+      # and package globals are intentional single-source-of-truth tables
+      # (riskTable, mutatingActions, toolFeatures, shellAllowList,
+      # exitTable, searchProviderRegistry, ...).
+      - path: internal/(jinn|webfetch)/
         linters:
           - goconst
           - gochecknoglobals

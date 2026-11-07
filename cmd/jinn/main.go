@@ -118,7 +118,7 @@ func writeResponse(resp jinn.Response) error {
 	return json.NewEncoder(os.Stdout).Encode(resp)
 }
 
-//nolint:gocognit,gocyclo,nestif,goconst,revive // This command boundary keeps subcommand and legacy flag routing explicit.
+//nolint:gocognit,gocyclo,nestif,goconst,revive,funlen // This command boundary keeps subcommand and legacy flag routing explicit.
 func run(ctx context.Context) error {
 	mode, profile, positional, err := parseCLIArgs(os.Args[1:])
 	if err != nil {

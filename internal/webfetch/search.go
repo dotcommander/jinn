@@ -138,6 +138,14 @@ func splitProviderNames(list string) []string {
 // through to the next with a recorded reason (error code, "empty", or
 // "domain-miss" when domain filters were set); the whole routing pass is
 // bounded by the configured service timeout.
+const (
+	fallbackReasonEmpty      = "empty"
+	fallbackReasonDomainMiss = "domain-miss"
+)
+
+// Search runs one normalized query against the configured provider chain.
+//
+//nolint:gocognit,gocyclo,revive // branchy by design; splitting would scatter one sequential algorithm
 func (s *Service) Search(ctx context.Context, req SearchRequest) (SearchResponse, error) {
 	if s == nil {
 		return SearchResponse{}, newCodedError(errors.New("webfetch service is nil"), ErrorCodeInvalidArgument, "initialize the webfetch service before calling Search")

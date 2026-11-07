@@ -223,7 +223,7 @@ func (p *renderProxy) serveConnect(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	forwardProxyTunnel(req.Context(), upstream, downstream, rw.Reader, p.budget, renderProxyTunnelIdleTimeout)
+	forwardProxyTunnel(req.Context(), proxyTunnelParams{upstream: upstream, downstream: downstream, buffered: rw.Reader, budget: p.budget, idle: renderProxyTunnelIdleTimeout})
 }
 
 func proxyTunnelCopy(errCh chan<- error, dst io.Writer, src io.Reader, budget *proxyBudget) {

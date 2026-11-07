@@ -14,6 +14,10 @@ install: build
     mkdir -p "{{gobin}}"
     ln -sf "$(pwd)/jinn" "{{gobin}}/jinn"
 
+# Run golangci-lint with the committed .golangci.yml (required before commit)
+lint:
+    golangci-lint run ./...
+
 # Run the full test suite with race detector
 test:
     go test -race ./...

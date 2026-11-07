@@ -87,7 +87,7 @@ func RouteTools(req RouteRequest) (RouteResponse, error) {
 // RouteToolsForMode applies the engine shell policy to recommendations and
 // embedded schemas using an explicit execution mode.
 //
-//nolint:gocognit,gocyclo,revive // ranking filters are intentionally linear and ordered to keep routing deterministic.
+//nolint:gocognit,gocyclo,revive,funlen // ranking filters are intentionally linear and ordered to keep routing deterministic.
 func RouteToolsForMode(req RouteRequest, mode ShellMode) (RouteResponse, error) {
 	need := strings.TrimSpace(req.Need)
 	resp := RouteResponse{Query: req.Need, Confidence: "none", Adaptive: req.MaxTools <= 0, Matches: []RouteMatch{}}

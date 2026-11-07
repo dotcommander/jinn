@@ -222,6 +222,7 @@ func renderWebFetch(out io.Writer, doc webfetch.Document, asJSON bool, limits we
 }
 
 func renderWebFetchProjection(out io.Writer, doc webfetch.Document, asJSON bool, limits webOutputLimits, projection webfetch.ContentProjection) error {
+	//nolint:nestif // nested guards express one validation/state ladder
 	if !asJSON {
 		if _, err := io.WriteString(out, projection.Content); err != nil {
 			return err

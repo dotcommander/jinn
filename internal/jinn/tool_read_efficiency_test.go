@@ -20,7 +20,7 @@ func TestStreamTextLinesSinglePassContracts(t *testing.T) {
 	path := filepath.Join(dir, "lines.txt")
 	want := []string{first, "", "last"}
 	for _, needChecksum := range []bool{false, true} {
-		lines, _, checksum, err := e.streamTextLines(path, needChecksum)
+		lines, checksum, err := e.streamTextLines(path, needChecksum)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -58,7 +58,7 @@ func TestStreamTextLinesRejectedContentChecksum(t *testing.T) {
 			path := filepath.Join(dir, tc.name)
 			wantSum := sha256.Sum256([]byte(tc.content))
 			for _, needChecksum := range []bool{false, true} {
-				lines, _, checksum, err := e.streamTextLines(path, needChecksum)
+				lines, checksum, err := e.streamTextLines(path, needChecksum)
 				var suggested *ErrWithSuggestion
 				if lines != nil || !errors.As(err, &suggested) || suggested.Code != ErrCodeBinaryFile {
 					t.Fatalf("lines = %v, error = %v; want binary-file rejection", lines, err)

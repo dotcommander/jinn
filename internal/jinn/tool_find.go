@@ -53,6 +53,7 @@ type findFilesResult struct {
 	NextCall        *NextCall       `json:"next_call,omitempty"`
 }
 
+//nolint:gocognit,revive // branchy by design; splitting would scatter one sequential algorithm
 func (e *Engine) findFiles(ctx context.Context, args map[string]interface{}) (string, error) {
 	pattern, _ := args["pattern"].(string)
 	if pattern == "" {

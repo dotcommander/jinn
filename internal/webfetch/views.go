@@ -1,6 +1,7 @@
 package webfetch
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -55,13 +56,13 @@ func DocumentOutline(content string) []SectionInfo {
 func RenderTOC(sections []SectionInfo) string {
 	var builder strings.Builder
 	for _, section := range sections {
-		builder.WriteString(fmt.Sprintf("%s L%d %s\n", section.ID, section.Line+1, section.Title))
+		fmt.Fprintf(&builder, "%s L%d %s\n", section.ID, section.Line+1, section.Title)
 	}
 	return strings.TrimRight(builder.String(), "\n")
 }
 
 // SectionRange returns the line range [start, end) for a numbered section.
-func SectionRange(sections []SectionInfo, sectionID string, totalLines int) (int, int, bool) {
+func SectionRange(sections []SectionInfo, sectionID string, totalLines int) (start, end int, found bool) {
 	for i, section := range sections {
 		if strings.EqualFold(section.ID, sectionID) {
 			start := section.Line
@@ -82,7 +83,7 @@ func MustContainTerms(terms []string) ([]string, error) {
 	for _, term := range terms {
 		trimmed := strings.TrimSpace(term)
 		if trimmed == "" {
-			return nil, newCodedError(fmt.Errorf("must_contain: a term is empty"), ErrorCodeInvalidArgument, "provide non-empty probe terms")
+			return nil, newCodedError(errors.New("must_contain: a term is empty"), ErrorCodeInvalidArgument, "provide non-empty probe terms")
 		}
 		if len([]rune(trimmed)) > maxMustContainChars {
 			return nil, newCodedError(fmt.Errorf("must_contain: a term is longer than %d chars", maxMustContainChars), ErrorCodeInvalidArgument, "shorten the probe term")

@@ -3,6 +3,7 @@ package jinn
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"sort"
@@ -42,8 +43,9 @@ type searchRowsResult struct {
 // searchRows parses the file at args["path"] as JSONL or a JSON array of
 // objects, ranks whole records by BM25 over the union of args["queries"]
 // tokens, and pages the ranked list from args["offset"] (default 0).
-func (e *Engine) searchRows(ctx context.Context, args map[string]interface{}) (string, error) {
+func (e *Engine) searchRows(_ context.Context, args map[string]interface{}) (string, error) {
 	result := searchRowsResult{Rows: []searchRowRecord{}, SchemaKeys: []string{}}
+	//nolint:nilerr // rows-mode failures are reported in-band via result.Error, not as Go errors
 	finish := func(err error) (string, error) {
 		if err != nil {
 			result.Error = err.Error()
@@ -58,7 +60,7 @@ func (e *Engine) searchRows(ctx context.Context, args map[string]interface{}) (s
 	}
 	pathArg := strArg(args, "path")
 	if pathArg == "" {
-		return finish(fmt.Errorf("rows mode requires path"))
+		return finish(errors.New("rows mode requires path"))
 	}
 	queriesRaw, _ := args["queries"].([]interface{})
 	var queries []string
@@ -68,7 +70,7 @@ func (e *Engine) searchRows(ctx context.Context, args map[string]interface{}) (s
 		}
 	}
 	if len(queries) == 0 {
-		return finish(fmt.Errorf("rows mode requires a nonempty queries list"))
+		return finish(errors.New("rows mode requires a nonempty queries list"))
 	}
 	offset := max(0, intArg(args, "offset", 0))
 	resolved, err := e.checkPath(pathArg)
@@ -79,7 +81,8 @@ func (e *Engine) searchRows(ctx context.Context, args map[string]interface{}) (s
 	if readErr != nil {
 		return finish(readErr)
 	}
-	records, total, keys, parseErr := parseRowRecords(data)
+	parsed, parseErr := parseRowRecords(data)
+	records, total, keys := parsed.rows, parsed.total, parsed.keys
 	if parseErr != nil {
 		return finish(parseErr)
 	}
@@ -108,15 +111,22 @@ type scoredRow struct {
 	text    string
 }
 
+// rowRecords bundles the parsed rows, total count, and top schema keys.
+type rowRecords struct {
+	rows  []scoredRow
+	total int
+	keys  []string
+}
+
 // parseRowRecords parses JSONL or a JSON array of objects, returning raw
 // record texts with 1-based ordinals, the total count, and top schema keys.
-func parseRowRecords(data []byte) ([]scoredRow, int, []string, error) {
+func parseRowRecords(data []byte) (rowRecords, error) {
 	trimmed := strings.TrimSpace(string(data))
 	var lines []string
 	if strings.HasPrefix(trimmed, "[") {
 		var arr []json.RawMessage
 		if err := json.Unmarshal([]byte(trimmed), &arr); err != nil {
-			return nil, 0, nil, fmt.Errorf("rows source: invalid JSON array: %w", err)
+			return rowRecords{}, fmt.Errorf("rows source: invalid JSON array: %w", err)
 		}
 		for _, raw := range arr {
 			lines = append(lines, string(raw))
@@ -133,7 +143,7 @@ func parseRowRecords(data []byte) ([]scoredRow, int, []string, error) {
 	for i, line := range lines {
 		var obj map[string]json.RawMessage
 		if err := json.Unmarshal([]byte(line), &obj); err != nil {
-			return nil, 0, nil, fmt.Errorf("rows source: record %d is not a JSON object: %w", i+1, err)
+			return rowRecords{}, fmt.Errorf("rows source: record %d is not a JSON object: %w", i+1, err)
 		}
 		for k := range obj {
 			keyCounts[k]++
@@ -153,11 +163,13 @@ func parseRowRecords(data []byte) ([]scoredRow, int, []string, error) {
 	if len(keys) > searchRowsSchemaKeys {
 		keys = keys[:searchRowsSchemaKeys]
 	}
-	return rows, len(lines), keys, nil
+	return rowRecords{rows: rows, total: len(lines), keys: keys}, nil
 }
 
 // rankRowRecords scores each record with BM25 over the union of query tokens
 // (all string values in the record) and returns matches sorted by score.
+//
+//nolint:gocognit,revive // branchy by design; splitting would scatter one sequential algorithm
 func rankRowRecords(rows []scoredRow, queries []string) []scoredRow {
 	queryTokens := make(map[string]bool)
 	for _, q := range queries {

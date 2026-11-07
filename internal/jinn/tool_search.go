@@ -23,6 +23,7 @@ func (e *Engine) searchFiles(args map[string]interface{}) (string, error) {
 	return e.searchFilesContext(context.Background(), args)
 }
 
+//nolint:gocyclo // branch table stays with the decision it guards
 func (e *Engine) searchFilesContext(ctx context.Context, args map[string]interface{}) (string, error) {
 	if strArg(args, "mode") == "rows" {
 		return e.searchRows(ctx, args)

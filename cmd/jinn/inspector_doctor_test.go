@@ -16,6 +16,7 @@ import (
 	"github.com/dotcommander/jinn/internal/jinn"
 )
 
+//nolint:revive // table-driven origin/content-type matrix; splitting hides the case coverage
 func TestInspectorRunOriginAndContentType(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {
@@ -83,6 +84,7 @@ func TestDoctorModeMismatchWindows(t *testing.T) {
 	}
 }
 
+//nolint:gocognit,revive // branchy by design; splitting would scatter one sequential algorithm
 func TestQuestionnaireConsolePaths(t *testing.T) {
 	t.Parallel()
 	for _, paths := range [][2]string{{"/dev/tty", "/dev/tty"}, {"CONIN$", "CONOUT$"}} {
@@ -189,11 +191,11 @@ func TestDecodeQuestionnaireExample(t *testing.T) {
 	if !strings.Contains(output.String(), "invalid choice") || !strings.Contains(output.String(), "custom answer is required") {
 		t.Fatalf("missing validation feedback: %s", &output)
 	}
-	if _, err := runQuestionnaire(questionnaire, strings.NewReader("1\n"), io.Discard); !errors.Is(err, io.EOF) {
+	if _, eofErr := runQuestionnaire(questionnaire, strings.NewReader("1\n"), io.Discard); !errors.Is(eofErr, io.EOF) {
 		t.Fatalf("EOF error=%v", err)
 	}
 	permanent := errors.New("closed terminal")
-	if _, err := runQuestionnaire(questionnaire, auditBrokenReader{permanent}, io.Discard); !errors.Is(err, permanent) {
+	if _, permErr := runQuestionnaire(questionnaire, auditBrokenReader{permanent}, io.Discard); !errors.Is(permErr, permanent) {
 		t.Fatalf("permanent error=%v", err)
 	}
 	result, err = runQuestionnaire(questionnaire, strings.NewReader("1\nbad\nq\n"), io.Discard)

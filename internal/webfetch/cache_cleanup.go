@@ -84,6 +84,8 @@ func canonicalCacheName(name string) bool {
 
 // Called with the interprocess cache lock: re-read the current canonical entry
 // so an earlier observation cannot delete a freshly replaced document.
+//
+//nolint:gocyclo // branch table stays with the decision it guards
 func (c *urlCache) removeExpired(path string) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -98,7 +100,7 @@ func (c *urlCache) removeExpired(path string) {
 		_ = file.Close()
 		return
 	}
-	if _, err := file.Seek(0, io.SeekStart); err != nil {
+	if _, seekErr := file.Seek(0, io.SeekStart); seekErr != nil {
 		_ = file.Close()
 		return
 	}

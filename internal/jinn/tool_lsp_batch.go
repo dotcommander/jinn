@@ -37,6 +37,7 @@ func (e *Engine) lspBatch(ctx context.Context, args map[string]interface{}) (str
 	return e.lspBatchWithLauncher(ctx, args, nil)
 }
 
+//nolint:gocognit,gocyclo,revive // branchy by design; splitting would scatter one sequential algorithm
 func (e *Engine) lspBatchWithLauncher(ctx context.Context, args map[string]interface{}, launcher lspLauncher) (string, error) {
 	rawQueries, ok := args["queries"].([]interface{})
 	if !ok || len(rawQueries) == 0 || len(rawQueries) > lspBatchMaxQueries {

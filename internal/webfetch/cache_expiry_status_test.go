@@ -3,11 +3,11 @@ package webfetch
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -25,12 +25,11 @@ func TestCacheExpiredEntryIsRemoved(t *testing.T) {
 		t.Fatal(err)
 	}
 	var envelope urlCacheEnvelope
-	if err := json.Unmarshal(data, &envelope); err != nil {
-		t.Fatal(err)
+	if decodeErr := json.Unmarshal(data, &envelope); decodeErr != nil {
+		t.Fatal(decodeErr)
 	}
 	envelope.StoredAt = time.Now().Add(-2 * time.Hour)
-	data, err = json.Marshal(envelope)
-	if err != nil {
+	if data, err = json.Marshal(envelope); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(path, data, 0o600); err != nil {
@@ -47,7 +46,7 @@ func TestCacheExpiredEntryIsRemoved(t *testing.T) {
 func TestStaticAndRenderedHTTPStatusAgree(t *testing.T) {
 	t.Parallel()
 	for _, status := range []int{http.StatusNotFound, http.StatusInternalServerError} {
-		t.Run(fmt.Sprint(status), func(t *testing.T) {
+		t.Run(strconv.Itoa(status), func(t *testing.T) {
 			t.Parallel()
 			body := `<html><head><title>Upstream error</title></head><body><article><h1>Upstream error</h1><p>` + strings.Repeat("Controlled error response content. ", 30) + `</p></article></body></html>`
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

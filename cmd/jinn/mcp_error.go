@@ -7,6 +7,8 @@ import (
 	"github.com/voocel/mcp-sdk-go/protocol"
 )
 
+const mcpToolErrorCode = "tool_error"
+
 type mcpCallErrorOutput struct {
 	Tool       string         `json:"tool"`
 	RouteID    string         `json:"route_id,omitempty"`
@@ -20,7 +22,7 @@ type mcpCallErrorOutput struct {
 func newMCPCallError(tool, routeID string, args map[string]any, err error) *protocol.CallToolResult {
 	code, suggestion := jinn.ErrorDetails(err)
 	if code == "" {
-		code = "tool_error"
+		code = mcpToolErrorCode
 	}
 	output := mcpCallErrorOutput{
 		Tool: tool, RouteID: routeID, Error: err.Error(), ErrorCode: code,

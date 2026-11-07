@@ -169,10 +169,7 @@ func (e *Engine) rejectHistoryTarget(resolved, display string) error {
 		return nil
 	}
 	rel, err := filepath.Rel(hd, resolved)
-	if err != nil {
-		return nil
-	}
-	if rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+	if err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return &ErrWithSuggestion{
 			Err:        fmt.Errorf("mutations cannot target undo history storage: %s is inside %s", display, hd),
 			Suggestion: "history is non-deletable recovery evidence; list snapshots with undo action=list and restore one instead",

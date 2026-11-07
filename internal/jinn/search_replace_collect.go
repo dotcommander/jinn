@@ -25,8 +25,8 @@ func (e *Engine) collectSRFiles(ctx context.Context, args map[string]interface{}
 	var candidates []searchReplaceCandidate
 
 	for _, pat := range patterns {
-		if err := e.collectSRPattern(ctx, pat, seen, &candidates); err != nil {
-			return nil, err
+		if collectErr := e.collectSRPattern(ctx, pat, seen, &candidates); collectErr != nil {
+			return nil, collectErr
 		}
 	}
 

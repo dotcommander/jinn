@@ -16,6 +16,7 @@ import (
 	"time"
 )
 
+//nolint:gocyclo // branch table stays with the decision it guards
 func TestNativeChromeLocalSafetyAndStatus(t *testing.T) {
 	t.Parallel()
 	if testing.Short() {

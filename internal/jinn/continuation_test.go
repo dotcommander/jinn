@@ -150,8 +150,8 @@ func TestReadExplicitWindowContinuation(t *testing.T) {
 				t.Fatal(err)
 			}
 			var replay NextCall
-			if err := json.Unmarshal(encoded, &replay); err != nil {
-				t.Fatal(err)
+			if replayErr := json.Unmarshal(encoded, &replay); replayErr != nil {
+				t.Fatal(replayErr)
 			}
 			if replay.Arguments["start_line"] != float64(4) || replay.Arguments["end_line"] != float64(5) {
 				t.Fatalf("continuation window = %#v", replay.Arguments)

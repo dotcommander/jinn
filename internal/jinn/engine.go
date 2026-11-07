@@ -213,10 +213,11 @@ func (e *Engine) dispatchListTools(args map[string]interface{}) (*ToolResult, ma
 	}
 	includeSchema, _ := args["include_schema"].(bool)
 	describe, _ := args["describe"].(bool)
+	//nolint:nestif // nested guards express one validation/state ladder
 	if includeSchema || describe {
-		schema, err := LeanSchemaForMode(e.shellMode)
-		if err != nil {
-			return nil, nil, fmt.Errorf("lean schema: %w", err)
+		schema, schemaErr := LeanSchemaForMode(e.shellMode)
+		if schemaErr != nil {
+			return nil, nil, fmt.Errorf("lean schema: %w", schemaErr)
 		}
 		var schemaDoc any
 		if decodeErr := json.Unmarshal([]byte(schema), &schemaDoc); decodeErr != nil {

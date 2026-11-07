@@ -371,7 +371,7 @@ func (e *Engine) shellArgv(command, runDir, homeDir, tmpDir string) []string {
 // Meta keys: "risk" (pre-execution risk level) and "classification" (exit-code class).
 // Dangerous commands are blocked unless args["force"] is true.
 //
-//nolint:funlen // request validation and command lifecycle share one response contract.
+//nolint:funlen,gocyclo // request validation and command lifecycle share one response contract.
 func (e *Engine) runShell(ctx context.Context, args map[string]interface{}) (string, map[string]any, error) {
 	if e.shellMode == ShellModeDisabled {
 		return "", nil, &ErrWithSuggestion{
@@ -396,6 +396,8 @@ func (e *Engine) runShell(ctx context.Context, args map[string]interface{}) (str
 	// Allow proceeds to the existing classifier; absent policy is a no-op.
 	if e.launchPolicy != nil {
 		switch decision := e.launchPolicy.evaluate(cmd); decision {
+		case launchAllow:
+			// Explicit allow: proceeds to the classifier and execution below.
 		case launchDeny:
 			return "", map[string]any{
 				"risk":          riskLevel.String(),

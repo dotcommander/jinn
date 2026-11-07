@@ -53,10 +53,13 @@ func classifyHTML(html string) shellClass {
 	return shellClassStatic
 }
 
+//nolint:gocognit,revive // branchy by design; splitting would scatter one sequential algorithm
 func hasAppMarker(document string) bool {
 	tokens := html.NewTokenizer(strings.NewReader(document))
 	for {
 		switch tokens.Next() {
+		case html.TextToken, html.EndTagToken, html.CommentToken, html.DoctypeToken:
+			continue
 		case html.ErrorToken:
 			return false
 		case html.StartTagToken, html.SelfClosingTagToken:

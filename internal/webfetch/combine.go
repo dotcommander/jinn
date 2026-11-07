@@ -67,9 +67,9 @@ func (s *Service) combineSearch(ctx context.Context, chain []searchProvider, req
 			case result.err != nil:
 				fallbacks = append(fallbacks, SearchFallback{Provider: result.backend, Reason: searchErrorReason(result.err)})
 			default:
-				reason := "empty"
+				reason := fallbackReasonEmpty
 				if len(req.IncludeDomains) > 0 {
-					reason = "domain-miss"
+					reason = fallbackReasonDomainMiss
 				}
 				fallbacks = append(fallbacks, SearchFallback{Provider: result.backend, Reason: reason})
 			}

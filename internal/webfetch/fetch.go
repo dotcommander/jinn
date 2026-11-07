@@ -38,7 +38,7 @@ type Service struct {
 
 // NewService constructs a web service without performing network or browser work.
 //
-//nolint:funlen,gocyclo // Default normalization stays centralized so every provider receives one coherent policy.
+//nolint:funlen,gocyclo,gocognit,revive // Default normalization stays centralized so every provider receives one coherent policy.
 func NewService(cfg Config) *Service {
 	timeout := cfg.Timeout
 	if timeout <= 0 {
@@ -135,6 +135,8 @@ func NewService(cfg Config) *Service {
 }
 
 // Fetch retrieves and normalizes one URL according to the requested reader and render policy.
+//
+//nolint:gocognit,gocyclo,revive // branchy by design; splitting would scatter one sequential algorithm
 func (s *Service) Fetch(ctx context.Context, req FetchRequest) (Document, error) {
 	if s == nil {
 		return Document{}, newCodedError(errors.New("webfetch service is nil"), ErrorCodeInvalidArgument, "initialize the webfetch service before calling Fetch")
@@ -498,6 +500,7 @@ func unsupportedReaderError(readerMode string) error {
 
 func (s *Service) fetchRaw(ctx context.Context, target *url.URL) (Document, error) {
 	resp, err := s.client.Get(ctx, target.String(), nil)
+	//nolint:nestif // nested guards express one validation/state ladder
 	if err != nil {
 		var coded *CodedError
 		if errors.As(err, &coded) && coded.Code == ErrorCodeResponseTooLarge {

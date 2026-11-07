@@ -128,7 +128,7 @@ func checkJinaSourceURL(target *url.URL, content string) error {
 		}
 		source, err := url.Parse(strings.TrimSpace(strings.TrimPrefix(line, "URL Source:")))
 		if err != nil {
-			return nil
+			continue // malformed metadata cannot prove a host change
 		}
 		if !sameHost(target, source) {
 			return newCodedError(

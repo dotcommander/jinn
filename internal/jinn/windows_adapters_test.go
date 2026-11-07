@@ -24,11 +24,11 @@ func TestWindowsRemediationSpillIdentity(t *testing.T) {
 		t.Fatalf("unstable identity=%+v, %v", got, ok)
 	}
 	// Keep the original inode alive so replacement cannot reuse its identifier.
-	if err := os.Rename(path, path+".old"); err != nil {
-		t.Fatal(err)
+	if renameErr := os.Rename(path, path+".old"); renameErr != nil {
+		t.Fatal(renameErr)
 	}
-	if err := os.WriteFile(path, []byte("two"), 0o600); err != nil {
-		t.Fatal(err)
+	if writeErr := os.WriteFile(path, []byte("two"), 0o600); writeErr != nil {
+		t.Fatal(writeErr)
 	}
 	replaced, err := os.Lstat(path)
 	if err != nil {

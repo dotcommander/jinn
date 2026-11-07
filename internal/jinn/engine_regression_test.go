@@ -24,16 +24,16 @@ func TestHistoryNestedIdentityAndEscape(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = scoped.Close() })
-	nested, err := scoped.scopedPlanEngine("nested")
-	if err != nil {
-		t.Fatal(err)
+	nested, nestedErr := scoped.scopedPlanEngine("nested")
+	if nestedErr != nil {
+		t.Fatal(nestedErr)
 	}
 	t.Cleanup(func() { _ = nested.Close() })
 	if nested.historyDir() != e.historyDir() {
 		t.Fatal("nested history identity differs")
 	}
-	if _, err := nested.writeFile(map[string]any{"path": "file.txt", "content": "after"}); err != nil {
-		t.Fatal(err)
+	if _, writeErr := nested.writeFile(map[string]any{"path": "file.txt", "content": "after"}); writeErr != nil {
+		t.Fatal(writeErr)
 	}
 	history, err := e.loadHistory()
 	if err != nil || len(history.Entries) != 1 {
@@ -43,8 +43,8 @@ func TestHistoryNestedIdentityAndEscape(t *testing.T) {
 	if entry.Target != filepath.Join("sub", "nested", "file.txt") {
 		t.Fatalf("target = %q", entry.Target)
 	}
-	if _, err := e.undoRestore(map[string]any{"id": entry.ID}); err != nil {
-		t.Fatal(err)
+	if _, restoreErr := e.undoRestore(map[string]any{"id": entry.ID}); restoreErr != nil {
+		t.Fatal(restoreErr)
 	}
 	content, err := os.ReadFile(filepath.Join(dir, "sub", "nested", "file.txt"))
 	if err != nil || string(content) != "before" {
@@ -124,21 +124,21 @@ func TestMemoryAbsentAndCanceledOpen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := absent.memDBReadConn(context.Background()); !os.IsNotExist(err) {
-		t.Fatalf("absent lookup = %v", err)
+	if _, lookupErr := absent.memDBReadConn(context.Background()); !os.IsNotExist(lookupErr) {
+		t.Fatalf("absent lookup = %v", lookupErr)
 	}
-	if _, err := os.Stat(filepath.Dir(path)); !os.IsNotExist(err) {
-		t.Fatalf("absent read created storage: %v", err)
+	if _, statErr := os.Stat(filepath.Dir(path)); !os.IsNotExist(statErr) {
+		t.Fatalf("absent read created storage: %v", statErr)
 	}
 	writer, _ := testEngine(t)
-	if _, err := writer.memoryTool(context.Background(), map[string]any{"action": "save", "key": "key", "value": "value", "scope": "global"}); err != nil {
-		t.Fatal(err)
+	if _, saveErr := writer.memoryTool(context.Background(), map[string]any{"action": "save", "key": "key", "value": "value", "scope": "global"}); saveErr != nil {
+		t.Fatal(saveErr)
 	}
 	reader, _ := testEngine(t)
 	canceled, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := reader.memDBReadConn(canceled); err == nil || reader.memReadDB != nil {
-		t.Fatalf("canceled open retained handle: %v", err)
+	if _, connErr := reader.memDBReadConn(canceled); connErr == nil || reader.memReadDB != nil {
+		t.Fatalf("canceled open retained handle: %v", connErr)
 	}
 	first, err := reader.memDBReadConn(context.Background())
 	if err != nil {
@@ -241,11 +241,11 @@ func TestMemoryDBPanicPropagation(t *testing.T) {
 	if err := db.PingContext(ctx); err != nil {
 		t.Fatalf("operation after panic = %v", err)
 	}
-	if err := held.Rollback(); err != sql.ErrTxDone {
+	if err := held.Rollback(); !errors.Is(err, sql.ErrTxDone) {
 		t.Fatalf("transaction was not rolled back: %v", err)
 	}
 	callbackErr := errors.New("callback failure")
-	if err := transact(ctx, db, func(*sql.Tx) error { return callbackErr }); err != callbackErr {
+	if err := transact(ctx, db, func(*sql.Tx) error { return callbackErr }); !errors.Is(err, callbackErr) {
 		t.Fatalf("callback error changed: %v", err)
 	}
 	if err := transact(ctx, db, func(*sql.Tx) error { return nil }); err != nil {

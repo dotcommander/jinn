@@ -37,7 +37,18 @@ func (r activeTunnelReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
-func forwardProxyTunnel(ctx context.Context, upstream, downstream net.Conn, buffered io.Reader, budget *proxyBudget, idle time.Duration) {
+// proxyTunnelParams bundles the tunnel endpoints, the budget, and the idle
+// deadline for forwardProxyTunnel.
+type proxyTunnelParams struct {
+	upstream   net.Conn
+	downstream net.Conn
+	buffered   io.Reader
+	budget     *proxyBudget
+	idle       time.Duration
+}
+
+func forwardProxyTunnel(ctx context.Context, params proxyTunnelParams) {
+	upstream, downstream, buffered, budget, idle := params.upstream, params.downstream, params.buffered, params.budget, params.idle
 	closeBoth := func() {
 		_ = upstream.Close()
 		_ = downstream.Close()

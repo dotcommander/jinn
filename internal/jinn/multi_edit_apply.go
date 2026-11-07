@@ -146,7 +146,7 @@ func (e *Engine) writePendingEdits(edits []pendingEdit) (writeResult, error) {
 			updated:    ed.updated,
 		})
 	}
-	if err := e.commitPreparedWrites("multi_edit", len(edits), writes, func(index int) {
+	if err := e.commitPreparedWrites("multi_edit", writes, func(index int) {
 		ed := grouped[order[index]]
 		line := fmt.Sprintf("edited %s", ed.path)
 		if ed.fuzzy {

@@ -12,8 +12,9 @@ import (
 )
 
 const (
+	hostGitHubCom            = "github.com"
 	defaultGitHubAPIEndpoint = "https://api.github.com"
-	githubTokenEnvVar        = "GITHUB_TOKEN"
+	githubTokenEnvVar        = "GITHUB_TOKEN" //nolint:gosec // env var name, not a credential
 	maxGitHubTreeEntries     = 200
 )
 
@@ -36,8 +37,6 @@ type githubInterceptor struct {
 	apiEndpoint string
 	token       string
 }
-
-func (g *githubInterceptor) name() string { return "github" }
 
 func (g *githubInterceptor) intercept(ctx context.Context, target *url.URL) (Document, bool, error) {
 	info, ok := parseGitHubURL(target)
@@ -169,7 +168,7 @@ var gitHubNonCodeSegments = map[string]bool{
 // segments so the generic fetch owns those URLs.
 func parseGitHubURL(target *url.URL) (githubURLInfo, bool) {
 	host := strings.ToLower(target.Hostname())
-	if host != "github.com" && host != "www.github.com" {
+	if host != hostGitHubCom && host != "www.github.com" {
 		return githubURLInfo{}, false
 	}
 	var segments []string
@@ -197,7 +196,7 @@ func parseGitHubURL(target *url.URL) (githubURLInfo, bool) {
 		return githubURLInfo{}, false
 	}
 	action := segments[2]
-	if action != "blob" && action != "tree" {
+	if action != string(githubURLBlob) && action != "tree" {
 		return githubURLInfo{}, false
 	}
 	if len(segments) < 4 {
@@ -209,7 +208,7 @@ func parseGitHubURL(target *url.URL) (githubURLInfo, bool) {
 	if len(segments) > 4 {
 		info.path = strings.Join(segments[4:], "/")
 	}
-	if action == "blob" {
+	if action == string(githubURLBlob) {
 		info.kind = githubURLBlob
 	} else {
 		info.kind = githubURLTree
@@ -303,7 +302,7 @@ func renderGitHubTree(tree gitTreeResponse, prefix string) (string, int) {
 			fmt.Fprintf(&builder, " (%d bytes)", entry.Size)
 		}
 		builder.WriteString("\n")
-		if entry.Type == "blob" && !isBinaryPath(entry.Path) {
+		if entry.Type == string(githubURLBlob) && !isBinaryPath(entry.Path) {
 			inline++
 		}
 	}

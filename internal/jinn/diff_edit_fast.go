@@ -110,7 +110,7 @@ func renderEditScript(script []diffOp, offset int, label string, b *strings.Buil
 // bound the actual change, including partial-line and newline-terminated edits.
 //
 //nolint:revive // argument-limit: signature is fixed by callers in tool_edit.go and tests; cannot collapse params without changing the public contract.
-func generateEditDiff(oldContent, newContent, label string, info matchInfo, oldText, newText string, contextLines int) DiffResult {
+func generateEditDiff(oldContent, newContent, label string, _ matchInfo, _, _ string, contextLines int) DiffResult {
 	if oldContent == newContent {
 		return DiffResult{}
 	}

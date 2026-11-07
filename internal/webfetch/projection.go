@@ -90,6 +90,8 @@ func ProjectFetchContent(content, format string, startLine int, limits OutputLim
 }
 
 // ProjectFetchContentAt resumes at a byte boundary within the selected line.
+//
+//nolint:gocyclo // branch table stays with the decision it guards
 func ProjectFetchContentAt(content, format string, startLine, startLineByte int, limits OutputLimits) (ContentProjection, error) {
 	format = NormalizeProjectionFormat(format)
 	if format == "" {

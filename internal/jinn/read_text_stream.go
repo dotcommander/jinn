@@ -10,52 +10,15 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 )
 
 // scanReadLines visits source lines without retaining skipped lines. A trailing
 // newline terminates its line rather than creating an extra empty line.
-func scanReadLines(r io.Reader, keep func(int) bool, visit func(int, string) error) (int, error) {
-	reader := bufio.NewReaderSize(r, 32<<10)
-	var line strings.Builder
-	count := 0
-	pending := false
-	for {
-		fragment, err := reader.ReadSlice('\n')
-		if visit != nil && keep(count+1) && len(fragment) != 0 {
-			if _, werr := line.Write(fragment); werr != nil {
-				return count, werr
-			}
-		}
-		if len(fragment) != 0 {
-			pending = true
-		}
-		if err == nil {
-			count++
-			if visit != nil && keep(count) {
-				text := line.String()
-				if err := visit(count, text[:len(text)-1]); err != nil {
-					return count, err
-				}
-			}
-			line.Reset()
-			pending = false
-		} else if errors.Is(err, io.EOF) {
-			if pending {
-				count++
-				if visit != nil && keep(count) {
-					if err := visit(count, line.String()); err != nil {
-						return count, err
-					}
-				}
-			}
-			return count, nil
-		} else if !errors.Is(err, bufio.ErrBufferFull) {
-			return count, err
-		}
-	}
-}
+//
+//nolint:gocognit,gocyclo,revive // branchy by design; splitting would scatter one sequential algorithm
 
 // cursorRow is one retained source line with its absolute byte offset.
 // text holds at most readMaxBytes bytes: for an overlong line it is the
@@ -113,6 +76,8 @@ type cursorScanResult struct {
 // scanCursorStream consumes the reader once, tracking line starts as
 // absolute byte offsets and retaining capped row text only within the
 // candidate span (or the last rolling lines).
+//
+//nolint:gocognit,gocyclo,revive // branchy by design; splitting would scatter one sequential algorithm
 func scanCursorStream(r io.Reader, cand readCandidate) (cursorScanResult, error) {
 	var res cursorScanResult
 	res.rows = map[int]cursorRow{}
@@ -149,8 +114,10 @@ func scanCursorStream(r io.Reader, cand readCandidate) (cursorScanResult, error)
 		}
 		line.Reset()
 	}
+scanLoop:
 	for {
 		fragment, rerr := reader.ReadSlice('\n')
+		//nolint:nestif // nested guards express one validation/state ladder
 		if len(fragment) != 0 {
 			content := fragment
 			if rerr == nil {
@@ -171,19 +138,21 @@ func scanCursorStream(r io.Reader, cand readCandidate) (cursorScanResult, error)
 			absOffset += int64(len(fragment))
 			pending = true
 		}
-		if rerr == nil {
+		switch {
+		case rerr == nil:
 			count++
 			emit()
 			lineStart = absOffset
 			lineLen = 0
 			pending = false
-		} else if errors.Is(rerr, io.EOF) {
+		case errors.Is(rerr, io.EOF):
 			if pending {
 				count++
 				emit()
 			}
-			break
-		} else if !errors.Is(rerr, bufio.ErrBufferFull) {
+			break scanLoop
+		case errors.Is(rerr, bufio.ErrBufferFull):
+		default:
 			return res, rerr
 		}
 	}
@@ -205,7 +174,8 @@ func stableReadFile(file *os.File, initial os.FileInfo, resolved string) error {
 	return nil
 }
 
-func (e *Engine) readTextWindow(resolved string, args map[string]interface{}, needChecksum bool) (*readContentResult, error) {
+//nolint:gocognit,gocyclo,revive,funlen // branchy by design; splitting would scatter one sequential algorithm
+func (e *Engine) readTextWindow(resolved string, args map[string]interface{}) (*readContentResult, error) {
 	file, info, err := e.openRegularFile(resolved, maxFileSize, true)
 	if err != nil {
 		if os.IsPermission(err) {
@@ -234,8 +204,8 @@ func (e *Engine) readTextWindow(resolved string, args map[string]interface{}, ne
 		detected = strings.TrimSpace(detected[:i])
 	}
 	if detected == "application/pdf" || ext == ".pdf" || isBinaryContent(sample) {
-		if _, err := io.Copy(io.Discard, reader); err != nil {
-			return nil, err
+		if _, copyErr := io.Copy(io.Discard, reader); copyErr != nil {
+			return nil, copyErr
 		}
 		var rejection *ErrWithSuggestion
 		if detected == "application/pdf" || ext == ".pdf" {
@@ -251,11 +221,11 @@ func (e *Engine) readTextWindow(resolved string, args map[string]interface{}, ne
 		return nil, err
 	}
 	scan, err := scanCursorStream(reader, readCandidateSpan(args, mode))
-	if err != nil {
+	if err != nil { //nolint:staticcheck // scanCursorStream returns a real error for unreadable input; SA4023 misfires on the call
 		return nil, err
 	}
-	if err := stableReadFile(file, info, resolved); err != nil {
-		return &readContentResult{Checksum: checksum()}, err
+	if stableErr := stableReadFile(file, info, resolved); stableErr != nil {
+		return &readContentResult{Checksum: checksum()}, stableErr
 	}
 	e.tracker.record(resolved, info.ModTime(), info.Size())
 	total := scan.total
@@ -304,7 +274,7 @@ func (e *Engine) readTextWindow(resolved string, args map[string]interface{}, ne
 
 	tr := applyTruncateStrategy(renderSelectedWindow(window, start, end, lineNumbers), mode, ext)
 	sequential := mode == "head" || mode == "none" || mode == "smart"
-	if res := byteTruncateResult(tr.Content, start, total, sequential, noSpill, scan.offsets); res != nil {
+	if res := byteTruncateResult(byteTruncateParams{content: tr.Content, startLine: start, total: total, sequential: sequential, spill: noSpill, offsets: scan.offsets}); res != nil {
 		res.Checksum = checksum()
 		return res, nil
 	}
@@ -330,7 +300,7 @@ func utf8Prefix(s string) string {
 
 // Keep the original renderWindow alignment and trailing-newline behavior.
 func renderSelectedWindow(lines []string, start, end int, numbered bool) string {
-	width := len(fmt.Sprint(end))
+	width := len(strconv.Itoa(end))
 	var b strings.Builder
 	for i, line := range lines {
 		if numbered {

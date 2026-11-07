@@ -15,6 +15,8 @@ import (
 // canonical local entries (~256 KiB of content each). HEAD reads and decodes
 // each entry; current cleanup retains it after a 128-byte prefix probe. This
 // measures warm local filesystem behavior, not expiry, cache misses, or network.
+//
+//nolint:gocognit // branchy by design; splitting would scatter one sequential algorithm
 func BenchmarkFreshCacheCleanup(b *testing.B) {
 	dir := b.TempDir()
 	cache := newURLCache(time.Hour, dir, 512<<10)

@@ -68,6 +68,7 @@ func TestMCPCallRejectsUntrustedRouteID(t *testing.T) {
 	}
 }
 
+//nolint:gocognit,gocyclo,revive // branchy by design; splitting would scatter one sequential algorithm
 func TestMCPLogLinksRouteToOutcomeWithoutContent(t *testing.T) {
 	t.Parallel()
 	engine, workspace := newMCPTestEngine(t)
@@ -97,11 +98,11 @@ func TestMCPLogLinksRouteToOutcomeWithoutContent(t *testing.T) {
 		t.Fatalf("log record count = %d: %s", len(lines), text)
 	}
 	var routeRecord, callRecord mcpLogRecord
-	if err := json.Unmarshal([]byte(lines[0]), &routeRecord); err != nil {
-		t.Fatalf("decode route record: %v", err)
+	if decodeErr := json.Unmarshal([]byte(lines[0]), &routeRecord); decodeErr != nil {
+		t.Fatalf("decode route record: %v", decodeErr)
 	}
-	if err := json.Unmarshal([]byte(lines[1]), &callRecord); err != nil {
-		t.Fatalf("decode call record: %v", err)
+	if decodeErr := json.Unmarshal([]byte(lines[1]), &callRecord); decodeErr != nil {
+		t.Fatalf("decode call record: %v", decodeErr)
 	}
 	if routeRecord.RouteID != routeID || callRecord.RouteID != routeID || callRecord.JinnTool != "read_file" || len(routeRecord.Recommendations) == 0 || routeRecord.V != 2 || callRecord.V != 2 {
 		t.Fatalf("linked records = route:%+v call:%+v", routeRecord, callRecord)

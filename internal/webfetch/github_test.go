@@ -23,6 +23,7 @@ func mustParseGitHubURL(t *testing.T, raw string) githubURLInfo {
 	return info
 }
 
+//nolint:gocyclo // branch table stays with the decision it guards
 func TestParseGitHubURL(t *testing.T) {
 	t.Parallel()
 

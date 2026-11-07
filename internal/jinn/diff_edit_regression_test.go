@@ -141,10 +141,10 @@ func TestAppendEnsuresTrailingNewline(t *testing.T) {
 
 func TestPartialApplyErrorIncludesUndoIDs(t *testing.T) {
 	t.Parallel()
-	err := partialApplyErr("patch", []appliedRef{
+	err := partialApplyErr(partialApplyInfo{op: "patch", applied: []appliedRef{
 		{path: "a", resolved: "/root/a", undoID: "one"},
 		{path: "./a", resolved: "/root/a", undoID: "two"},
-	}, []string{"b"}, "b", 2, errors.New("failed b"))
+	}, unstarted: []string{"b"}, failed: "b", total: 2}, errors.New("failed b"))
 	for _, want := range []string{"1 of 2 files", "a (undo id=one)", "./a (undo id=two)"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("missing %q in %v", want, err)

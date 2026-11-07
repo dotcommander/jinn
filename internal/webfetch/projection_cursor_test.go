@@ -6,6 +6,7 @@ import (
 	"unicode/utf8"
 )
 
+//nolint:gocognit,revive // branchy by design; splitting would scatter one sequential algorithm
 func TestProjectionReconstructsCappedContent(t *testing.T) {
 	t.Parallel()
 	for _, content := range []string{"abcdefghijk", "😀😀😀\nlast", "a\r\nb\r\n", "a\n", "", "prefix\n" + strings.Repeat("é", 30) + "\nend"} {

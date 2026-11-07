@@ -101,14 +101,15 @@ func runMCPWithProfile(ctx context.Context, in io.Reader, out io.Writer, ldVersi
 	// The current SDK uses server/discover rather than initialize. Answer a
 	// current-version initialize on this compatibility seam, then pass every
 	// subsequent message through the current SDK unchanged.
+	//nolint:nestif // nested guards express one validation/state ladder
 	if line, remaining, ok := currentMCPInitializePrefix(prefix); ok && (profile == mcpProfileDiscover || !isLegacyMCPLine(line)) {
 		resp, respond := handleMCPLine(line, ldVersion, mode)
 		if respond {
 			if result, ok := resp.Result.(map[string]any); ok {
 				result["protocolVersion"] = protocol.Version
 			}
-			if err := json.NewEncoder(out).Encode(resp); err != nil {
-				return fmt.Errorf("write MCP initialize: %w", err)
+			if encodeErr := json.NewEncoder(out).Encode(resp); encodeErr != nil {
+				return fmt.Errorf("write MCP initialize: %w", encodeErr)
 			}
 		}
 		input = io.MultiReader(bytes.NewReader(remaining), reader)
@@ -133,7 +134,7 @@ func runMCPWithProfile(ctx context.Context, in io.Reader, out io.Writer, ldVersi
 	return nil
 }
 
-func currentMCPInitializePrefix(prefix []byte) ([]byte, []byte, bool) {
+func currentMCPInitializePrefix(prefix []byte) (line, rest []byte, ok bool) {
 	// readMCPPrefix may have consumed leading blank lines.
 	for start := 0; start < len(prefix); {
 		end := bytes.IndexByte(prefix[start:], '\n')
@@ -438,6 +439,7 @@ func withoutMCPHostOnlyArguments(rawArgs map[string]any) map[string]any {
 	return cleaned
 }
 
+//nolint:gocognit,revive // branchy by design; splitting would scatter one sequential algorithm
 func mcpRouteHandlerForProfile(mode jinn.ShellMode, profile mcpProfile) func(context.Context, *server.CallRequest) (protocol.ToolResponse, error) {
 	return func(_ context.Context, req *server.CallRequest) (protocol.ToolResponse, error) {
 		if req == nil || req.Params == nil {

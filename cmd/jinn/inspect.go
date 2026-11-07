@@ -47,7 +47,7 @@ func serveInspector(ctx context.Context, addr string, version string, mode jinn.
 		IdleTimeout:       60 * time.Second,
 	}
 
-	listener, err := net.Listen("tcp", addr)
+	listener, err := new(net.ListenConfig).Listen(context.Background(), "tcp", addr)
 	if err != nil {
 		_ = engine.Close()
 		return err

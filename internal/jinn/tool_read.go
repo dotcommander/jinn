@@ -32,7 +32,7 @@ type readContentResult struct {
 // truncation. The caller is responsible for sandbox validation (checkPath),
 // image detection, checksum computation, and ToolResult wrapping.
 func (e *Engine) readFileContent(resolved string, args map[string]interface{}, needChecksum bool) (*readContentResult, error) {
-	result, err := e.readTextWindow(resolved, args, needChecksum)
+	result, err := e.readTextWindow(resolved, args)
 	// Callers that did not ask for the digest see none, even though the
 	// streaming pass always computes one.
 	if result != nil && !needChecksum {

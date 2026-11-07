@@ -18,7 +18,19 @@ type appliedRef struct{ path, undoID, resolved string }
 // failed member, the publication total, and the unstarted set; committed
 // edits are never replayed: the caller retries only failed and unstarted
 // members.
-func partialApplyErr(op string, applied []appliedRef, unstarted []string, failed string, total int, failErr error) error {
+// partialApplyInfo bundles the partial-apply reporting context:
+// the operation name, the applied set, the unstarted set, the failed
+// member, and the publication total.
+type partialApplyInfo struct {
+	op        string
+	applied   []appliedRef
+	unstarted []string
+	failed    string
+	total     int
+}
+
+func partialApplyErr(info partialApplyInfo, failErr error) error {
+	op, applied, unstarted, failed, total := info.op, info.applied, info.unstarted, info.failed, info.total
 	if len(applied) == 0 {
 		return failErr
 	}
@@ -36,10 +48,7 @@ func partialApplyErr(op string, applied []appliedRef, unstarted []string, failed
 			parts[i] = a.path
 		}
 	}
-	remaining := make([]string, 0, len(unstarted))
-	for _, u := range unstarted {
-		remaining = append(remaining, u)
-	}
+	remaining := append([]string{}, unstarted...)
 	receipt := fmt.Sprintf(" [batch: partial=%d; failed=%s; publication=%d; unstarted=%s]",
 		len(parts), failed, total, strings.Join(remaining, ", "))
 	code := ErrCodeConflict

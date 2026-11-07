@@ -89,6 +89,8 @@ func (c *Client) Get(ctx context.Context, rawURL string, headers http.Header) (h
 
 // GetWithMaxBodyBytes performs a GET with a per-request body limit. It exists
 // for bounded media payloads whose limit differs from the general body limit.
+//
+//nolint:revive // httpResponse is deliberately internal because only package-owned providers consume raw responses.
 func (c *Client) GetWithMaxBodyBytes(ctx context.Context, rawURL string, headers http.Header, maxBytes int64) (httpResponse, error) {
 	return c.do(ctx, http.MethodGet, rawURL, headers, nil, maxBytes)
 }
@@ -248,7 +250,7 @@ func validateURL(u *url.URL, allowPrivateNetworks bool) error {
 // chrome. Non-GitHub and non-blob/raw shapes are returned unchanged.
 func rewriteGitHubBlobURL(u *url.URL) *url.URL {
 	host := strings.ToLower(u.Hostname())
-	if host != "github.com" && host != "www.github.com" {
+	if host != hostGitHubCom && host != "www.github.com" {
 		return u
 	}
 	var segments []string
@@ -266,7 +268,7 @@ func rewriteGitHubBlobURL(u *url.URL) *url.URL {
 	if len(segments) < 5 {
 		return u
 	}
-	if segments[2] != "blob" && segments[2] != "raw" {
+	if segments[2] != string(githubURLBlob) && segments[2] != "raw" {
 		return u
 	}
 	rewritten := *u
