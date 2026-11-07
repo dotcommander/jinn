@@ -16,11 +16,16 @@ import (
 func TestWebConfigUsesJinnNamesAndVersionedUserAgent(t *testing.T) {
 	t.Setenv("JINN_WEB_SEARCH_PROVIDER", "exa")
 	t.Setenv("JINN_WEB_CACHE_DIR", t.TempDir())
+	t.Setenv("SEARXNG_API_KEY", "sx-key")
+	t.Setenv("JINN_WEB_SEARXNG_SEARCH_ENDPOINT", "http://localhost:9999/search")
 	version = "test-version"
 	t.Cleanup(func() { version = "dev" })
 	cfg := webConfig()
 	if cfg.SearchProvider != "exa" {
 		t.Fatalf("provider = %q", cfg.SearchProvider)
+	}
+	if cfg.SearXNGAPIKey != "sx-key" || cfg.SearXNGSearchEndpoint != "http://localhost:9999/search" {
+		t.Fatalf("searxng config = key %q endpoint %q", cfg.SearXNGAPIKey, cfg.SearXNGSearchEndpoint)
 	}
 	if cfg.UserAgent != "jinn/"+jinn.ResolveVersion("test-version") {
 		t.Fatalf("user agent = %q", cfg.UserAgent)

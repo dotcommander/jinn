@@ -26,8 +26,8 @@ func webConfig() webfetch.Config {
 		cacheDir = defaultJinnWebCacheDir()
 	}
 	return webfetch.Config{
-		UserAgent: "jinn/" + jinn.ResolveVersion(version), JinaAPIKey: strings.TrimSpace(os.Getenv("JINA_API_KEY")), BraveAPIKey: strings.TrimSpace(os.Getenv("BRAVE_API_KEY")), ExaAPIKey: strings.TrimSpace(os.Getenv("EXA_API_KEY")),
-		ReaderMode: strings.TrimSpace(os.Getenv("JINN_WEB_READER")), ReaderEndpoint: strings.TrimSpace(os.Getenv("JINN_WEB_READER_ENDPOINT")), SearchEndpoint: strings.TrimSpace(os.Getenv("JINN_WEB_SEARCH_ENDPOINT")), ExaSearchEndpoint: strings.TrimSpace(os.Getenv("JINN_WEB_EXA_SEARCH_ENDPOINT")), SearchProvider: strings.TrimSpace(os.Getenv("JINN_WEB_SEARCH_PROVIDER")),
+		UserAgent: "jinn/" + jinn.ResolveVersion(version), JinaAPIKey: strings.TrimSpace(os.Getenv("JINA_API_KEY")), BraveAPIKey: strings.TrimSpace(os.Getenv("BRAVE_API_KEY")), ExaAPIKey: strings.TrimSpace(os.Getenv("EXA_API_KEY")), SearXNGAPIKey: strings.TrimSpace(os.Getenv("SEARXNG_API_KEY")),
+		ReaderMode: strings.TrimSpace(os.Getenv("JINN_WEB_READER")), ReaderEndpoint: strings.TrimSpace(os.Getenv("JINN_WEB_READER_ENDPOINT")), SearchEndpoint: strings.TrimSpace(os.Getenv("JINN_WEB_SEARCH_ENDPOINT")), ExaSearchEndpoint: strings.TrimSpace(os.Getenv("JINN_WEB_EXA_SEARCH_ENDPOINT")), SearXNGSearchEndpoint: strings.TrimSpace(os.Getenv("JINN_WEB_SEARXNG_SEARCH_ENDPOINT")), SearchProvider: strings.TrimSpace(os.Getenv("JINN_WEB_SEARCH_PROVIDER")),
 		URLCacheTTL: webDurationEnv("JINN_WEB_CACHE_TTL"), URLCacheDir: cacheDir, Timeout: webDurationEnv("JINN_WEB_TIMEOUT"), MaxBodyBytes: webInt64Env("JINN_WEB_MAX_BODY_BYTES"), AllowPrivateNetworks: webBoolEnv("JINN_WEB_ALLOW_PRIVATE_NETWORKS"),
 		RenderTimeout: webDurationEnv("JINN_WEB_RENDER_TIMEOUT"), RenderMaxConcurrency: webIntEnv("JINN_WEB_RENDER_MAX_CONCURRENCY"), RenderMaxRequests: webIntEnv("JINN_WEB_RENDER_MAX_REQUESTS"), RenderMaxNetworkBytes: webInt64Env("JINN_WEB_RENDER_MAX_NETWORK_BYTES"), RenderMaxHTMLBytes: webInt64Env("JINN_WEB_RENDER_MAX_HTML_BYTES"), ChromePath: strings.TrimSpace(os.Getenv("JINN_WEB_CHROME_PATH")),
 	}
@@ -88,7 +88,7 @@ func runWeb(ctx context.Context, args []string) error {
 	}
 }
 
-const webHelp = "Usage:\n  jinn web fetch [flags] URL\n  jinn web search [flags] QUERY\n\nUse --help after either subcommand for its flags. Web configuration uses JINN_WEB_* variables plus JINA_API_KEY, BRAVE_API_KEY, and EXA_API_KEY.\n"
+const webHelp = "Usage:\n  jinn web fetch [flags] URL\n  jinn web search [flags] QUERY\n\nUse --help after either subcommand for its flags. Web configuration uses JINN_WEB_* variables plus JINA_API_KEY, BRAVE_API_KEY, EXA_API_KEY, and SEARXNG_API_KEY.\n"
 
 func runWebFetch(ctx context.Context, args []string) error {
 	flags := flag.NewFlagSet("jinn web fetch", flag.ContinueOnError)
