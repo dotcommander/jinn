@@ -31,6 +31,7 @@ type Engine struct {
 	root                         *os.Root
 	shellMode                    ShellMode
 	sandboxBinary                string
+	launchPolicy                 *launchPolicy // global exact-match run_shell gate; nil = no policy
 	requireMutationPreconditions bool
 	tracker                      *fileTracker
 	rgPath                       string             // path to rg binary, empty if unavailable
@@ -83,11 +84,16 @@ func NewWithConfig(workDir string, config EngineConfig) (*Engine, error) {
 		_ = root.Close()
 		return nil, err
 	}
+	launchPolicy, err := loadLaunchPolicy()
+	if err != nil {
+		_ = root.Close()
+		return nil, err
+	}
 	execPath := sanitizeExecutablePath(os.Getenv("PATH"))
 	rgPath, _ := findExecutableInPath(execPath, "rg")
 	return &Engine{
 		workDir: workDir, version: config.Version, root: root,
-		shellMode: config.ShellMode, sandboxBinary: sandboxBinary,
+		shellMode: config.ShellMode, sandboxBinary: sandboxBinary, launchPolicy: launchPolicy,
 		requireMutationPreconditions: !config.UnsafeAllowMutationWithoutPreconditions,
 		tracker:                      newFileTracker(), rgPath: rgPath, execPath: execPath, LSPTimeoutSec: 10,
 		webConfig: config.Web,

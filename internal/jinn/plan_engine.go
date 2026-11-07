@@ -201,6 +201,18 @@ func validatePlan(plan *PlanTree) error {
 		return planInvalid("root node %s not found", plan.Root)
 	}
 
+	// Validate each node's expect with the same condition contract as edges.
+	// Unlike edges, expect gates the node's own result, so the low-confidence
+	// tier rule (which guards mutating edge targets) does not apply here.
+	for ni := range plan.Nodes {
+		n := &plan.Nodes[ni]
+		if n.Expect != nil {
+			if err := validateCondition(n.Expect); err != nil {
+				return planInvalid("node %s has invalid expect: %v", n.ID, err)
+			}
+		}
+	}
+
 	// Check edges target known nodes and tier rules.
 	for ni := range plan.Nodes {
 		n := &plan.Nodes[ni]
@@ -283,9 +295,10 @@ func numericPlanValue(value any, integer bool) (float64, bool) {
 	return number, true
 }
 
-//nolint:funlen,gocognit,gocyclo,revive,perfsprint // condition variants map directly to their wire contract.
 // validateCondition validates cond and, for match/numeric kinds, stores the
 // compiled Regex/Extract on cond for later per-op evaluation.
+//
+//nolint:funlen,gocognit,gocyclo,revive,perfsprint // condition variants map directly to their wire contract.
 func validateCondition(cond *Condition) error {
 	switch cond.Kind {
 	case "always":
@@ -793,7 +806,9 @@ func (e *Engine) scopedPlanEngine(cwd string) (*Engine, error) {
 }
 
 //nolint:funlen,gocognit,gocyclo,nestif,revive // execution ordering, cancellation, and first-match edges form one state machine.
-func (e *Engine) runPlanTree(ctx context.Context, plan *PlanTree) (*PlanRunResult, error) {
+func (e *Engine) runPlanTree(ctx context.Context, plan *PlanTree) (result *PlanRunResult, err error) {
+	result = nil
+	err = nil
 	opCtx := planExecutionContextFor(ctx, plan)
 	if opCtx.depth > opCtx.maxDepth {
 		return newPlanRunResult(nil, nil, opCtx.depth, StopMaxDepth, 0, 0, 0, 0), nil
@@ -804,6 +819,19 @@ func (e *Engine) runPlanTree(ctx context.Context, plan *PlanTree) (*PlanRunResul
 	if err != nil {
 		return nil, err
 	}
+	// Best-effort JSONL audit trail (one event per completed node + a final
+	// run event). A nil audit means the file could not be created; plan
+	// execution proceeds identically either way.
+	audit := newPlanAudit(planEngine.workDir)
+	defer func() {
+		if audit != nil {
+			audit.runEvent(result)
+			if result != nil {
+				result.AuditPath = audit.relPath()
+			}
+			audit.close()
+		}
+	}()
 	if planEngine != e {
 		defer func() { _ = planEngine.Close() }()
 	}
@@ -890,6 +918,7 @@ func (e *Engine) runPlanTree(ctx context.Context, plan *PlanTree) (*PlanRunResul
 		}
 
 		transcript = append(transcript, nodeResult)
+		audit.nodeEvent(nodeResult, edgesEvaluated, edgesMatched)
 		if !planTranscriptWithinBudget(transcript, pathTaken, opCtx.depth+depth, edgesEvaluated, edgesMatched) {
 			transcript, pathTaken = fitPlanTranscript(transcript, pathTaken, opCtx.depth+depth, edgesEvaluated, edgesMatched)
 			if ctx.Err() != nil {
@@ -902,6 +931,22 @@ func (e *Engine) runPlanTree(ctx context.Context, plan *PlanTree) (*PlanRunResul
 		}
 		if blocked {
 			return newPlanRunResult(transcript, pathTaken, opCtx.depth+depth, StopMutationBlocked, edgesEvaluated, edgesMatched, executedNodes, executedOperations), nil
+		}
+
+		// Stage-boundary gate: expect must hold on this node's last op result
+		// before any edge is evaluated. A failed expectation stops the run
+		// with the offending value recorded — the malformed result never
+		// reaches edge routing, so it cannot silently misroute.
+		if node.Expect != nil {
+			expectOK, expectErr := planEngine.evaluateCondition(lastOpResult, *node.Expect)
+			if expectErr != nil {
+				return newPlanRunResult(transcript, pathTaken, opCtx.depth+depth, StopError, edgesEvaluated, edgesMatched, executedNodes, executedOperations), nil
+			}
+			if !expectOK {
+				failed := newPlanRunResult(transcript, pathTaken, opCtx.depth+depth, StopExpectFailed, edgesEvaluated, edgesMatched, executedNodes, executedOperations)
+				failed.ExpectFailure = &ExpectFailure{Node: currentID, Condition: *node.Expect, Value: boundExpectValue(lastOpResult)}
+				return failed, nil
+			}
 		}
 
 		matched := false
@@ -969,6 +1014,17 @@ func boundPlanOpResultLimit(result PlanOpResult, fieldLimit int) PlanOpResult {
 	result.Stdout = trim(result.Stdout)
 	result.Stderr = trim(result.Stderr)
 	return result
+}
+
+// boundExpectValue returns the bounded last-op output an expect condition was
+// evaluated against: stdout+stderr when present (shell ops), else the result
+// text (tool ops) — mirroring evaluateCondition's stream selection.
+func boundExpectValue(last PlanOpResult) string {
+	raw := last.Result
+	if last.Classification != "" || last.Stdout != "" || last.Stderr != "" {
+		raw = last.Stdout + last.Stderr
+	}
+	return boundPlanOpResultLimit(PlanOpResult{Result: raw}, 1024).Result
 }
 
 func compactPlanTranscript(transcript []PlanNodeResult) {

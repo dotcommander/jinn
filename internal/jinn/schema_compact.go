@@ -30,7 +30,7 @@ func LeanSchema() (string, error) {
 }
 
 type leanCacheEntry struct {
-	s string
+	s   string
 	err error
 }
 

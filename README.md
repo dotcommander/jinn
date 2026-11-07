@@ -285,6 +285,7 @@ MCP stays non-executing by default: `jinn_route` discovers capabilities and `ask
 3. **Mutation Preconditions:** Existing targets require `if_checksum`; creation requires `if_absent:true`. Cross-process locks cover validation, durable snapshot, and atomic replacement.
 4. **Shell Modes:** Shell is disabled by default. Sandboxed mode denies network and user configuration; unsafe mode is explicitly unconfined.
 5. **Risk Classifier:** `force` overrides only the advisory dangerous-command block; it never enables shell execution or removes confinement.
+6. **Launch Policy (opt-in):** A global JSON file at `$JINN_CONFIG_DIR/jinn/launch-policy.json` (or `os.UserConfigDir()/jinn/launch-policy.json`) can declare exact-match `allow`/`ask`/`deny` rules for `run_shell` commands: `{"launchPolicy": [{"command": "npm test", "decision": "allow"}]}`. Commands are matched as opaque strings with no parsing or normalization; `deny` wins over `ask` over `allow`; unmatched commands are `ask`. `deny` blocks even with `force: true`, and `ask`/unmatched block fail-closed (the one-shot protocol has no confirmation UI). There is no workspace-level policy — only the global file is read. Absent file means no policy; malformed files fail engine construction.
 6. **Output Caps:** Shell capture uses 1 MiB memory and at most 16 MiB spill before the process group is killed with `resource_limit`.
 
 ---

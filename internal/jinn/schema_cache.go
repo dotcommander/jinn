@@ -14,10 +14,10 @@ import (
 // the returned slice/maps.
 
 type parsedSchemaResult struct {
-	tools []schemaTool
+	tools  []schemaTool
 	byName map[string]schemaTool
-	names []string
-	err   error
+	names  []string
+	err    error
 }
 
 var parsedSchemaCache = sync.OnceValue(func() parsedSchemaResult {

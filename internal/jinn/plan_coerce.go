@@ -122,6 +122,13 @@ func coercePlanNodeConditions(raw any) error {
 			return err
 		}
 	}
+	if when, ok := node["expect"].(string); ok {
+		condition, err := coerceCondition(when)
+		if err != nil {
+			return err
+		}
+		node["expect"] = condition
+	}
 	return nil
 }
 

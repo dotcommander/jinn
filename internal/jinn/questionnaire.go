@@ -66,7 +66,30 @@ type QuestionnaireResult struct {
 	Cancelled bool                  `json:"cancelled"`
 }
 
+// lineTerminators are stripped from model-supplied strings once at the
+// decode boundary, before validation, so guards compare the text the
+// user will actually see (e.g. "Other\r" cannot slip past reserved_label).
+var lineTerminators = strings.NewReplacer("\r\n", "", "\r", "", "\n", "")
+
+// normalizeQuestionnaireStrings strips line terminators from every
+// model-supplied string in place, once, at the entry boundary.
+func normalizeQuestionnaireStrings(questionnaire *Questionnaire) {
+	for i := range questionnaire.Questions {
+		question := &questionnaire.Questions[i]
+		question.Question = lineTerminators.Replace(question.Question)
+		question.Header = lineTerminators.Replace(question.Header)
+		for j := range question.Options {
+			option := &question.Options[j]
+			option.Value = lineTerminators.Replace(option.Value)
+			option.Label = lineTerminators.Replace(option.Label)
+			option.Description = lineTerminators.Replace(option.Description)
+		}
+	}
+}
+
 // DecodeQuestionnaire decodes and validates a questionnaire JSON document.
+// Model-supplied strings are normalized (line terminators stripped) once
+// at this boundary, before any validation runs.
 func DecodeQuestionnaire(data []byte) (Questionnaire, error) {
 	var questionnaire Questionnaire
 	decoder := json.NewDecoder(bytes.NewReader(data))
@@ -78,6 +101,7 @@ func DecodeQuestionnaire(data []byte) (Questionnaire, error) {
 	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
 		return Questionnaire{}, errors.New("decode questionnaire: trailing JSON")
 	}
+	normalizeQuestionnaireStrings(&questionnaire)
 	if err := ValidateQuestionnaire(questionnaire); err != nil {
 		return Questionnaire{}, err
 	}

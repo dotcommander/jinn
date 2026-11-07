@@ -25,12 +25,16 @@ type PlanTree struct {
 
 // PlanNode is a plan execution step and its outgoing conditional edges.
 type PlanNode struct {
-	ID       string     `json:"id"`
-	Commands []PlanOp   `json:"commands"`
-	Parallel bool       `json:"parallel,omitempty"`
-	Mutates  bool       `json:"mutates,omitempty"`
-	Force    bool       `json:"force,omitempty"` // node-level dangerous-mutation gate, Phase 2 only
-	Edges    []PlanEdge `json:"edges,omitempty"`
+	ID       string   `json:"id"`
+	Commands []PlanOp `json:"commands"`
+	Parallel bool     `json:"parallel,omitempty"`
+	Mutates  bool     `json:"mutates,omitempty"`
+	Force    bool     `json:"force,omitempty"` // node-level dangerous-mutation gate, Phase 2 only
+	// Expect, when set, must hold on this node's last op result before any
+	// edge is evaluated. A failed expectation stops the run (StopExpectFailed)
+	// with no edge firing — a malformed stage result never misroutes.
+	Expect *Condition `json:"expect,omitempty"`
+	Edges  []PlanEdge `json:"edges,omitempty"`
 }
 
 // PlanOp has exactly one of Shell or Tool set. It mirrors Request{Tool,Args}
@@ -90,6 +94,9 @@ const (
 	StopError StopReason = "error"
 	// StopResourceLimit indicates an operation or transcript budget was exhausted.
 	StopResourceLimit StopReason = "resource_limit"
+	// StopExpectFailed indicates a node's expect condition did not hold on its
+	// last op result; no edge was evaluated for that node.
+	StopExpectFailed StopReason = "expect_failed"
 )
 
 // PlanOpResult records the outcome of one command or tool operation.
@@ -111,6 +118,14 @@ type PlanNodeResult struct {
 	Ops    []PlanOpResult `json:"ops"`
 }
 
+// ExpectFailure describes a node whose expect condition did not hold.
+type ExpectFailure struct {
+	Node      string    `json:"node"`
+	Condition Condition `json:"condition"`
+	// Value is the bounded last-op result the condition was evaluated against.
+	Value string `json:"value"`
+}
+
 // PlanRunResult rides in ToolResult.Meta["plan_run"].
 type PlanRunResult struct {
 	Transcript     []PlanNodeResult `json:"transcript"`
@@ -119,6 +134,11 @@ type PlanRunResult struct {
 	StoppedReason  StopReason       `json:"stopped_reason"`
 	EdgesEvaluated int              `json:"edges_evaluated"`
 	EdgesMatched   int              `json:"edges_matched"`
+	// ExpectFailure is set only when StoppedReason is StopExpectFailed.
+	ExpectFailure *ExpectFailure `json:"expect_failure,omitempty"`
+	// AuditPath is the workspace-relative JSONL audit trail for this run,
+	// or empty when the audit file could not be created (best-effort).
+	AuditPath string `json:"audit_path,omitempty"`
 
 	// These counters intentionally remain internal so the public plan_run
 	// schema stays stable even when transcript fitting drops old entries.

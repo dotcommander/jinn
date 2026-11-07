@@ -96,6 +96,49 @@
                     "force": {
                       "type": "boolean"
                     },
+                    "expect": {
+                      "type": "object",
+                      "description": "Optional stage gate: must hold on this node's last op result before any edge is evaluated. A failed expectation stops the run (expect_failed) with no edge firing.",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "exitCode",
+                            "fileExists",
+                            "jsonPath",
+                            "numeric",
+                            "match",
+                            "always"
+                          ]
+                        },
+                        "op": {
+                          "type": "string"
+                        },
+                        "value": {},
+                        "path": {
+                          "type": "string"
+                        },
+                        "extract": {
+                          "type": "string"
+                        },
+                        "regex": {
+                          "type": "string"
+                        },
+                        "stream": {
+                          "type": "string",
+                          "enum": [
+                            "stdout",
+                            "stderr"
+                          ]
+                        },
+                        "negate": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "kind"
+                      ]
+                    },
                     "edges": {
                       "maxItems": 32,
                       "type": "array",
@@ -655,7 +698,7 @@
           },
           "if_checksum": {
             "type": "string",
-            "description": "SHA-256 hex digest from a previous read_file response (meta.sha256). When set, the edit is rejected with error_code=stale_file if the file's current content no longer hashes to this digest \u2014 protects against lost updates when the file changed since you read it."
+            "description": "Required for existing files. SHA-256 hex digest from a previous read_file response (meta.sha256). When set, the edit is rejected with error_code=stale_file if the file's current content no longer hashes to this digest \u2014 protects against lost updates when the file changed since you read it."
           }
         },
         "required": [
@@ -694,7 +737,7 @@
                 },
                 "if_checksum": {
                   "type": "string",
-                  "description": "SHA-256 hex digest from a previous read_file response for this target. Rejects the whole batch with error_code=stale_file when the file changed."
+                  "description": "Required for each existing target. SHA-256 hex digest from a previous read_file response for this target. Rejects the whole batch with error_code=stale_file when the file changed."
                 },
                 "fuzzy_indent": {
                   "type": "boolean",
@@ -1281,7 +1324,7 @@
     "type": "function",
     "function": {
       "name": "web_fetch",
-      "description": "Fetch an http or https URL as extracted text. Private networks and unsafe redirects are blocked by default.",
+      "description": "Fetch an http or https URL as extracted text. Private networks and unsafe redirects are blocked by default. Redirects to a different host are not followed; the target is reported so it can be fetched explicitly.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -1354,6 +1397,25 @@
             "minimum": 0,
             "description": "Maximum projected lines; zero is unlimited",
             "default": 0
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "extract"
+            ],
+            "description": "With fields, return typed values grounded on source lines instead of page content"
+          },
+          "fields": {
+            "type": "object",
+            "description": "Extract mode only: map of field name to type (string, number, boolean)",
+            "additionalProperties": {
+              "type": "string",
+              "enum": [
+                "string",
+                "number",
+                "boolean"
+              ]
+            }
           }
         },
         "required": [
@@ -1366,7 +1428,7 @@
     "type": "function",
     "function": {
       "name": "web_search",
-      "description": "Search the public web with the configured Brave or Exa provider. Requires BRAVE_API_KEY or EXA_API_KEY.",
+      "description": "Search the public web with the configured Brave or Exa provider. Requires BRAVE_API_KEY or EXA_API_KEY. When several providers are configured (JINN_WEB_SEARCH_PROVIDER as an ordered comma-separated list), the next provider is tried on error or zero results and each fallback reason is reported.",
       "parameters": {
         "type": "object",
         "properties": {

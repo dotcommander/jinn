@@ -390,14 +390,44 @@ func (e *Engine) runShell(ctx context.Context, args map[string]interface{}) (str
 	}
 	// Classify before dry-run so the response envelope always includes risk metadata.
 	riskLevel, riskReason := ClassifyCommand(cmd)
+	// Launch policy gate (opt-in global config): evaluated before dry-run and
+	// execution, and before the dangerous-command force check, so deny always
+	// blocks and ask/unmatched block fail-closed (one-shot has no confirm UI).
+	// Allow proceeds to the existing classifier; absent policy is a no-op.
+	if e.launchPolicy != nil {
+		switch decision := e.launchPolicy.evaluate(cmd); decision {
+		case launchDeny:
+			return "", map[string]any{
+				"risk":          riskLevel.String(),
+				"launch_policy": string(decision),
+			}, &ErrWithSuggestion{
+				Err:        fmt.Errorf("blocked by launch policy: %s", cmd),
+				Suggestion: "remove or change the deny rule in the global launch policy file, or use a different command",
+				Code:       ErrCodeCommandBlocked,
+			}
+		case launchAsk:
+			return "", map[string]any{
+				"risk":          riskLevel.String(),
+				"launch_policy": string(decision),
+			}, &ErrWithSuggestion{
+				Err:        fmt.Errorf("launch policy requires confirmation for: %s", cmd),
+				Suggestion: "add an allow rule for this exact command to the global launch policy file, or run it through a host that can confirm",
+				Code:       ErrCodeCommandBlocked,
+			}
+		}
+	}
 	if boolArg(args, "dry_run") {
-		return fmt.Sprintf("[dry-run] would execute: %s", cmd), map[string]any{
+		meta := map[string]any{
 			"risk":           riskLevel.String(),
 			"classification": string(ClassSuccess),
 			"timeout_ms":     int64(intArg(args, "timeout", 30) * 1000),
 			"duration_ms":    int64(0),
 			"exit_code":      0,
-		}, nil
+		}
+		if e.launchPolicy != nil {
+			meta["launch_policy"] = string(e.launchPolicy.evaluate(cmd))
+		}
+		return fmt.Sprintf("[dry-run] would execute: %s", cmd), meta, nil
 	}
 
 	// Block dangerous commands unless force=true.
@@ -431,6 +461,9 @@ func (e *Engine) runShell(ctx context.Context, args map[string]interface{}) (str
 		"timeout_ms":     int64(timeout * 1000),
 		"duration_ms":    res.durationMs,
 		"shell_mode":     string(e.shellMode),
+	}
+	if e.launchPolicy != nil {
+		meta["launch_policy"] = string(e.launchPolicy.evaluate(cmd))
 	}
 	if e.shellMode == ShellModeUnsafe {
 		meta["shell_security"] = "unconfined"

@@ -115,3 +115,18 @@ func TestDecodeQuestionnaireRejectsTrailingJSON(t *testing.T) {
 		t.Fatalf("error = %v", err)
 	}
 }
+
+// Discriminating check (rpiv-ask-user-question adoption): a reserved label
+// smuggled as "Other\r" must fail validation after boundary normalization,
+// and labels that only differ by line terminators must collide as duplicates.
+func TestDecodeQuestionnaireNormalizesLineTerminators(t *testing.T) {
+	t.Parallel()
+	reserved := []byte(`{"questions":[{"question":"Q?","header":"H","options":[{"value":"a","label":"Other\r","description":"a"},{"value":"b","label":"B","description":"b"}]}]}`)
+	if _, err := DecodeQuestionnaire(reserved); err == nil || !strings.Contains(err.Error(), "reserved") {
+		t.Fatalf("reserved-with-terminator error = %v", err)
+	}
+	dupe := []byte(`{"questions":[{"question":"Q?","header":"H","options":[{"value":"a","label":"Same","description":"a"},{"value":"b","label":"Same\r\n","description":"b"}]}]}`)
+	if _, err := DecodeQuestionnaire(dupe); err == nil || !strings.Contains(err.Error(), "unique") {
+		t.Fatalf("normalized-duplicate error = %v", err)
+	}
+}
