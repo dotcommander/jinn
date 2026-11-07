@@ -105,7 +105,7 @@ echo '{"tool":"read_file","args":{"path":"main.go"}}' | jinn
 - **PDF files** return `ok: false` with `suggestion: "convert the PDF to text first (pdftotext, pdftk, or a cloud OCR service) and read the text file"`. Content is never returned.
 - **Image files** are detected by content rather than extension — a `.png` renamed without an extension is still identified as an image. Detected images return a base64-encoded content block with the correct MIME type (`image/png`, `image/jpeg`, etc.). SVG files return `image/svg+xml`. Pass the result directly to a vision model.
 - Binary files (null byte in first 512 bytes) return `[binary file: N bytes — use stat_file for metadata or skip content reads]` as a success result (not an error).
-- Sequentially truncated output appends: `[Showing lines X-Y of Z. Use start_line=N to continue. Remainder saved to <path>.]`. It also returns an exact `next_call`. Tail and middle truncation omit unsafe continuations and recommend a narrower window.
+- Sequentially truncated output appends: `[Showing lines X-Y of Z. Use start_line=N to continue.]` and carries a digest-backed cursor in the truncation metadata (`next_offset` absolute byte offset of the next line; `next_column` bytes already consumed inside an overlong line). It also returns an exact `next_call`. Pages two readers byte-identically (concatenating `next_offset` prefixes yields the file). Tail and middle truncation omit unsafe continuations and recommend a narrower window.
 - `include_checksum:true` returns the SHA-256 required by secure mutation calls. See [Security: Mutation Preconditions](security.md#mutation-preconditions-and-locking).
 
 Read lines 10 through 20:
@@ -328,9 +328,11 @@ echo '{"tool":"undo","args":{"action":"list"}}' | jinn
 
 | Name | Type | Required | Default | Description |
 |------|------|----------|---------|-------------|
-| `action` | string | Yes | -- | `list`, `preview`, `restore`, or `clear` |
+| `action` | string | Yes | -- | `list`, `preview`, or `restore` (`clear` is rejected: history is non-deletable) |
 | `id` | string | For `preview`, `restore` | -- | Snapshot ID. A unique prefix of the ID also works. |
 | `if_checksum` | string | No | -- | For `restore`, SHA-256 of the current target; mismatch rejects the restore as stale |
+| `if_version` | string | No | -- | For `restore`, the recorded before-hash of the snapshot; mismatch rejects the restore as a version the snapshot never had, and an unobserved change since recording rejects as stale |
+| `if_absent` | bool | No | `false` | For `restore` of a created file, assert the target is absent before recreating |
 | `limit` | int | No | all | Maximum number of snapshots to return for `list` |
 
 **Actions:**
@@ -340,7 +342,7 @@ echo '{"tool":"undo","args":{"action":"list"}}' | jinn
 | `list` | -- | List snapshots newest-first with ID, file path, timestamp, and operation |
 | `preview` | `id` | Unified diff between the snapshot and the current file contents |
 | `restore` | `id` | Revert the file to the snapshot contents via an atomic write |
-| `clear` | -- | Delete all snapshot history |
+| `clear` | -- | Rejected: history is non-deletable recovery evidence |
 
 **Notes:**
 
@@ -529,7 +531,8 @@ echo '{"tool":"list_dir","args":{"path":".","depth":2}}' | jinn
 - Hidden files and directories (names starting with `.`) are excluded.
 - Output is sorted alphabetically.
 - Directory entries are suffixed with `/` to distinguish them from files.
-- Returns one JSON object with `entries`, `offset`, `truncated`, `total_count`, and `total_count_exact`; an early traversal stop makes the total inexact. A truncated result includes an exact `next_call`.
+- Returns one JSON object with `entries`, `offset`, `truncated`, `total_count`, and `total_count_exact`; an early traversal stop makes the total inexact. A truncated result includes an exact `next_call`, a `truncation_reason` naming the binding cap (`visited`, `max_entries`, or `depth`), and an actionable hint. A depth-bounded walk reports `truncated: true` even when every visible entry was returned.
+- Symlinks encountered during the walk are reported in a `symlinks` map from entry path to link target, so a dangling link is distinguishable from a broken tree.
 
 ---
 

@@ -854,7 +854,7 @@
     "type": "function",
     "function": {
       "name": "list_dir",
-      "description": "List directory contents. Hidden files are excluded. Bounded pages return offsets and exact next_call arguments. Supports mtime filtering.",
+      "description": "List directory contents. Hidden files are excluded. Bounded pages return offsets and exact next_call arguments. Results name the binding truncation cap (visited, max_entries, or depth) and report symlink targets. Supports mtime filtering.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -1056,6 +1056,10 @@
           "if_checksum": {
             "type": "string",
             "description": "For restore, optional SHA-256 digest of the target's current bytes from read_file. A mismatch rejects the restore with error_code=stale_file."
+          },
+          "if_version": {
+            "type": "string",
+            "description": "For restore, the recorded before-hash of the snapshot. A mismatch rejects the restore (invalid_args); a target changed since recording rejects as stale_file. Mutually exclusive with if_checksum and if_absent."
           },
           "if_absent": {
             "type": "boolean",
