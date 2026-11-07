@@ -268,7 +268,40 @@ func (e *Engine) checkPathForRead(p string) (string, error) {
 	return e.checkPath(p)
 }
 
+// outsideWorkdirErr explains a sandbox-boundary rejection in terms the
+// caller can act on. Truncated display paths (containing '…') and temp
+// spill files are the two common confusions: neither is a readable
+// workspace path, and saying so beats a bare "outside working directory".
+func outsideWorkdirErr(p string) *ErrWithSuggestion {
+	if strings.Contains(p, "…") {
+		return &ErrWithSuggestion{
+			Err:        fmt.Errorf("path %q appears truncated: it contains '…' and is not a real filesystem path", p),
+			Suggestion: "the path was truncated in display; re-run the original tool call with narrower output (offset/limit/max_matches) to get a usable path, or supply a path inside the workdir",
+			Code:       ErrCodePathOutsideSandbox,
+		}
+	}
+	if strings.HasPrefix(p, os.TempDir()) || strings.Contains(p, "/T/") {
+		return &ErrWithSuggestion{
+			Err:        fmt.Errorf("%s is outside working directory (temp/spill area)", p),
+			Suggestion: "temp and spill files outside the workspace cannot be read back; re-run the original command with bounded output, or supply a path inside the workdir",
+			Code:       ErrCodePathOutsideSandbox,
+		}
+	}
+	return &ErrWithSuggestion{
+		Err:        fmt.Errorf("%s is outside working directory", p),
+		Suggestion: "path resolves outside the sandbox root; supply a path inside the workdir",
+		Code:       ErrCodePathOutsideSandbox,
+	}
+}
+
 func (e *Engine) checkPath(p string) (string, error) {
+	if strings.Contains(p, "…") {
+		return "", &ErrWithSuggestion{
+			Err:        fmt.Errorf("path %q appears truncated: it contains '…' and is not a real filesystem path", p),
+			Suggestion: "the path was truncated in display; re-run the original tool call with narrower output (offset/limit/max_matches) to get a usable path, or supply a path inside the workdir",
+			Code:       ErrCodePathOutsideSandbox,
+		}
+	}
 	resolved, err := e.resolvePath(p)
 	if err != nil {
 		return "", err
@@ -290,11 +323,7 @@ func (e *Engine) checkPath(p string) (string, error) {
 
 	// Check workdir boundary on the resolved path.
 	if !strings.HasPrefix(real, e.workDir+"/") && real != e.workDir {
-		return "", &ErrWithSuggestion{
-			Err:        fmt.Errorf("%s is outside working directory", p),
-			Suggestion: "path resolves outside the sandbox root; supply a path inside the workdir",
-			Code:       ErrCodePathOutsideSandbox,
-		}
+		return "", outsideWorkdirErr(p)
 	}
 	return real, nil
 }

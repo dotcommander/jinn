@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"net/http"
 	"os"
@@ -175,7 +176,7 @@ func stableReadFile(file *os.File, initial os.FileInfo, resolved string) error {
 }
 
 //nolint:gocognit,gocyclo,revive,funlen // branchy by design; splitting would scatter one sequential algorithm
-func (e *Engine) readTextWindow(resolved string, args map[string]interface{}) (*readContentResult, error) {
+func (e *Engine) readTextWindow(resolved string, args map[string]interface{}, needChecksum bool) (*readContentResult, error) {
 	file, info, err := e.openRegularFile(resolved, maxFileSize, true)
 	if err != nil {
 		if os.IsPermission(err) {
@@ -185,17 +186,24 @@ func (e *Engine) readTextWindow(resolved string, args map[string]interface{}) (*
 	}
 	defer func() { _ = file.Close() }()
 
-	// The full-file digest is computed on every read: one streaming pass
-	// hashes every byte while counting lines. Retained memory stays
+	// The full-file digest is computed only when requested: one streaming
+	// pass hashes every byte while counting lines. Retained memory stays
 	// independent of input size (window rows plus a capped current line).
-	hasher := sha256.New()
-	source := io.TeeReader(file, hasher)
+	var source io.Reader = file
+	var hasher hash.Hash
+	if needChecksum {
+		hasher = sha256.New()
+		source = io.TeeReader(file, hasher)
+	}
 	reader := bufio.NewReaderSize(source, 32<<10)
 	sample, sampleErr := reader.Peek(8192)
 	if sampleErr != nil && !errors.Is(sampleErr, io.EOF) {
 		return nil, sampleErr
 	}
 	checksum := func() string {
+		if hasher == nil {
+			return ""
+		}
 		return hex.EncodeToString(hasher.Sum(nil))
 	}
 	ext := strings.ToLower(filepath.Ext(resolved))

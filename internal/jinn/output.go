@@ -22,6 +22,27 @@ func formatSize(bytes int) string {
 	return fmt.Sprintf("%.1fMB", float64(bytes)/(1024*1024))
 }
 
+// countLinesUpTo counts lines in s (splitLines semantics: a trailing
+// newline does not add an empty line) stopping at limit, without
+// allocating a line slice. Returns the count, capped at limit.
+func countLinesUpTo(s string, limit int) int {
+	if s == "" {
+		return 0
+	}
+	n, lastEmpty := 0, false
+	for line := range strings.SplitSeq(s, "\n") {
+		n++
+		lastEmpty = line == ""
+		if n >= limit {
+			return n
+		}
+	}
+	if lastEmpty {
+		n--
+	}
+	return n
+}
+
 // splitLines splits s into lines without a trailing empty element.
 func splitLines(s string) []string {
 	if s == "" {

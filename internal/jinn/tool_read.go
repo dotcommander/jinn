@@ -24,7 +24,7 @@ type readContentResult struct {
 	NextLine    int    // exact next 1-based source line, when sequential continuation is safe
 	NextOffset  int64  // absolute byte offset of NextLine, from the full-file cursor pass
 	NextColumn  int64  // bytes already consumed inside NextLine (overlong-line continuation)
-	Checksum    string // SHA-256 checksum of full file bytes (computed on every read)
+	Checksum    string // SHA-256 checksum of full file bytes (empty when not requested)
 }
 
 // readFileContent reads and processes a file's text content. It handles stat
@@ -32,13 +32,9 @@ type readContentResult struct {
 // truncation. The caller is responsible for sandbox validation (checkPath),
 // image detection, checksum computation, and ToolResult wrapping.
 func (e *Engine) readFileContent(resolved string, args map[string]interface{}, needChecksum bool) (*readContentResult, error) {
-	result, err := e.readTextWindow(resolved, args)
-	// Callers that did not ask for the digest see none, even though the
-	// streaming pass always computes one.
-	if result != nil && !needChecksum {
-		result.Checksum = ""
-	}
-	return result, err
+	// Hash only when the caller or args actually need the digest; the
+	// line scan still runs to produce TotalLines and cursor offsets.
+	return e.readTextWindow(resolved, args, needChecksum || checksumRequested(args))
 }
 
 // statForRead stats resolved and verifies it is a readable, regular file

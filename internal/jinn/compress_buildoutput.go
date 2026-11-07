@@ -27,7 +27,7 @@ type buildOutputStrategy struct{}
 func (s *buildOutputStrategy) Name() string { return "build_output" }
 
 func (s *buildOutputStrategy) AppliesTo(output string, tool string) bool {
-	return isBuildOutput(output) && len(splitLines(output)) >= 5
+	return isBuildOutput(output) && countLinesUpTo(output, 5) >= 5
 }
 
 func (s *buildOutputStrategy) Compress(output string) string {
@@ -70,8 +70,7 @@ func (s *buildOutputStrategy) Compress(output string) string {
 
 // isBuildOutput returns true if the output looks like build command output.
 func isBuildOutput(output string) bool {
-	lines := splitLines(output)
-	for _, line := range lines {
+	for line := range strings.SplitSeq(output, "\n") {
 		t := strings.TrimSpace(line)
 		if reGoBuildPkg.MatchString(t) || reGoModOp.MatchString(t) ||
 			reCargoBuild.MatchString(t) || strings.HasPrefix(t, "npm ") ||

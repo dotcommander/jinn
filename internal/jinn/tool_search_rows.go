@@ -106,9 +106,10 @@ func (e *Engine) searchRows(_ context.Context, args map[string]interface{}) (str
 }
 
 type scoredRow struct {
-	ordinal int
-	score   float64
-	text    string
+	ordinal    int
+	score      float64
+	text       string
+	searchText string // concatenated string values, filled during the single parse pass
 }
 
 // rowRecords bundles the parsed rows, total count, and top schema keys.
@@ -141,14 +142,23 @@ func parseRowRecords(data []byte) (rowRecords, error) {
 	keyCounts := make(map[string]int)
 	var rows []scoredRow
 	for i, line := range lines {
-		var obj map[string]json.RawMessage
+		var obj map[string]any
 		if err := json.Unmarshal([]byte(line), &obj); err != nil {
 			return rowRecords{}, fmt.Errorf("rows source: record %d is not a JSON object: %w", i+1, err)
 		}
-		for k := range obj {
+		var searchText strings.Builder
+		for k, v := range obj {
 			keyCounts[k]++
+			if s, ok := v.(string); ok {
+				searchText.WriteString(s)
+				searchText.WriteByte(' ')
+			}
 		}
-		rows = append(rows, scoredRow{ordinal: i + 1, text: line})
+		text := searchText.String()
+		if text == "" {
+			text = line
+		}
+		rows = append(rows, scoredRow{ordinal: i + 1, text: line, searchText: text})
 	}
 	keys := make([]string, 0, len(keyCounts))
 	for k := range keyCounts {
@@ -190,7 +200,10 @@ func rankRowRecords(rows []scoredRow, queries []string) []scoredRow {
 	docFreq := make(map[string]int)
 	totalLen := 0
 	for _, r := range rows {
-		text := rowStringValues(r.text)
+		text := r.searchText
+		if text == "" {
+			text = rowStringValues(r.text)
+		}
 		tokens := tokenizeRowText(text)
 		counts := make(map[string]int)
 		for _, tok := range tokens {
@@ -224,7 +237,7 @@ func rankRowRecords(rows []scoredRow, queries []string) []scoredRow {
 			score += idf * float64(tf) * (searchRowsBM25K1 + 1) / (float64(tf) + searchRowsBM25K1*norm)
 		}
 		if score > 0 {
-			out = append(out, scoredRow{d.ordinal, score, d.text})
+			out = append(out, scoredRow{ordinal: d.ordinal, score: score, text: d.text})
 		}
 	}
 	sort.Slice(out, func(i, j int) bool {

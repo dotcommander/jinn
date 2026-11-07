@@ -193,9 +193,8 @@ func formatTestSummary(pkg string, passed int, duration string) string {
 
 // countTestLines counts lines matching known test runner patterns.
 func countTestLines(output string) int {
-	lines := splitLines(output)
 	count := 0
-	for _, line := range lines {
+	for line := range strings.SplitSeq(output, "\n") {
 		if isTestOutputLine(line) {
 			count++
 		}

@@ -141,35 +141,9 @@ func (e *Engine) collectListEntries(ctx context.Context, resolved string, p list
 	}
 	baseDepth := strings.Count(filepath.ToSlash(rootPath), "/")
 	entries = make([]string, 0, min(p.maxEntries, 128))
-	visited := 0
 	exact = true
 	depthLimited := false
-	err = fs.WalkDir(e.root.FS(), rootPath, func(path string, entry fs.DirEntry, walkErr error) error {
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		if walkErr != nil {
-			return walkErr
-		}
-		relBase, relErr := filepath.Rel(rootPath, path)
-		if relErr != nil {
-			return relErr
-		}
-		if relBase == "." {
-			return nil
-		}
-		if shouldPruneTraversal(relBase, entry.IsDir()) {
-			if entry.IsDir() {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		visited++
-		if visited > listVisitMax {
-			exact = false
-			reason = listTruncVisited
-			return fs.SkipAll
-		}
+	capHit, err := walkNativeDir(ctx, e.root.FS(), rootPath, listVisitMax, func(relBase, path string, entry fs.DirEntry) error {
 		currentDepth := strings.Count(filepath.ToSlash(path), "/") - baseDepth
 		if currentDepth > p.depth {
 			depthLimited = true
@@ -213,6 +187,10 @@ func (e *Engine) collectListEntries(ctx context.Context, resolved string, p list
 		}
 		return nil
 	})
+	if capHit {
+		exact = false
+		reason = listTruncVisited
+	}
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
 			return nil, total, false, "", nil, &ErrWithSuggestion{Err: fmt.Errorf("list_dir timed out after %s", listTimeout), Suggestion: "narrow path or depth", Code: ErrCodeTimeout}

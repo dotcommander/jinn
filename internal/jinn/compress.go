@@ -94,7 +94,7 @@ func (s *pathPrefixStrategy) Name() string { return "path_prefix_dedup" }
 
 func (s *pathPrefixStrategy) AppliesTo(output string, tool string) bool {
 	pathCount := 0
-	for _, line := range splitLines(output) {
+	for line := range strings.SplitSeq(output, "\n") {
 		if isPathLine(line) {
 			pathCount++
 			if pathCount >= 3 {

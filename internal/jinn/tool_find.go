@@ -125,7 +125,6 @@ func (e *Engine) walkNativeFiles(ctx context.Context, pattern, searchPath string
 	if stopAfter > findVisitLimit {
 		stopAfter = findVisitLimit
 	}
-	visited := 0
 	total := 0
 	exact := true
 	files := make([]string, 0, min(limit, 128))
@@ -136,31 +135,7 @@ func (e *Engine) walkNativeFiles(ctx context.Context, pattern, searchPath string
 	// Split the invariant pattern once (O(pattern)); per-file work is then
 	// candidate splitting + Match only (Rec 2.2).
 	patternParts := strings.Split(filepath.ToSlash(pattern), "/")
-	err = fs.WalkDir(e.root.FS(), rootPath, func(path string, entry fs.DirEntry, walkErr error) error {
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		if walkErr != nil {
-			return walkErr
-		}
-		relBase, relErr := filepath.Rel(rootPath, path)
-		if relErr != nil {
-			return relErr
-		}
-		if relBase == "." {
-			return nil
-		}
-		if shouldPruneTraversal(relBase, entry.IsDir()) {
-			if entry.IsDir() {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		visited++
-		if visited > findVisitLimit {
-			exact = false
-			return fs.SkipAll
-		}
+	capHit, err := walkNativeDir(ctx, e.root.FS(), rootPath, findVisitLimit, func(relBase, path string, entry fs.DirEntry) error {
 		if entry.IsDir() || entry.Type()&fs.ModeSymlink != 0 {
 			return nil
 		}
@@ -204,6 +179,9 @@ func (e *Engine) walkNativeFiles(ctx context.Context, pattern, searchPath string
 		}
 		return nil
 	})
+	if capHit {
+		exact = false
+	}
 	if err != nil {
 		return nil, total, exact, err
 	}
@@ -212,8 +190,16 @@ func (e *Engine) walkNativeFiles(ctx context.Context, pattern, searchPath string
 }
 
 func shouldPruneTraversal(rel string, isDir bool) bool {
-	segments := strings.Split(filepath.ToSlash(rel), "/")
-	for _, segment := range segments {
+	// Scan segments in place (no Split allocation): a segment starts at the
+	// beginning or after a '/' or OS separator.
+	rest := filepath.ToSlash(rel)
+	for len(rest) > 0 {
+		segment := rest
+		if i := strings.IndexByte(rest, '/'); i >= 0 {
+			segment, rest = rest[:i], rest[i+1:]
+		} else {
+			rest = ""
+		}
 		if strings.HasPrefix(segment, ".") {
 			return true
 		}
