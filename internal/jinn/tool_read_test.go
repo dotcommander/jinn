@@ -413,8 +413,15 @@ func TestReadFile_TruncationMeta_ExplicitWindow(t *testing.T) {
 	if trunc.OutputLines != 10 {
 		t.Errorf("expected OutputLines=10, got: %d", trunc.OutputLines)
 	}
-	if !strings.Contains(result.Text, "Remainder saved to") {
-		t.Error("expected remainder temp file hint in output")
+	// Cursor-era continuation carries offsets and never spills bookmarks.
+	if strings.Contains(result.Text, "Remainder saved to") {
+		t.Error("spill bookmark must be gone (cursor continuation)")
+	}
+	if !strings.Contains(result.Text, "Use start_line=11 to continue") {
+		t.Error("expected cursor continuation hint in output")
+	}
+	if trunc.NextOffset <= 0 {
+		t.Error("expected a positive next_offset cursor")
 	}
 }
 
@@ -451,8 +458,12 @@ func TestReadFile_LargeWindow_Truncated(t *testing.T) {
 	if trunc.OutputLines > 2000 {
 		t.Errorf("expected OutputLines <= 2000, got: %d", trunc.OutputLines)
 	}
-	if !strings.Contains(result.Text, "Remainder saved to") {
-		t.Error("expected remainder temp file hint")
+	// Cursor-era continuation.
+	if strings.Contains(result.Text, "Remainder saved to") {
+		t.Error("spill bookmark must be gone (cursor continuation)")
+	}
+	if !strings.Contains(result.Text, "Use start_line=") {
+		t.Error("expected cursor continuation hint")
 	}
 }
 

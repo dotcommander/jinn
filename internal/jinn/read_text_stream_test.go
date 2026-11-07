@@ -38,13 +38,21 @@ func legacyReadContent(e *Engine, path string, args map[string]interface{}, sum 
 		return result, nil
 	}
 	tr := applyTruncateStrategy(renderWindow(lines, start, end, numbered), mode, strings.ToLower(filepath.Ext(path)))
-	spill := func(next int) (string, error) { return writeTruncationRemainder(path, next, lines[next-1:]) }
 	sequential := mode == "head" || mode == "none" || mode == "smart"
-	if result := byteTruncateResult(tr.Content, start, total, sequential, spill); result != nil {
+	var offsets map[int]int64
+	{
+		offsets = map[int]int64{}
+		var off int64
+		for i, l := range lines {
+			offsets[i+1] = off
+			off += int64(len(l) + 1) // each non-final line ends with a newline; harmless otherwise
+		}
+	}
+	if result := byteTruncateResult(tr.Content, start, total, sequential, noSpill, offsets); result != nil {
 		result.Checksum = checksum
 		return result, nil
 	}
-	result := assembleReadResult(readWindow{startLine: start, endLine: end, total: total}, tr, mode, spill)
+	result := assembleReadResult(readWindow{startLine: start, endLine: end, total: total}, tr, mode, noSpill, offsets)
 	result.Checksum = checksum
 	return result, nil
 }

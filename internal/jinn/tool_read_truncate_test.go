@@ -127,7 +127,9 @@ func TestReadFile_TruncateInvalidEnum(t *testing.T) {
 func TestReadFile_SingleLineExceedsByteCap(t *testing.T) {
 	t.Parallel()
 	e, dir := testEngine(t)
-	// One line of 60 KB — exceeds the 50 KB per-line guard
+	// One line of 60 KB — exceeds the 50 KB per-line guard: the read now
+	// consumes it in bounded memory and reports the cursor instead of a
+	// shell fallback.
 	content := strings.Repeat("a", 60000) + "\n"
 	writeTestFile(t, dir, "wide.txt", content)
 
@@ -135,16 +137,25 @@ func TestReadFile_SingleLineExceedsByteCap(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(result.Text, "exceeds 50 KB limit") {
-		t.Errorf("expected oversized-line hint, got: %s", result.Text)
+	if strings.Contains(result.Text, "sed -n") {
+		t.Errorf("shell fallback hint must be gone, got: %.80s", result.Text)
 	}
-	if !strings.Contains(result.Text, "sed -n") {
-		t.Errorf("expected sed command hint, got: %s", result.Text)
+	if len(result.Text) != 50*1024 {
+		t.Errorf("expected capped prefix of %d bytes, got %d", 50*1024, len(result.Text))
 	}
-	if !strings.Contains(result.Text, "wide.txt") {
-		t.Errorf("expected filename in hint, got: %s", result.Text)
+	if result.Text != strings.Repeat("a", 50*1024) {
+		t.Errorf("expected the exact line prefix")
 	}
-	// No partial UTF-8 / null bytes in body
+	trunc, ok := result.Meta["truncation"].(truncationInfo)
+	if !ok {
+		t.Fatalf("expected truncation meta for the capped line, got: %+v", result.Meta)
+	}
+	if trunc.NextColumn != 50*1024 {
+		t.Errorf("expected next_column=%d, got %d", 50*1024, trunc.NextColumn)
+	}
+	if trunc.NextOffset != 0 {
+		t.Errorf("line 1 starts at offset 0, got next_offset=%d", trunc.NextOffset)
+	}
 	if strings.ContainsRune(result.Text, 0) {
 		t.Error("result contains null byte — partial UTF-8 corruption")
 	}

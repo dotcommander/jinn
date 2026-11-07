@@ -40,22 +40,55 @@ type pendingEdit struct {
 	preContent  []byte // pre-mutation bytes for undo snapshot
 }
 
+// batchStatusError aggregates per-edit statuses into one preflight rejection
+// that preserves every member's code and reason. Publishing never begins
+// with a non-empty status list.
+func batchStatusError(statuses []editStatus, total int) error {
+	if len(statuses) == 0 {
+		return nil
+	}
+	messages := make([]string, len(statuses))
+	for i, s := range statuses {
+		messages[i] = fmt.Sprintf("  edits[%d] %s [%s]: %s", s.EditIndex, s.File, s.ErrorCode, s.Error)
+	}
+	return &ErrWithSuggestion{
+		Err:        fmt.Errorf("%d of %d edits failed validation:\n%s", len(statuses), total, strings.Join(messages, "\n")),
+		Suggestion: "fix the reported edit(s) and retry — no edits in the batch were written",
+		Code:       statuses[0].ErrorCode,
+	}
+}
+
 // parseAndResolveEdits iterates the raw edits array, validates each entry
 // (empty old_text guard, path security checks, stale check), reads each
 // file's on-disk bytes once, and returns the resolved entries along with
 // the normalized original content map used for overlap detection.
+//
+// Validation is exhaustive: every member's failure is collected into
+// statuses (one code per member) instead of failing fast, so callers can
+// reject the whole batch with per-file reasons and publish nothing.
 func (e *Engine) parseAndResolveEdits(editsRaw []interface{}, requireChecksums bool) (
 	entries []rawEntry,
 	originalContent map[string]string,
-	err error,
+	statuses []editStatus,
 ) {
 	originalContent = make(map[string]string)
 	origDataCache := make(map[string][]byte)
+	fail := func(idx int, file string, err error) {
+		code := ErrCodeConflict
+		var sErr *ErrWithSuggestion
+		if errors.As(err, &sErr) && sErr.Code != "" {
+			code = sErr.Code
+		}
+		statuses = append(statuses, editStatus{
+			File: file, EditIndex: idx, Status: "error", ErrorCode: code, Error: err.Error(),
+		})
+	}
 
 	for i, raw := range editsRaw {
 		entry, ok := raw.(map[string]interface{})
 		if !ok {
-			return nil, nil, fmt.Errorf("edit[%d]: invalid format", i)
+			fail(i, "", fmt.Errorf("edit[%d]: invalid format", i))
+			continue
 		}
 		path, _ := entry["path"].(string)
 		oldText, _ := entry["old_text"].(string)
@@ -64,35 +97,41 @@ func (e *Engine) parseAndResolveEdits(editsRaw []interface{}, requireChecksums b
 		showContext := intArg(entry, "show_context", 0)
 
 		if oldText == "" {
-			return nil, nil, &ErrWithSuggestion{
+			fail(i, path, &ErrWithSuggestion{
 				Err:        fmt.Errorf("edits[%d]: old_text cannot be empty", i),
 				Suggestion: "provide a non-empty string to match — to insert at file start, include the existing first line in old_text and prepend in new_text",
 				Code:       ErrCodeOldTextEmpty,
-			}
+			})
+			continue
 		}
 
 		resolved, err := e.checkPathForMutation(path)
 		if err != nil {
-			return nil, nil, fmt.Errorf("edit[%d] %s: %w", i, path, err)
+			fail(i, path, fmt.Errorf("edit[%d] %s: %w", i, path, err))
+			continue
 		}
 		if err := e.tracker.checkStale(resolved); err != nil {
-			return nil, nil, fmt.Errorf("edit[%d] %s: %w", i, path, err)
+			fail(i, path, fmt.Errorf("edit[%d] %s: %w", i, path, err))
+			continue
 		}
 
 		if _, seen := origDataCache[resolved]; !seen {
 			data, _, err := e.readRegularFile(resolved, maxFileSize)
 			if err != nil {
-				return nil, nil, fmt.Errorf("edit[%d] %s: %w", i, path, err)
+				fail(i, path, fmt.Errorf("edit[%d] %s: %w", i, path, err))
+				continue
 			}
 			origDataCache[resolved] = data
 			norm, _ := stripBom(string(data))
 			originalContent[resolved] = norm
 		}
 		if err := verifyChecksum(strArg(entry, "if_checksum"), path, origDataCache[resolved], true); err != nil {
-			return nil, nil, fmt.Errorf("edit[%d] %s: %w", i, path, err)
+			fail(i, path, err)
+			continue
 		}
 		if requireChecksums && strArg(entry, "if_checksum") == "" {
-			return nil, nil, &ErrWithSuggestion{Err: fmt.Errorf("edits[%d]: if_checksum is required for %s", i, path), Suggestion: "read each file with include_checksum=true and include its digest in every edit entry", Code: ErrCodeInvalidArgs}
+			fail(i, path, &ErrWithSuggestion{Err: fmt.Errorf("edits[%d]: if_checksum is required for %s", i, path), Suggestion: "read each file with include_checksum=true and include its digest in every edit entry", Code: ErrCodeInvalidArgs})
+			continue
 		}
 
 		entries = append(entries, rawEntry{
@@ -106,7 +145,7 @@ func (e *Engine) parseAndResolveEdits(editsRaw []interface{}, requireChecksums b
 			origData:    origDataCache[resolved],
 		})
 	}
-	return entries, originalContent, nil
+	return entries, originalContent, statuses
 }
 
 func (e *Engine) multiEdit(args map[string]interface{}) (*ToolResult, error) {
@@ -141,14 +180,15 @@ func (e *Engine) multiEdit(args map[string]interface{}) (*ToolResult, error) {
 
 func (e *Engine) multiEditLocked(args map[string]interface{}, editsRaw []interface{}) (*ToolResult, error) {
 
-	// Phase 1a: parse inputs, check paths, read originals.
-	rawEntries, originalContent, err := e.parseAndResolveEdits(editsRaw, e.requireMutationPreconditions && !boolArg(args, "dry_run"))
-	if err != nil {
+	// Phase 1a: parse inputs, check paths, read originals. Every member is
+	// validated; any failure rejects the whole batch publishing nothing.
+	rawEntries, originalContent, statuses := e.parseAndResolveEdits(editsRaw, e.requireMutationPreconditions && !boolArg(args, "dry_run"))
+	if err := batchStatusError(statuses, len(editsRaw)); err != nil {
 		return nil, err
 	}
 
 	// Phase 1b: overlap detection + positional sorting.
-	rawEntries, err = detectOverlaps(rawEntries, originalContent)
+	rawEntries, err := detectOverlaps(rawEntries, originalContent)
 	if err != nil {
 		return nil, err
 	}

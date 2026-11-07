@@ -72,6 +72,13 @@ func (e *Engine) readTextFile(resolved string, args map[string]interface{}) (*To
 		}
 	}
 
+	// The digest is always computed by the streaming read; the include_checksum
+	// flag only controls whether the caller sees it in the result.
+	surface := result.Checksum
+	if !shouldComputeChecksum(args) {
+		surface = ""
+	}
+
 	// Build final text: content + byte/window hint.
 	text := result.Content
 	if result.ByteHint != "" {
@@ -87,6 +94,8 @@ func (e *Engine) readTextFile(resolved string, args map[string]interface{}) (*To
 				TotalLines:  result.TotalLines,
 				OutputLines: result.OutputLines,
 				NextCall:    nextCall,
+				NextOffset:  result.NextOffset,
+				NextColumn:  result.NextColumn,
 			},
 		}
 		if nextCall != nil {
@@ -95,10 +104,10 @@ func (e *Engine) readTextFile(resolved string, args map[string]interface{}) (*To
 		return withChecksum(&ToolResult{
 			Text: text,
 			Meta: meta,
-		}, result.Checksum), nil
+		}, surface), nil
 	}
 
-	return withChecksum(textResult(text), result.Checksum), nil
+	return withChecksum(textResult(text), surface), nil
 }
 
 func readNextCall(args map[string]interface{}, nextLine int) *NextCall {

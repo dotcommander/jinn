@@ -153,7 +153,33 @@ func (e *Engine) checkPathForMutation(path string) (string, error) {
 	if err := e.rejectMutationSymlinkComponents(resolved, path); err != nil {
 		return "", err
 	}
+	if err := e.rejectHistoryTarget(resolved, path); err != nil {
+		return "", err
+	}
 	return resolved, nil
+}
+
+// rejectHistoryTarget keeps undo history (the index and blobs under
+// historyDir) unreachable as a mutation target: the journal is durable
+// recovery evidence, so writes must never target it even when the history
+// directory nests inside the workspace root (e.g. a home-root workdir).
+func (e *Engine) rejectHistoryTarget(resolved, display string) error {
+	hd := e.historyDir()
+	if hd == "" {
+		return nil
+	}
+	rel, err := filepath.Rel(hd, resolved)
+	if err != nil {
+		return nil
+	}
+	if rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return &ErrWithSuggestion{
+			Err:        fmt.Errorf("mutations cannot target undo history storage: %s is inside %s", display, hd),
+			Suggestion: "history is non-deletable recovery evidence; list snapshots with undo action=list and restore one instead",
+			Code:       ErrCodeInvalidArgs,
+		}
+	}
+	return nil
 }
 
 func (e *Engine) rejectMutationSymlinkComponents(path, display string) error {

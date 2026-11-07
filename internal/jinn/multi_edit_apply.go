@@ -85,16 +85,8 @@ func applyPendingEdits(rawEntries []rawEntry) ([]pendingEdit, error) {
 		})
 	}
 
-	if len(statuses) > 0 {
-		var errMsgs []string
-		for _, s := range statuses {
-			errMsgs = append(errMsgs, fmt.Sprintf("  edits[%d] %s: %s", s.EditIndex, s.File, s.Error))
-		}
-		return nil, &ErrWithSuggestion{
-			Err:        fmt.Errorf("%d of %d edits failed validation:\n%s", len(statuses), len(rawEntries), strings.Join(errMsgs, "\n")),
-			Suggestion: "fix the reported edit(s) and retry — other edits in the batch were skipped",
-			Code:       ErrCodeEditNotFound,
-		}
+	if err := batchStatusError(statuses, len(rawEntries)); err != nil {
+		return nil, err
 	}
 
 	return edits, nil

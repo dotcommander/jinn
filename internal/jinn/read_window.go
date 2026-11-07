@@ -30,9 +30,10 @@ func oversizedLineResult(resolved, firstLine string, startLine, total int) *read
 }
 
 // assembleReadResult builds the final readContentResult, attaching a
-// continuation hint and remainder temp file when the window or the truncation
-// strategy dropped lines.
-func assembleReadResult(w readWindow, tr truncateResult, truncateMode string, spill func(int) (string, error)) *readContentResult {
+// continuation hint when the window or the truncation strategy dropped
+// lines. offsets carries absolute byte line starts from the cursor pass;
+// spill never produces a path (resume is by cursor).
+func assembleReadResult(w readWindow, tr truncateResult, truncateMode string, spill func(int) (string, error), offsets map[int]int64) *readContentResult {
 	// Determine if the file itself is longer than the window requested.
 	windowTruncated := w.total > w.endLine
 
@@ -67,6 +68,10 @@ func assembleReadResult(w readWindow, tr truncateResult, truncateMode string, sp
 		if nextLine > w.total {
 			nextLine = 0
 		}
+		var nextOffset int64
+		if nextLine > 0 {
+			nextOffset = offsets[nextLine]
+		}
 		return &readContentResult{
 			Content:     tr.Content,
 			TotalLines:  w.total,
@@ -75,6 +80,7 @@ func assembleReadResult(w readWindow, tr truncateResult, truncateMode string, sp
 			ByteHint:    hint,
 			TempFile:    tmpPath,
 			NextLine:    nextLine,
+			NextOffset:  nextOffset,
 		}
 	}
 

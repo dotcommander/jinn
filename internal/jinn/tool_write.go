@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -33,7 +34,7 @@ func atomicWriteJSON(path string, v any) error {
 // It preserves existing file permissions and fsyncs before rename for crash safety.
 // Returns a non-nil error on failure; caller is responsible for user-facing formatting.
 func (e *Engine) atomicWriteFile(resolved, content string) error {
-	_, err := e.atomicWriteFileStaged(resolved, content, nil)
+	_, err := e.atomicWriteFileStaged(resolved, content, false, nil)
 	return err
 }
 
@@ -41,8 +42,16 @@ func (e *Engine) atomicWriteFile(resolved, content string) error {
 // beforeRename after the staged data is durable but before replacing the target.
 // The returned bool reports whether the target was replaced.
 //
+// Concurrency: callers hold the target locks (withTargetLocks, a cross-process
+// flock) across the whole preflight-stage-recheck-rename sequence, so
+// protocol-following processes are serialized. Changes from processes that
+// ignore those locks are still detected by the beforeRename recheck and
+// rejected, never silently overwritten: the recheck happens after staging
+// and before publish. With noReplace, publish is atomic no-replace (hard
+// link) and fails closed instead of falling back to rename-overwrite.
+//
 //nolint:gocyclo // The linear durability stages deliberately retain their distinct failure boundaries.
-func (e *Engine) atomicWriteFileStaged(resolved, content string, beforeRename func() error) (bool, error) {
+func (e *Engine) atomicWriteFileStaged(resolved, content string, noReplace bool, beforeRename func() error) (bool, error) {
 	// Capture existing file permissions before overwriting.
 	perm := os.FileMode(0644)
 	rel, relErr := e.rootRelative(resolved)
@@ -86,10 +95,27 @@ func (e *Engine) atomicWriteFileStaged(resolved, content string, beforeRename fu
 			return false, callbackErr
 		}
 	}
-	if renameErr := e.root.Rename(tempName, rel); renameErr != nil {
-		return false, renameErr
+	if noReplace {
+		if linkErr := e.root.Link(tempName, rel); linkErr != nil {
+			if os.IsExist(linkErr) {
+				return false, &ErrWithSuggestion{
+					Err:        fmt.Errorf("stale write rejected: %s appeared since preflight", resolved),
+					Suggestion: "re-read the file, reconcile the external change, and retry",
+					Code:       ErrCodeStaleFile,
+				}
+			}
+			return false, fmt.Errorf("exclusive create: %w", linkErr)
+		}
+		committed = true
+		if rmErr := e.root.Remove(tempName); rmErr != nil {
+			return true, fmt.Errorf("remove staged temp after exclusive create: %w", rmErr)
+		}
+	} else {
+		if renameErr := e.root.Rename(tempName, rel); renameErr != nil {
+			return false, renameErr
+		}
+		committed = true
 	}
-	committed = true
 	dir, err := e.root.Open(parent)
 	if err != nil {
 		return true, fmt.Errorf("open parent directory for durability: %w", err)
@@ -164,7 +190,7 @@ func (e *Engine) snapshotAndWrite(resolved, displayPath, op string, preContent [
 	if e.snapshotPreparedHook != nil {
 		e.snapshotPreparedHook()
 	}
-	mutated, err := e.atomicWriteFileStaged(resolved, content, func() error {
+	mutated, err := e.atomicWriteFileStaged(resolved, content, preContent == nil, func() error {
 		return e.verifyPreflightState(resolved, preContent, preContent != nil)
 	})
 	if err != nil {
@@ -217,12 +243,31 @@ func verifyChecksum(want, path string, current []byte, exists bool) error {
 	return nil
 }
 
+// streamFileSHA256 hashes a regular file in bounded memory (copy chunks)
+// instead of buffering the whole file. exists=false means the target is
+// missing; any other open/read error is returned as-is.
+func (e *Engine) streamFileSHA256(path string) (hexDigest string, exists bool, err error) {
+	file, _, openErr := e.openRegularFile(path, maxFileSize, true)
+	if openErr != nil {
+		if os.IsNotExist(openErr) {
+			return "", false, nil
+		}
+		return "", false, openErr
+	}
+	defer func() { _ = file.Close() }()
+	hasher := sha256.New()
+	if _, copyErr := io.Copy(hasher, file); copyErr != nil {
+		return "", true, fmt.Errorf("stream recheck: %w", copyErr)
+	}
+	return hex.EncodeToString(hasher.Sum(nil)), true, nil
+}
+
 // verifyPreflightState rejects a write when the target changed after phase-1
 // validation. This closes the in-process preflight-to-write window even when
-// the caller did not supply a cross-call checksum.
+// the caller did not supply a cross-call checksum. The recheck hash streams
+// in bounded memory; only the small digest is retained.
 func (e *Engine) verifyPreflightState(path string, expected []byte, expectedExists bool) error {
-	current, _, err := e.readRegularFile(path, maxFileSize)
-	exists := err == nil
+	currentHex, exists, err := e.streamFileSHA256(path)
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("re-read before write: %w", err)
 	}
@@ -240,7 +285,14 @@ func (e *Engine) verifyPreflightState(path string, expected []byte, expectedExis
 	if !exists {
 		return nil
 	}
-	return verifyChecksum(sha256HexBytes(expected), path, current, true)
+	if !strings.EqualFold(currentHex, sha256HexBytes(expected)) {
+		return &ErrWithSuggestion{
+			Err:        fmt.Errorf("stale write rejected: %s changed since read (checksum %.12s\u2026 != expected %.12s\u2026)", path, currentHex, sha256HexBytes(expected)),
+			Suggestion: "re-read the file, then retry with the new checksum",
+			Code:       ErrCodeStaleFile,
+		}
+	}
+	return nil
 }
 
 func sha256HexBytes(content []byte) string {

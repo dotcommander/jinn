@@ -171,8 +171,11 @@ func (e *Engine) undoRestore(args map[string]interface{}) (string, error) {
 
 //nolint:gocognit,gocyclo,revive // restore preconditions, stale checks, and created-file semantics are a single atomic decision.
 func (e *Engine) undoRestoreLocked(args map[string]interface{}, ent historyEntry, resolved string) (string, error) {
-	if strArg(args, "if_checksum") != "" && boolArg(args, "if_absent") {
-		return "", &ErrWithSuggestion{Err: errors.New("if_checksum and if_absent:true are mutually exclusive"), Suggestion: "use if_checksum for a replacement or if_absent:true for a recreation", Code: ErrCodeInvalidArgs}
+	if strArg(args, "if_checksum") != "" && (boolArg(args, "if_absent") || strArg(args, "if_version") != "") {
+		return "", &ErrWithSuggestion{Err: errors.New("if_checksum is mutually exclusive with if_absent and if_version"), Suggestion: "use if_checksum for a replacement, if_absent:true for a recreation, or if_version for the recorded pre-state identity", Code: ErrCodeInvalidArgs}
+	}
+	if strArg(args, "if_version") != "" && boolArg(args, "if_absent") {
+		return "", &ErrWithSuggestion{Err: errors.New("if_version and if_absent:true are mutually exclusive"), Suggestion: "use if_version for the recorded pre-state identity or if_absent:true for a recreation", Code: ErrCodeInvalidArgs}
 	}
 	_, _, readErr := e.readRegularFile(resolved, maxFileSize)
 	exists := readErr == nil
@@ -180,10 +183,10 @@ func (e *Engine) undoRestoreLocked(args map[string]interface{}, ent historyEntry
 		return "", fmt.Errorf("restore: read current target: %w", readErr)
 	}
 	if e.requireMutationPreconditions {
-		if exists && strArg(args, "if_checksum") == "" {
-			return "", &ErrWithSuggestion{Err: fmt.Errorf("if_checksum is required to restore over %s", ent.DisplayPath), Suggestion: "read the current target with include_checksum=true and retry", Code: ErrCodeInvalidArgs}
+		if exists && strArg(args, "if_checksum") == "" && strArg(args, "if_version") == "" {
+			return "", &ErrWithSuggestion{Err: fmt.Errorf("if_checksum or if_version is required to restore over %s", ent.DisplayPath), Suggestion: "read the current target with include_checksum=true and retry with its digest or the snapshot version", Code: ErrCodeInvalidArgs}
 		}
-		if !exists && !boolArg(args, "if_absent") {
+		if !exists && !boolArg(args, "if_absent") && strArg(args, "if_version") == "" {
 			return "", &ErrWithSuggestion{Err: fmt.Errorf("if_absent:true is required to recreate %s", ent.DisplayPath), Suggestion: "set if_absent:true after confirming the target should be absent", Code: ErrCodeInvalidArgs}
 		}
 	}
@@ -192,6 +195,9 @@ func (e *Engine) undoRestoreLocked(args map[string]interface{}, ent historyEntry
 		return "", staleErr
 	}
 
+	if err := e.verifyUndoVersion(args, ent, resolved); err != nil {
+		return "", err
+	}
 	if ent.Created {
 		// File was created by the op — undo means delete it.
 		if checksumErr := e.verifyUndoChecksum(args, resolved); checksumErr != nil {
@@ -236,6 +242,49 @@ func (e *Engine) resolveUndoTarget(ent historyEntry) (string, error) {
 		return "", &ErrWithSuggestion{Err: fmt.Errorf("restore: legacy path mismatch (index has %q, resolved to %q)", ent.AbsPath, resolved), Suggestion: `list entries and restore a committed snapshot instead`}
 	}
 	return resolved, nil
+}
+
+// verifyUndoVersion enforces the optional if_version guard. The supplied
+// value must equal the snapshot's recorded pre-state identity (an empty
+// version asserts the recorded absence of a created file), and the live
+// target must still match that identity — rejecting both a version the
+// snapshot never had and an unobserved change since it was recorded.
+func (e *Engine) verifyUndoVersion(args map[string]interface{}, ent historyEntry, path string) error {
+	want := strArg(args, "if_version")
+	if want == "" {
+		return nil
+	}
+	if !strings.EqualFold(want, ent.Before.Hash) {
+		return &ErrWithSuggestion{
+			Err:        fmt.Errorf("if_version does not match the recorded identity of snapshot id=%s", ent.ID),
+			Suggestion: "list entries and pass the recorded before hash, or use if_checksum for the live digest",
+			Code:       ErrCodeInvalidArgs,
+		}
+	}
+	current, _, readErr := e.readRegularFile(path, maxFileSize)
+	exists := readErr == nil
+	if readErr != nil && !os.IsNotExist(readErr) {
+		return fmt.Errorf("restore: read current target: %w", readErr)
+	}
+	if exists != ent.Before.Exists {
+		return &ErrWithSuggestion{
+			Err:        fmt.Errorf("stale write rejected: %s existence changed since the snapshot was recorded", path),
+			Suggestion: "re-read the file, then restore the matching version",
+			Code:       ErrCodeStaleFile,
+		}
+	}
+	if !ent.Before.Exists {
+		return nil
+	}
+	got := sha256HexBytes(current)
+	if !strings.EqualFold(got, ent.Before.Hash) {
+		return &ErrWithSuggestion{
+			Err:        fmt.Errorf("stale write rejected: %s changed since the snapshot was recorded (checksum %.12s... != recorded %.12s...)", path, got, ent.Before.Hash),
+			Suggestion: "re-read the file, then restore the matching version",
+			Code:       ErrCodeStaleFile,
+		}
+	}
+	return nil
 }
 
 func (e *Engine) verifyUndoChecksum(args map[string]interface{}, path string) error {

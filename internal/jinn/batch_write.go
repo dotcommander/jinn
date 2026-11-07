@@ -23,12 +23,16 @@ func (e *Engine) commitPreparedWrites(op string, total int, writes []preparedWri
 	total = len(targets)
 	var applied []appliedRef
 	for index, write := range writes {
+		unstarted := make([]string, 0, len(writes)-index-1)
+		for _, rest := range writes[index+1:] {
+			unstarted = append(unstarted, rest.path)
+		}
 		if err := e.verifyPreflightState(write.resolved, write.preContent, true); err != nil {
-			return partialApplyErr(op, applied, total, fmt.Errorf("%s: %w", write.path, err))
+			return partialApplyErr(op, applied, unstarted, write.path, total, fmt.Errorf("%s: %w", write.path, err))
 		}
 		id, err := e.snapshotAndWrite(write.resolved, write.path, op, write.preContent, write.updated)
 		if err != nil {
-			return partialApplyErr(op, applied, total, fmt.Errorf("%s: %w", write.path, err))
+			return partialApplyErr(op, applied, unstarted, write.path, total, fmt.Errorf("%s: %w", write.path, err))
 		}
 		applied = append(applied, appliedRef{path: write.path, undoID: id, resolved: write.resolved})
 		if committed != nil {

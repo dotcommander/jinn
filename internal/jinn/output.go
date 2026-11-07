@@ -53,6 +53,8 @@ type truncationInfo struct {
 	TotalLines  int       `json:"totalLines"`
 	OutputLines int       `json:"outputLines"`
 	NextCall    *NextCall `json:"next_call,omitempty"`
+	NextOffset  int64     `json:"next_offset,omitempty"`
+	NextColumn  int64     `json:"next_column,omitempty"`
 }
 
 // truncateOutputDetailed truncates output and returns both the content

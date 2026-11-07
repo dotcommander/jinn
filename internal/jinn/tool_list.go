@@ -20,14 +20,25 @@ const (
 
 var listTimeout = 60 * time.Second
 
+// Truncation reason tokens naming the binding discovery budget:
+// "visited" (the visit cap), "max_entries" (the page cap), or "depth"
+// (the depth cap at 10).
+const (
+	listTruncVisited    = "visited"
+	listTruncMaxEntries = "max_entries"
+	listTruncDepth      = "depth"
+)
+
 type listDirResult struct {
-	Entries         []string  `json:"entries"`
-	Truncated       bool      `json:"truncated"`
-	TotalCount      int       `json:"total_count"`
-	TotalCountExact bool      `json:"total_count_exact"`
-	Offset          int       `json:"offset"`
-	Hint            string    `json:"hint,omitempty"`
-	NextCall        *NextCall `json:"next_call,omitempty"`
+	Entries          []string          `json:"entries"`
+	Truncated        bool              `json:"truncated"`
+	TotalCount       int               `json:"total_count"`
+	TotalCountExact  bool              `json:"total_count_exact"`
+	Offset           int               `json:"offset"`
+	Hint             string            `json:"hint,omitempty"`
+	NextCall         *NextCall         `json:"next_call,omitempty"`
+	TruncationReason string            `json:"truncation_reason,omitempty"`
+	Symlinks         map[string]string `json:"symlinks,omitempty"`
 }
 
 type listParams struct {
@@ -86,16 +97,19 @@ func (e *Engine) listDirContext(ctx context.Context, args map[string]interface{}
 	if !info.IsDir() {
 		return "", &ErrWithSuggestion{Err: fmt.Errorf("not a directory: %s", p.listPath), Suggestion: "use stat_file for individual files", Code: ErrCodeInvalidArgs}
 	}
-	entries, total, exact, err := e.collectListEntries(ctx, resolved, p)
+	entries, total, exact, reason, symlinks, err := e.collectListEntries(ctx, resolved, p)
 	if err != nil {
 		return "", err
 	}
-	result := listDirResult{Entries: entries, Truncated: !exact || total > p.offset+len(entries), TotalCount: total, TotalCountExact: exact, Offset: p.offset}
+	// A non-empty reason means a discovery budget bound the walk (visited,
+	// page cap, or depth), even when every visible entry was returned.
+	result := listDirResult{Entries: entries, Truncated: !exact || reason != "" || total > p.offset+len(entries), TotalCount: total, TotalCountExact: exact, Offset: p.offset, Symlinks: symlinks}
 	if result.Entries == nil {
 		result.Entries = []string{}
 	}
 	if result.Truncated {
-		result.Hint = "[TRUNCATED: narrow path or depth, or increase max_entries]"
+		result.TruncationReason = reason
+		result.Hint = listTruncationHint(reason)
 		if len(entries) > 0 {
 			result.NextCall = listDirNextCall(args, p, p.offset+len(entries))
 		}
@@ -107,16 +121,29 @@ func (e *Engine) listDirContext(ctx context.Context, args map[string]interface{}
 	return string(data), nil
 }
 
+// listTruncationHint renders the actionable hint for the binding budget.
+func listTruncationHint(reason string) string {
+	switch reason {
+	case listTruncVisited:
+		return "[TRUNCATED: visit budget (100000) exhausted; narrow --path or add --changed_since]"
+	case listTruncDepth:
+		return "[TRUNCATED: depth budget (10) reached; narrow --path or lower --depth]"
+	default:
+		return "[TRUNCATED: narrow path or depth, or increase max_entries]"
+	}
+}
+
 //nolint:gocognit,gocyclo,revive // directory traversal limits and rendering decisions share one ordered walk callback and result shape.
-func (e *Engine) collectListEntries(ctx context.Context, resolved string, p listParams) ([]string, int, bool, error) {
+func (e *Engine) collectListEntries(ctx context.Context, resolved string, p listParams) (entries []string, total int, exact bool, reason string, symlinks map[string]string, err error) {
 	rootPath, err := e.rootRelative(resolved)
 	if err != nil {
-		return nil, 0, false, err
+		return nil, 0, false, "", nil, err
 	}
 	baseDepth := strings.Count(filepath.ToSlash(rootPath), "/")
-	entries := make([]string, 0, min(p.maxEntries, 128))
-	total, visited := 0, 0
-	exact := true
+	entries = make([]string, 0, min(p.maxEntries, 128))
+	visited := 0
+	exact = true
+	depthLimited := false
 	err = fs.WalkDir(e.root.FS(), rootPath, func(path string, entry fs.DirEntry, walkErr error) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -140,10 +167,12 @@ func (e *Engine) collectListEntries(ctx context.Context, resolved string, p list
 		visited++
 		if visited > listVisitMax {
 			exact = false
+			reason = listTruncVisited
 			return fs.SkipAll
 		}
 		currentDepth := strings.Count(filepath.ToSlash(path), "/") - baseDepth
 		if currentDepth > p.depth {
+			depthLimited = true
 			if entry.IsDir() {
 				return filepath.SkipDir
 			}
@@ -163,26 +192,41 @@ func (e *Engine) collectListEntries(ctx context.Context, resolved string, p list
 			value += "/"
 		}
 		total++
+		if entry.Type()&fs.ModeSymlink != 0 {
+			if symlinks == nil {
+				symlinks = make(map[string]string)
+			}
+			symlinks[value] = ""
+			if target, linkErr := e.root.Readlink(path); linkErr == nil {
+				symlinks[value] = filepath.ToSlash(target)
+			}
+		}
 		if total > p.offset && len(entries) < p.maxEntries {
 			entries = append(entries, value)
 		}
 		if total > p.offset+p.maxEntries {
 			exact = false
+			if reason == "" {
+				reason = listTruncMaxEntries
+			}
 			return fs.SkipAll
 		}
 		return nil
 	})
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
-			return nil, total, false, &ErrWithSuggestion{Err: fmt.Errorf("list_dir timed out after %s", listTimeout), Suggestion: "narrow path or depth", Code: ErrCodeTimeout}
+			return nil, total, false, "", nil, &ErrWithSuggestion{Err: fmt.Errorf("list_dir timed out after %s", listTimeout), Suggestion: "narrow path or depth", Code: ErrCodeTimeout}
 		}
 		if errors.Is(err, context.Canceled) {
-			return nil, total, false, &ErrWithSuggestion{Err: errors.New("list_dir canceled"), Suggestion: "retry if cancellation was unintended", Code: ErrCodeCanceled}
+			return nil, total, false, "", nil, &ErrWithSuggestion{Err: errors.New("list_dir canceled"), Suggestion: "retry if cancellation was unintended", Code: ErrCodeCanceled}
 		}
-		return nil, total, exact, err
+		return nil, total, exact, reason, symlinks, err
+	}
+	if reason == "" && depthLimited {
+		reason = listTruncDepth
 	}
 	slices.Sort(entries)
-	return entries, total, exact, nil
+	return entries, total, exact, reason, symlinks, nil
 }
 
 func listDirNextCall(args map[string]interface{}, p listParams, offset int) *NextCall {

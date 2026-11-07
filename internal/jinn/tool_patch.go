@@ -224,9 +224,13 @@ func (e *Engine) applyPatchOps(resolved []resolvedOp, preflights []preflightResu
 		if !ok {
 			continue
 		}
+		unstarted := make([]string, 0, len(resolved)-i-1)
+		for _, rest := range resolved[i+1:] {
+			unstarted = append(unstarted, rest.op.path)
+		}
 		res, err := h.apply(e, r, preflights[i])
 		if err != nil {
-			return nil, partialApplyErr("apply_patch", applied, len(targets), err)
+			return nil, partialApplyErr("apply_patch", applied, unstarted, r.op.path, len(targets), err)
 		}
 		applied = append(applied, appliedRef{path: r.op.path, undoID: res.undoID, resolved: r.resolved})
 		results = append(results, res.summary)

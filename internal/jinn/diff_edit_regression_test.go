@@ -144,7 +144,7 @@ func TestPartialApplyErrorIncludesUndoIDs(t *testing.T) {
 	err := partialApplyErr("patch", []appliedRef{
 		{path: "a", resolved: "/root/a", undoID: "one"},
 		{path: "./a", resolved: "/root/a", undoID: "two"},
-	}, 2, errors.New("failed b"))
+	}, []string{"b"}, "b", 2, errors.New("failed b"))
 	for _, want := range []string{"1 of 2 files", "a (undo id=one)", "./a (undo id=two)"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("missing %q in %v", want, err)
