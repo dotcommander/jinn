@@ -6,6 +6,7 @@ This document maps each of jinn's conditional tools to the closest similar pi.de
 - **Verification:** entries were verified against the live pi.dev catalog; ★ means GitHub stars in the snapshot and "active Nd ago" means days since the last upstream update in the snapshot. Treat both as snapshot values, not live metrics.
 - **Source depth:** adoption suggestions for `pi-web-access` (v0.47.0) and `@juicesharp/rpiv-ask-user-question` (v2.11.0) are based on the locally installed package sources; the `run_shell` donors (`pi-smart-terminal`, `pi-interactive-shell`, `pi-bg-shell`) and the `run_plan` donors (`@juicesharp/rpiv-workflow`, `pi-subagents`, `pi-plan-execute-auto`, `pi-run-mode`) were source-inspected via `/compare` local clones on 2026-11-07 (see the section status notes under `run_shell` and `run_plan`); the remaining donors were assessed from package metadata/pi.dev descriptions, so their suggestions are qualified accordingly (see the reports in [Reports](#reports)).
 - **Standing exclusions:** context-compaction and cache mechanisms were excluded from the comparisons and are not recommended anywhere below.
+- **Overall: complete (2026-11-07).** All six tool sections below are reviewed — complete. Open items below are historical learn-only/skip dispositions, not pending work.
 
 ## Decision summary
 
@@ -99,7 +100,7 @@ This document maps each of jinn's conditional tools to the closest similar pi.de
 
 ## ask_user_question
 
-**Status: implemented 2026-11-07.** `DecodeQuestionnaire` now strips line terminators from all model-supplied strings once at the boundary, before validation (`internal/jinn/questionnaire.go`) — the discriminating check (`"Other\r"` reserved label + normalized-duplicate labels → precise error, UI never opens) is covered by `TestDecodeQuestionnaireNormalizesLineTerminators`.
+**Status: reviewed — complete (2026-11-07).** `DecodeQuestionnaire` now strips line terminators from all model-supplied strings once at the boundary, before validation (`internal/jinn/questionnaire.go`) — the discriminating check (`"Other\r"` reserved label + normalized-duplicate labels → precise error, UI never opens) is covered by `TestDecodeQuestionnaireNormalizesLineTerminators`. All donors in this section were source-inspected via `/compare` (Adopt); the TUI overlay/layout item is a deliberate skip (jinn is a tool runtime, not a TUI).
 
 - [@thinkrail/pi-ask-user-question](https://www.npmjs.com/package/@thinkrail/pi-ask-user-question) — ★7870, active today (JetBrains ThinkRail monorepo). Adds an `ask_user_question` tool with the same name and contract: structured multiple-choice questions answered in a terminal questionnaire, an RPC host's dialogs, or a host's own UI. **Same tool name, same semantics** — published on npm; `pi install npm:@thinkrail/pi-ask-user-question` (listed on npm, not separately verified on pi.dev).
 - [@juicesharp/rpiv-ask-user-question](https://pi.dev/packages/@juicesharp/rpiv-ask-user-question) — ★946, active 14d ago. One tool that opens a terminal dialog of up to four questions with written-out options — the MCP `ask_user_question` questionnaire shape.
