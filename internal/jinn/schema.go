@@ -17,11 +17,12 @@ var Schema string
 // Returned by the list_tools tool so callers can adapt behavior to
 // what the current build supports (e.g. dry_run, fuzzy_indent, etc.).
 type ToolCapabilities struct {
-	JinnVersion string              `json:"jinn_version"`
-	Tools       []string            `json:"tools"`
-	Features    map[string][]string `json:"features"`
-	ReplaySafe  map[string]bool     `json:"replay_safe,omitempty"` // true only for derived-state reads safe to re-run
-	Schema      any                 `json:"schema,omitempty"`
+	JinnVersion  string              `json:"jinn_version"`
+	Tools        []string            `json:"tools"`
+	Features     map[string][]string `json:"features"`
+	ReplaySafe   map[string]bool     `json:"replay_safe,omitempty"`  // true only for derived-state reads safe to re-run
+	Descriptions map[string]string   `json:"descriptions,omitempty"` // one-line description per listed tool (describe mode)
+	Schema       any                 `json:"schema,omitempty"`
 }
 
 // Request is the one-shot tool invocation envelope.

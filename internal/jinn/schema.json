@@ -987,6 +987,24 @@
             "type": "boolean",
             "description": "Also include the compact OpenAI tool schema (default: false).",
             "default": false
+          },
+          "risk": {
+            "type": "string",
+            "enum": ["read_only", "mutating", "shell", "network"],
+            "description": "Restrict the listing to tools with this route risk."
+          },
+          "names": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Restrict the listing to these tool names."
+          },
+          "query": {
+            "type": "string",
+            "description": "Restrict the listing to tools whose name or a feature matches (case-insensitive substring)."
+          },
+          "describe": {
+            "type": "boolean",
+            "description": "Also include a one-line description per listed tool (default: false)."
           }
         }
       }

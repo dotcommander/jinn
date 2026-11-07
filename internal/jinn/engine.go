@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/debug"
+	"strings"
 	"sync"
 	"time"
 
@@ -187,39 +188,173 @@ func (e *Engine) Dispatch(ctx context.Context, tool string, args map[string]inte
 }
 
 // dispatchListTools handles the list_tools capability/schema reporting case.
+// Optional risk/names/query filters narrow the listing; describe adds
+// one-line descriptions. With no filters the output is the full catalog.
 func (e *Engine) dispatchListTools(args map[string]interface{}) (*ToolResult, map[string]any, error) {
 	if err := validateToolCatalogSchemaParity(); err != nil {
 		return nil, nil, fmt.Errorf("validate tool catalog: %w", err)
 	}
+	filter, err := parseListToolsFilter(args)
+	if err != nil {
+		return nil, nil, err
+	}
+	tools, err := e.filterToolNames(filter)
+	if err != nil {
+		return nil, nil, err
+	}
+	features := filterStringMap(e.registeredToolFeatures(), tools)
 	_, replaySafe := registeredToolSafety()
+	replaySafe = filterBoolMap(replaySafe, tools)
 	caps := ToolCapabilities{
 		JinnVersion: ResolveVersion(e.version),
-		Tools:       e.registeredToolNames(),
-		Features:    e.registeredToolFeatures(),
+		Tools:       tools,
+		Features:    features,
 		ReplaySafe:  replaySafe,
+	}
+	includeSchema, _ := args["include_schema"].(bool)
+	describe, _ := args["describe"].(bool)
+	if includeSchema || describe {
+		schema, err := LeanSchemaForMode(e.shellMode)
+		if err != nil {
+			return nil, nil, fmt.Errorf("lean schema: %w", err)
+		}
+		var schemaDoc any
+		if decodeErr := json.Unmarshal([]byte(schema), &schemaDoc); decodeErr != nil {
+			return nil, nil, fmt.Errorf("decode lean schema: %w", decodeErr)
+		}
+		if includeSchema {
+			caps.Schema = schemaDoc
+		}
+		if describe {
+			caps.Descriptions = toolDescriptions(schemaDoc, tools)
+		}
 	}
 	capsJSON, err := json.Marshal(caps)
 	if err != nil {
 		return nil, nil, fmt.Errorf("marshal capabilities: %w", err)
 	}
-	includeSchema, _ := args["include_schema"].(bool)
-	if !includeSchema {
-		return textResult(string(capsJSON)), nil, nil
-	}
-	schema, err := LeanSchemaForMode(e.shellMode)
-	if err != nil {
-		return nil, nil, fmt.Errorf("lean schema: %w", err)
-	}
-	var schemaDoc any
-	if decodeErr := json.Unmarshal([]byte(schema), &schemaDoc); decodeErr != nil {
-		return nil, nil, fmt.Errorf("decode lean schema: %w", decodeErr)
-	}
-	caps.Schema = schemaDoc
-	capsJSON, err = json.Marshal(caps)
-	if err != nil {
-		return nil, nil, fmt.Errorf("marshal capabilities: %w", err)
-	}
 	return textResult(string(capsJSON)), nil, nil
+}
+
+// listToolsFilter carries the validated list_tools narrowing arguments.
+type listToolsFilter struct {
+	risk  string
+	names []string
+	query string
+}
+
+func parseListToolsFilter(args map[string]interface{}) (listToolsFilter, error) {
+	var filter listToolsFilter
+	if risk, ok := args["risk"].(string); ok && risk != "" {
+		if risk != string(toolRouteRiskReadOnly) && risk != string(toolRouteRiskMutating) && risk != string(toolRouteRiskShell) && risk != string(toolRouteRiskNetwork) {
+			return listToolsFilter{}, fmt.Errorf("list_tools: unknown risk %q (want read_only, mutating, shell, or network)", risk)
+		}
+		filter.risk = risk
+	}
+	if _, present := args["names"]; present {
+		names, sliceErr := stringSliceArg(args, "names")
+		if sliceErr != nil {
+			return listToolsFilter{}, fmt.Errorf("list_tools: %w", sliceErr)
+		}
+		filter.names = names
+	}
+	if query, ok := args["query"].(string); ok {
+		filter.query = strings.ToLower(query)
+	}
+	return filter, nil
+}
+
+// filterToolNames narrows the registered tool names by the filter,
+// preserving catalog order. Unknown names are an error, not silence.
+func (e *Engine) filterToolNames(filter listToolsFilter) ([]string, error) {
+	keep := make(map[string]bool)
+	for _, name := range filter.names {
+		if _, ok := e.lookupToolDescriptor(name); !ok {
+			return nil, fmt.Errorf("list_tools: unknown tool %q", name)
+		}
+		keep[name] = true
+	}
+	features := e.registeredToolFeatures()
+	var names []string
+	for _, name := range e.registeredToolNames() {
+		if filter.risk != "" {
+			if descriptor, ok := e.lookupToolDescriptor(name); !ok || string(descriptor.routeRisk) != filter.risk {
+				continue
+			}
+		}
+		if len(keep) > 0 && !keep[name] {
+			continue
+		}
+		if filter.query != "" && !matchesToolQuery(name, features[name], filter.query) {
+			continue
+		}
+		names = append(names, name)
+	}
+	return names, nil
+}
+
+// matchesToolQuery reports a case-insensitive substring match against the
+// tool name or any of its features.
+func matchesToolQuery(name string, features []string, query string) bool {
+	if strings.Contains(strings.ToLower(name), query) {
+		return true
+	}
+	for _, feature := range features {
+		if strings.Contains(strings.ToLower(feature), query) {
+			return true
+		}
+	}
+	return false
+}
+
+func filterStringMap(in map[string][]string, names []string) map[string][]string {
+	out := make(map[string][]string, len(names))
+	for _, name := range names {
+		if features, ok := in[name]; ok {
+			out[name] = features
+		}
+	}
+	return out
+}
+
+func filterBoolMap(in map[string]bool, names []string) map[string]bool {
+	out := make(map[string]bool, len(names))
+	for _, name := range names {
+		if value, ok := in[name]; ok {
+			out[name] = value
+		}
+	}
+	return out
+}
+
+// toolDescriptions extracts one-line descriptions from the lean schema
+// document (an array of function entries), restricted to the listed tools.
+func toolDescriptions(schemaDoc any, tools []string) map[string]string {
+	entries, ok := schemaDoc.([]any)
+	if !ok {
+		return map[string]string{}
+	}
+	want := make(map[string]bool, len(tools))
+	for _, name := range tools {
+		want[name] = true
+	}
+	descriptions := make(map[string]string, len(tools))
+	for _, entry := range entries {
+		obj, ok := entry.(map[string]any)
+		if !ok {
+			continue
+		}
+		fn, ok := obj["function"].(map[string]any)
+		if !ok {
+			continue
+		}
+		name, _ := fn["name"].(string)
+		description, _ := fn["description"].(string)
+		if want[name] && description != "" {
+			descriptions[name] = description
+		}
+	}
+	return descriptions
 }
 
 // Handler return-shape rule (applies across all dispatch functions below):
