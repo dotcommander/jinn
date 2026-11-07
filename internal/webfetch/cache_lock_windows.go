@@ -3,8 +3,9 @@
 package webfetch
 
 import (
-	"golang.org/x/sys/windows"
 	"os"
+
+	"golang.org/x/sys/windows"
 )
 
 func withCacheLock(path string, fn func() error) error {
