@@ -16,26 +16,37 @@ import (
 
 var version = "dev"
 
-const helpText = `Usage: jinn [--shell-mode=disabled|sandboxed|unsafe] [--mcp-profile=discover|read-only|network] [ask [--validate] | mcp ... | web fetch [flags] URL | web search [flags] QUERY | --schema | --inspect [addr] | --mcp [--mcp-profile] | --mcp-http [addr] [--mcp-profile] | --version | --help]
+const helpText = `Usage: jinn [global flags] [COMMAND]
 
 Sandboxed tool executor for AI coding agents.
-Reads a JSON tool request from stdin, writes a JSON response to stdout.
+With no arguments and a terminal stdin, prints this help. Otherwise reads
+a JSON tool request from stdin and writes a JSON response to stdout.
 
-Flags:
-	--shell-mode  Shell execution policy: disabled, sandboxed, or unsafe (default: disabled)
-	--schema      Print tool definitions (OpenAI function-calling format)
-	--inspect     Start a local browser inspector UI (default: 127.0.0.1:8787)
-	--mcp        Start MCP 2026-07-28 stdio broker (default: routing + user elicitation)
-	--mcp-http   Start MCP 2026-07-28 Streamable HTTP at /mcp (default: 127.0.0.1:8788)
-	--mcp-profile MCP surface: discover, read-only, or network (default: discover)
-	ask          Ask a structured terminal questionnaire from JSON stdin; --validate checks only
-	mcp          Explore an MCP endpoint or explicit-argv subprocess; run "jinn mcp --help"
-	HTTP auth    Set JINN_MCP_HTTP_TOKEN and JINN_MCP_HTTP_ORIGINS for non-loopback binds
-  --version  Print version
-	--help     Print this help
-	web        Fetch web pages or search the web; run "jinn web --help" for details
+Commands:
+  (none)           Tool executor mode (JSON on stdin/stdout)
+  ask [--validate] Structured terminal questionnaire from JSON stdin; --validate checks only
+  mcp ...          Explore an MCP endpoint or explicit-argv subprocess; run "jinn mcp --help"
+  web fetch [flags] URL
+                   Fetch a web page; run "jinn web fetch --help"
+  web search [flags] QUERY
+                   Search the web; run "jinn web search --help"
 
-Example:
+Modes and flags:
+  --shell-mode=disabled|sandboxed|unsafe
+                   Shell execution policy (default: disabled)
+  --mcp-profile=discover|read-only|network
+                   MCP surface; requires --mcp or --mcp-http (default: discover)
+  --schema         Print tool definitions (OpenAI function-calling format)
+  --inspect [addr] Start a local browser inspector UI (default addr: 127.0.0.1:8787)
+  --mcp            Start MCP 2026-07-28 stdio broker (default: routing + user elicitation)
+  --mcp-http [addr] Start MCP 2026-07-28 Streamable HTTP at /mcp (default addr: 127.0.0.1:8788)
+  --version        Print version
+  --help, -h       Print this help
+
+Environment:
+  HTTP auth        Set JINN_MCP_HTTP_TOKEN and JINN_MCP_HTTP_ORIGINS for non-loopback binds
+
+Examples:
   echo '{"tool":"read_file","args":{"path":"main.go"}}' | jinn
   jinn --schema | jq .
   jinn --inspect 127.0.0.1:8787
