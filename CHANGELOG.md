@@ -7,6 +7,15 @@ and jinn adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-11-07
+
+### Changed
+
+- Efficiency: skip SHA-256 in `read_file` when no checksum is requested; allocation-free segment pruning and fast root-relative paths in directory walks; `splitLines`-free counting in shell-output compression; single-parse `search_rows` ranking.
+- Efficiency (Astra S1–S5): discard intermediate HTTP retry bodies instead of retaining them; single marshal for generic MCP log enrichment; decode `jsonPath` input once per plan node; read `package.json` once per `detect_project`; drop zero-match regex revalidation.
+- Efficiency (deferred items): group LSP batch queries by file (one `didOpen` per file) and run distinct server groups concurrently; incremental plan-transcript budget accounting; parallel `mcp doctor --all` checks; reuse the Chrome allocator across renders with per-render isolated browser contexts.
+- Clearer `read_file` errors for truncated (`…`) and temp/spill paths: explain that the path is not a real workspace path and how to recover, instead of a bare file-not-found.
+
 ## [0.16.1] - 2026-11-05
 
 ### Changed
