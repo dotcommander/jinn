@@ -183,6 +183,16 @@ func (s *Service) Fetch(ctx context.Context, req FetchRequest) (Document, error)
 	}
 
 	doc, fetchErr := s.fetchWithRender(ctx, target, readerMode, renderOptions)
+	if fetchErr != nil && readerMode == ReaderModeJina && isQuotaReaderError(fetchErr) && ctx.Err() == nil {
+		// Jina quota/auth failures (402/429/401) are provider-side, not
+		// target-side: retry once with the local defuddle reader before
+		// failing the fetch. Context errors never fall back.
+		if fallback, fallbackErr := s.fetchWithRender(ctx, target, ReaderModeDefuddle, renderOptions); fallbackErr == nil {
+			fallback.Warnings = append(fallback.Warnings, "jina reader unavailable (quota/auth); fell back to defuddle")
+			readerMode = ReaderModeDefuddle
+			doc, fetchErr = fallback, nil
+		}
+	}
 	if fetchErr != nil {
 		return Document{}, fetchErr
 	}
@@ -190,6 +200,22 @@ func (s *Service) Fetch(ctx context.Context, req FetchRequest) (Document, error)
 		s.cache.store(target.String(), readerMode, s.reader.endpoint, doc, renderOptions.Mode, renderOptions.Wait)
 	}
 	return doc, nil
+}
+
+// isQuotaReaderError reports provider quota/auth failures from a hosted
+// reader: HTTP 402 (payment required), 429 (quota/rate limit), or 401
+// (unauthorized). Only these trigger the local-reader fallback.
+func isQuotaReaderError(err error) bool {
+	var httpErr *HTTPError
+	if !errors.As(err, &httpErr) {
+		return false
+	}
+	switch httpErr.StatusCode {
+	case http.StatusUnauthorized, http.StatusPaymentRequired, http.StatusTooManyRequests:
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *Service) fetchWithRender(ctx context.Context, target *url.URL, readerMode string, options renderOptions) (Document, error) {
