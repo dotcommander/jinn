@@ -11,6 +11,7 @@ import (
 const (
 	DefaultTimeout               = 30 * time.Second
 	DefaultMaxBodyBytes          = 8 << 20
+	DefaultMaxImageBytes         = 20 << 20
 	DefaultRenderTimeout         = 30 * time.Second
 	DefaultRenderMaxConcurrency  = 2
 	DefaultRenderMaxRequests     = 100
@@ -33,12 +34,16 @@ const (
 	providerBrave              = "brave"
 	providerExa                = "exa"
 	sourceReader               = "reader"
+	sourceImage                = "image"
 	truncatedByLines           = "lines"
 	truncatedByBytes           = "bytes"
 	webrtcDisableNonProxiedUDP = "disable_non_proxied_udp"
 )
 
 // Config controls provider endpoints and HTTP safety limits.
+// SearchProvider may name several providers as an ordered comma-separated
+// list (e.g. "brave,exa"): Search tries them in order, falling back on
+// error or empty results and reporting each fallback reason.
 type Config struct {
 	// UserAgent identifies the owning application for direct and rendered HTTP requests.
 	UserAgent             string
@@ -82,25 +87,27 @@ type FetchRequest struct {
 
 // Document is the normalized result of a URL fetch.
 type Document struct {
-	URL         string
-	FinalURL    string
-	StatusCode  int
-	ContentType string
-	Title       string
-	Description string
-	Domain      string
-	Favicon     string
-	Image       string
-	Language    string
-	Published   string
-	Author      string
-	Site        string
-	WordCount   int
-	Extractor   string
-	Source      string
-	Rendered    bool
-	Warnings    []string
-	Content     string
+	URL           string
+	FinalURL      string
+	StatusCode    int
+	ContentType   string
+	Title         string
+	Description   string
+	Domain        string
+	Favicon       string
+	Image         string
+	Language      string
+	Published     string
+	Author        string
+	Site          string
+	WordCount     int
+	Extractor     string
+	Source        string
+	Rendered      bool
+	Warnings      []string
+	Content       string
+	ImageBytes    []byte
+	ImageMimeType string
 }
 
 // SearchRequest describes one web search.
@@ -119,6 +126,15 @@ type SearchResponse struct {
 	Query    string         `json:"query"`
 	Provider string         `json:"provider,omitempty"`
 	Results  []SearchResult `json:"results"`
+	// Fallbacks records each provider skipped before the answering one,
+	// with the reason (error code, "empty", or "domain-miss").
+	Fallbacks []SearchFallback `json:"fallbacks,omitempty"`
+}
+
+// SearchFallback records one provider that did not answer a search.
+type SearchFallback struct {
+	Provider string `json:"provider"`
+	Reason   string `json:"reason"`
 }
 
 // SearchResult is one search hit.

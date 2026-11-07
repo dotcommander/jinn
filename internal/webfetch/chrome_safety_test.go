@@ -88,3 +88,65 @@ func TestNativeChromeLocalSafetyAndStatus(t *testing.T) {
 		t.Fatalf("prohibited private contacts = %d", got)
 	}
 }
+
+func TestNativeChromeSurfacesCrossHostRedirect(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("native browser integration")
+	}
+	chromePath := strings.TrimSpace(os.Getenv("JINN_WEB_TEST_CHROME_PATH"))
+	if chromePath == "" {
+		t.Skip("JINN_WEB_TEST_CHROME_PATH is not set")
+	}
+	body := `<html><body><article><h1>Controlled article</h1><p>` + strings.Repeat("Local browser acceptance content. ", 30) + `</p></article></body></html>`
+	var local *url.URL
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		switch req.URL.Path {
+		case "/start":
+			http.Redirect(w, req, "http://other.example:"+local.Port()+"/final", http.StatusFound)
+			return
+		case "/same":
+			http.Redirect(w, req, "/final", http.StatusFound)
+			return
+		case "/final":
+			_, _ = io.WriteString(w, body)
+			return
+		}
+		t.Errorf("unexpected path %q", req.URL.Path)
+	}))
+	t.Cleanup(origin.Close)
+	local, _ = url.Parse(origin.URL)
+	publicURL := "http://public.example:" + local.Port()
+	renderer, err := newChromedpRenderer(rendererConfig{Timeout: 15 * time.Second, MaxConcurrency: 1, MaxRequests: 50,
+		MaxNetworkBytes: 1 << 20, MaxHTMLBytes: 1 << 20, ChromePath: chromePath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := renderer.(*chromedpRenderer)
+	r.client.resolver = resolverFunc(func(_ context.Context, host string) ([]net.IPAddr, error) {
+		if host != "public.example" && host != "other.example" {
+			return nil, fmt.Errorf("fixture rejects host %s", host)
+		}
+		return []net.IPAddr{{IP: net.ParseIP("93.184.216.34")}}, nil
+	})
+	r.client.dialer = func(ctx context.Context, network, address string) (net.Conn, error) {
+		if address != net.JoinHostPort("93.184.216.34", local.Port()) {
+			return nil, fmt.Errorf("fixture rejects dial %s", address)
+		}
+		return (&net.Dialer{}).DialContext(ctx, network, local.Host)
+	}
+	service := NewService(Config{})
+	service.renderer = renderer
+	t.Cleanup(func() { _ = service.Close(t.Context()) })
+
+	_, err = service.Fetch(t.Context(), FetchRequest{URL: publicURL + "/start", Reader: ReaderModeDefuddle, Render: RenderModeAlways})
+	var coded *CodedError
+	if !errors.As(err, &coded) || coded.Code != ErrorCodeCrossHostRedirect {
+		t.Fatalf("cross-host render error = %v, coded = %#v", err, coded)
+	}
+	doc, err := service.Fetch(t.Context(), FetchRequest{URL: publicURL + "/same", Reader: ReaderModeDefuddle, Render: RenderModeAlways})
+	if err != nil || !strings.Contains(doc.Content, "Controlled article") {
+		t.Fatalf("same-host redirect render: %+v, %v", doc, err)
+	}
+}

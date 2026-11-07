@@ -96,6 +96,13 @@ func (c *Client) checkRedirect(req *http.Request, via []*http.Request) error {
 	if err := validateURL(req.URL, c.allowPrivateNetworks); err != nil {
 		return err
 	}
+	if len(via) > 0 && via[0].URL != nil && !sameHost(via[0].URL, req.URL) {
+		return newCodedError(
+			fmt.Errorf("redirected to a different host: %s", req.URL),
+			ErrorCodeCrossHostRedirect,
+			"fetch the redirected URL explicitly to confirm the new host",
+		)
+	}
 	if len(via) > 0 {
 		sameRedirectOrigin := sameOrigin(via[0].URL, req.URL)
 		for _, name := range []string{headerAuthorization, headerSubscription, headerAPIKey} {
@@ -114,6 +121,16 @@ func copyHeader(dst, src http.Header, name string) {
 	for _, value := range src.Values(name) {
 		dst.Add(name, value)
 	}
+}
+
+func sameHost(left, right *url.URL) bool {
+	if left == nil || right == nil {
+		return false
+	}
+	return strings.EqualFold(
+		strings.TrimSuffix(left.Hostname(), "."),
+		strings.TrimSuffix(right.Hostname(), "."),
+	)
 }
 
 func sameOrigin(left, right *url.URL) bool {

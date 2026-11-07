@@ -41,7 +41,7 @@ func (p readerProvider) fetchDefuddleHTML(ctx context.Context, target *url.URL) 
 	}
 
 	contentType := strings.TrimSpace(resp.Header.Get("Content-Type"))
-	if !isHTMLContentType(contentType) {
+	if !isHTMLContentType(contentType) && !looksLikeHTML(resp.Body) {
 		contentTypeErr := fmt.Errorf("defuddle fetch content type %q: %w", contentType, ErrNotHTML)
 		return defuddleHTML{}, newCodedError(contentTypeErr, ErrorCodeNotHTML, "use -raw for non-HTML content or provide an HTML page")
 	}
@@ -118,6 +118,22 @@ func isHTMLContentType(contentType string) bool {
 	return strings.Contains(lower, "html") ||
 		strings.Contains(lower, "xml") ||
 		strings.HasPrefix(lower, "text/")
+}
+
+func looksLikeHTML(body []byte) bool {
+	const sniffBytes = 32 * 1024
+	if len(body) > sniffBytes {
+		body = body[:sniffBytes]
+	}
+	trimmed := strings.ToLower(strings.TrimSpace(string(body)))
+	if trimmed == "" {
+		return false
+	}
+	return strings.HasPrefix(trimmed, "<!doctype") ||
+		strings.HasPrefix(trimmed, "<html") ||
+		strings.HasPrefix(trimmed, "<?xml") ||
+		strings.HasPrefix(trimmed, "<head") ||
+		strings.HasPrefix(trimmed, "<body")
 }
 
 func decodeHTML(body []byte, contentType string) (string, error) {

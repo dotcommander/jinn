@@ -4,6 +4,7 @@ import (
 	"context"
 	_ "embed"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -268,5 +269,43 @@ func TestServiceFetchRejectsUnknownReader(t *testing.T) {
 	})
 	if !errors.Is(err, ErrUnsupportedReader) {
 		t.Fatalf("Fetch error = %v, want ErrUnsupportedReader", err)
+	}
+}
+
+func TestServiceFetchAutoSurfacesCrossHostRedirect(t *testing.T) {
+	t.Parallel()
+
+	var jinaRequests atomic.Int32
+	readerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		jinaRequests.Add(1)
+		_, _ = w.Write([]byte("hosted content"))
+	}))
+	t.Cleanup(readerServer.Close)
+
+	var port string
+	targetServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/start":
+			http.Redirect(w, r, "http://other.example:"+port+"/final", http.StatusFound)
+		case "/final":
+			_, _ = w.Write([]byte("cross-host content"))
+		default:
+			t.Errorf("unexpected path %q", r.URL.Path)
+		}
+	}))
+	t.Cleanup(targetServer.Close)
+	_, port, _ = net.SplitHostPort(targetServer.Listener.Addr().String())
+
+	service := NewService(Config{AllowPrivateNetworks: true, ReaderEndpoint: readerServer.URL})
+	_, err := service.Fetch(context.Background(), FetchRequest{
+		URL:    targetServer.URL + "/start",
+		Reader: ReaderModeAuto,
+	})
+	var coded *CodedError
+	if !errors.As(err, &coded) || coded.Code != ErrorCodeCrossHostRedirect {
+		t.Fatalf("Fetch error = %v, coded = %#v", err, coded)
+	}
+	if got := jinaRequests.Load(); got != 0 {
+		t.Fatalf("Jina requests = %d, want 0 (cross-host redirect must not fall back)", got)
 	}
 }

@@ -87,10 +87,21 @@ func (c *Client) Get(ctx context.Context, rawURL string, headers http.Header) (h
 	return c.Do(ctx, http.MethodGet, rawURL, headers, nil)
 }
 
+// GetWithMaxBodyBytes performs a GET with a per-request body limit. It exists
+// for bounded media payloads whose limit differs from the general body limit.
+func (c *Client) GetWithMaxBodyBytes(ctx context.Context, rawURL string, headers http.Header, maxBytes int64) (httpResponse, error) {
+	return c.do(ctx, http.MethodGet, rawURL, headers, nil, maxBytes)
+}
+
 // Do performs one bounded HTTP operation and retries only safe methods.
 //
-//nolint:funlen,gocognit,gocyclo,nestif,revive // Raw responses remain package-internal; the retry loop is one audit surface.
+//nolint:revive // httpResponse is deliberately internal because only package-owned providers consume raw responses.
 func (c *Client) Do(ctx context.Context, method, rawURL string, headers http.Header, body []byte) (httpResponse, error) {
+	return c.do(ctx, method, rawURL, headers, body, c.maxBodyBytes)
+}
+
+//nolint:funlen,gocognit,gocyclo,nestif,revive // Raw responses remain package-internal; the retry loop is one audit surface.
+func (c *Client) do(ctx context.Context, method, rawURL string, headers http.Header, body []byte, maxBodyBytes int64) (httpResponse, error) {
 	target, err := validateTarget(rawURL, c.allowPrivateNetworks)
 	if err != nil {
 		return httpResponse{}, err
@@ -141,7 +152,7 @@ func (c *Client) Do(ctx context.Context, method, rawURL string, headers http.Hea
 			continue
 		}
 
-		responseBody, readErr := readBounded(resp.Body, c.maxBodyBytes)
+		responseBody, readErr := readBounded(resp.Body, maxBodyBytes)
 		closeErr := resp.Body.Close()
 		if readErr != nil {
 			if errors.Is(readErr, ErrTooLarge) {
@@ -210,7 +221,7 @@ func validateTarget(rawURL string, allowPrivateNetworks bool) (*url.URL, error) 
 	if err := validateURL(u, allowPrivateNetworks); err != nil {
 		return nil, err
 	}
-	return u, nil
+	return rewriteGitHubBlobURL(u), nil
 }
 
 func validateURL(u *url.URL, allowPrivateNetworks bool) error {
@@ -230,6 +241,41 @@ func validateURL(u *url.URL, allowPrivateNetworks bool) error {
 		return nil
 	}
 	return validateHost(u.Hostname())
+}
+
+// rewriteGitHubBlobURL maps github.com blob/raw URLs to the same file on
+// raw.githubusercontent.com so fetches return file content instead of page
+// chrome. Non-GitHub and non-blob/raw shapes are returned unchanged.
+func rewriteGitHubBlobURL(u *url.URL) *url.URL {
+	host := strings.ToLower(u.Hostname())
+	if host != "github.com" && host != "www.github.com" {
+		return u
+	}
+	var segments []string
+	for _, raw := range strings.Split(u.EscapedPath(), "/") {
+		segment := strings.TrimSpace(raw)
+		if segment == "" {
+			continue
+		}
+		decoded, err := url.PathUnescape(segment)
+		if err != nil || decoded == "" || strings.Contains(decoded, "/") {
+			return u
+		}
+		segments = append(segments, decoded)
+	}
+	if len(segments) < 5 {
+		return u
+	}
+	if segments[2] != "blob" && segments[2] != "raw" {
+		return u
+	}
+	rewritten := *u
+	rewritten.Scheme = schemeHTTPS
+	rewritten.Host = "raw.githubusercontent.com"
+	rewritten.Path = "/" + strings.Join(segments[:2], "/") + "/" + strings.Join(segments[3:], "/")
+	rewritten.RawQuery = ""
+	rewritten.Fragment = ""
+	return &rewritten
 }
 
 func readBounded(r io.Reader, maxBytes int64) ([]byte, error) {

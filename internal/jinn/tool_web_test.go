@@ -72,6 +72,32 @@ func TestWebFetchProjectsAndPaginatesLocalResult(t *testing.T) {
 	}
 }
 
+func TestWebFetchReturnsImageContentBlock(t *testing.T) {
+	t.Parallel()
+	body := []byte("fake-webp-bytes")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "image/webp")
+		_, _ = w.Write(body)
+	}))
+	t.Cleanup(server.Close)
+	engine, err := NewWithConfig(t.TempDir(), EngineConfig{Web: webfetch.Config{AllowPrivateNetworks: true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = engine.Close() })
+
+	result, _, err := engine.Dispatch(context.Background(), webFetchTool, args("url", server.URL+"/cover.webp"))
+	if err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	if len(result.Content) != 1 || result.Content[0].Type != "image" || result.Content[0].MimeType != "image/webp" || result.Content[0].Data == "" {
+		t.Fatalf("Content = %#v", result.Content)
+	}
+	if result.Meta["converter"] != "image" || result.Meta["image_bytes"] != len(body) {
+		t.Fatalf("Meta = %#v", result.Meta)
+	}
+}
+
 func TestWebFetchRejectsRawNonMarkdownProjection(t *testing.T) {
 	t.Parallel()
 	engine, err := NewWithConfig(t.TempDir(), EngineConfig{})

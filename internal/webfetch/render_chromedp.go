@@ -122,7 +122,7 @@ func (r *chromedpRenderer) Render(ctx context.Context, target *url.URL, options 
 				tracker.fail(err)
 				return
 			}
-			go handlePausedRequest(tabCtx, &event, r.client.allowPrivateNetworks, tracker)
+			go handlePausedRequest(tabCtx, &event, target, r.client.allowPrivateNetworks, tracker)
 		}
 	}()
 
@@ -160,6 +160,9 @@ func (r *chromedpRenderer) Render(ctx context.Context, target *url.URL, options 
 		}
 		return renderedPage{}, newCodedError(fmt.Errorf("render page: %w", err), ErrorCodeRenderFailed, "retry the page or use static Defuddle extraction")
 	}
+	if redirectErr := checkRenderedFinalURL(target, page.FinalURL); redirectErr != nil {
+		return renderedPage{}, redirectErr
+	}
 	if budgetErr := firstRenderBudgetError(budget.Err(), tracker.Err()); budgetErr != nil {
 		return renderedPage{}, budgetErr
 	}
@@ -195,8 +198,8 @@ func watchRenderEvents[E any](ctx context.Context, event cdp.Event[E], tracker *
 	}()
 }
 
-func handlePausedRequest(ctx context.Context, event *fetch.EventRequestPaused, allowPrivateNetworks bool, tracker *renderTracker) {
-	handlePausedRequestActions(event, allowPrivateNetworks, tracker, func() error {
+func handlePausedRequest(ctx context.Context, event *fetch.EventRequestPaused, target *url.URL, allowPrivateNetworks bool, tracker *renderTracker) {
+	handlePausedRequestActions(event, target, allowPrivateNetworks, tracker, func() error {
 		_, err := chromedp.Call(ctx, fetch.FailRequest, fetch.FailRequestParams{RequestID: event.RequestID, ErrorReason: network.ErrorReasonBlockedByClient})
 		return err
 	}, func() error {
@@ -205,7 +208,7 @@ func handlePausedRequest(ctx context.Context, event *fetch.EventRequestPaused, a
 	})
 }
 
-func handlePausedRequestActions(event *fetch.EventRequestPaused, allowPrivateNetworks bool, tracker *renderTracker, reject, proceed func() error) {
+func handlePausedRequestActions(event *fetch.EventRequestPaused, target *url.URL, allowPrivateNetworks bool, tracker *renderTracker, reject, proceed func() error) {
 	if event == nil || event.Request == nil {
 		err := newCodedError(errors.New("browser paused request is missing URL details"), ErrorCodeInvalidURL, "retry the page or use a standard HTTP or HTTPS URL")
 		if event != nil {
@@ -224,6 +227,21 @@ func handlePausedRequestActions(event *fetch.EventRequestPaused, allowPrivateNet
 		}
 		return
 	}
+	if tracker.isMainDocument(event) && target != nil {
+		if redirected, parseErr := url.Parse(event.Request.URL); parseErr == nil && !sameHost(target, redirected) {
+			crossErr := newCodedError(
+				fmt.Errorf("browser redirected to a different host: %s", event.Request.URL),
+				ErrorCodeCrossHostRedirect,
+				"fetch the redirected URL explicitly to confirm the new host",
+			)
+			if rejectErr := reject(); rejectErr != nil {
+				tracker.fail(fmt.Errorf("reject browser request: %w", rejectErr))
+			} else {
+				tracker.fail(crossErr)
+			}
+			return
+		}
+	}
 	if err := proceed(); err != nil {
 		tracker.fail(fmt.Errorf("continue browser request: %w", err))
 	}
@@ -233,6 +251,25 @@ func (t *renderTracker) isMainDocument(event *fetch.EventRequestPaused) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return event.ResourceType == network.ResourceTypeDocument && (t.mainFrameID == "" || string(event.FrameID) == t.mainFrameID)
+}
+
+func checkRenderedFinalURL(target *url.URL, finalURL string) error {
+	if target == nil || strings.TrimSpace(finalURL) == "" {
+		return nil
+	}
+	final, err := url.Parse(finalURL)
+	if err != nil {
+		// Ignore malformed final URLs, matching the redirect handler.
+		return nil
+	}
+	if sameHost(target, final) {
+		return nil
+	}
+	return newCodedError(
+		fmt.Errorf("rendered page redirected to a different host: %s", finalURL),
+		ErrorCodeCrossHostRedirect,
+		"fetch the redirected URL explicitly to confirm the new host",
+	)
 }
 
 func validateRenderRequestURL(rawURL string, allowPrivateNetworks bool) error {

@@ -117,7 +117,27 @@ type braveSearchResponse struct {
 	} `json:"web"`
 }
 
-// Search executes one normalized query against the configured provider.
+// splitProviderNames parses the ordered comma-separated provider list.
+// Empty entries are dropped; an empty list means the default provider.
+func splitProviderNames(list string) []string {
+	if strings.TrimSpace(list) == "" {
+		return nil
+	}
+	parts := strings.Split(list, ",")
+	names := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if name := strings.ToLower(strings.TrimSpace(part)); name != "" {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
+// Search executes one normalized query against the configured provider
+// chain in order. A provider that errors or returns zero results falls
+// through to the next with a recorded reason (error code, "empty", or
+// "domain-miss" when domain filters were set); the whole routing pass is
+// bounded by the configured service timeout.
 func (s *Service) Search(ctx context.Context, req SearchRequest) (SearchResponse, error) {
 	if s == nil {
 		return SearchResponse{}, newCodedError(errors.New("webfetch service is nil"), ErrorCodeInvalidArgument, "initialize the webfetch service before calling Search")
@@ -125,22 +145,60 @@ func (s *Service) Search(ctx context.Context, req SearchRequest) (SearchResponse
 	if s.searchConfig != nil {
 		return SearchResponse{}, s.searchConfig
 	}
-	if s.search == nil {
-		return SearchResponse{}, newCodedError(errors.New("search provider is not configured"), ErrorCodeInvalidArgument, "configure a search provider before calling Search")
-	}
 	validated, err := validateSearchRequest(req, DefaultSearchLimit)
 	if err != nil {
 		return SearchResponse{}, err
 	}
-	results, err := s.search.search(ctx, validated)
-	if err != nil {
-		return SearchResponse{}, err
+	chain := s.searchChain
+	if len(chain) == 0 {
+		if s.search == nil {
+			return SearchResponse{}, newCodedError(errors.New("search provider is not configured"), ErrorCodeInvalidArgument, "configure a search provider before calling Search")
+		}
+		chain = []searchProvider{s.search}
 	}
-	return SearchResponse{
-		Query:    validated.Query,
-		Provider: s.search.name(),
-		Results:  normalizeSearchResults(results, validated.Limit),
-	}, nil
+	if s.searchTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, s.searchTimeout)
+		defer cancel()
+	}
+	var fallbacks []SearchFallback
+	for i, provider := range chain {
+		results, searchErr := provider.search(ctx, validated)
+		last := i == len(chain)-1
+		switch {
+		case searchErr == nil && len(results) > 0:
+			return SearchResponse{
+				Query:     validated.Query,
+				Provider:  provider.name(),
+				Results:   normalizeSearchResults(results, validated.Limit),
+				Fallbacks: fallbacks,
+			}, nil
+		case searchErr != nil:
+			if last {
+				return SearchResponse{}, searchErr
+			}
+			fallbacks = append(fallbacks, SearchFallback{Provider: provider.name(), Reason: searchErrorReason(searchErr)})
+		default: // empty results
+			if last {
+				return SearchResponse{Query: validated.Query, Provider: provider.name(), Results: []SearchResult{}, Fallbacks: fallbacks}, nil
+			}
+			reason := "empty"
+			if len(validated.IncludeDomains) > 0 {
+				reason = "domain-miss"
+			}
+			fallbacks = append(fallbacks, SearchFallback{Provider: provider.name(), Reason: reason})
+		}
+	}
+	return SearchResponse{}, newCodedError(errors.New("search provider is not configured"), ErrorCodeInvalidArgument, "configure a search provider before calling Search")
+}
+
+// searchErrorReason reduces a provider error to its stable code, or "error".
+func searchErrorReason(err error) string {
+	var coded *CodedError
+	if errors.As(err, &coded) && coded.Code != "" {
+		return coded.Code
+	}
+	return "error"
 }
 
 //nolint:gocyclo // Sequential validation preserves precise field-specific errors.

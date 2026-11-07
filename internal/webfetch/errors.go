@@ -28,6 +28,7 @@ const (
 	ErrorCodeBrowserUnavailable = "browser_unavailable"
 	ErrorCodeRenderFailed       = "render_failed"
 	ErrorCodeRenderBudget       = "render_budget_exceeded"
+	ErrorCodeCrossHostRedirect  = "cross_host_redirect"
 )
 
 // CodedError preserves the original error while exposing stable, actionable

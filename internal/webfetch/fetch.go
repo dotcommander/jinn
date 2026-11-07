@@ -8,14 +8,20 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"time"
 )
 
 // Service owns the configured fetch, search, cache, and lazy renderer lifecycle.
 type Service struct {
-	client        Client
-	reader        readerProvider
-	readerMode    string
-	search        searchProvider
+	client     Client
+	reader     readerProvider
+	readerMode string
+	search     searchProvider
+	// searchChain is the ordered provider fallback chain built from a
+	// comma-separated SearchProvider list; empty means the single
+	// configured provider (search) is the only candidate.
+	searchChain   []searchProvider
+	searchTimeout time.Duration
 	searchConfig  error
 	cache         *urlCache
 	renderConfig  rendererConfig
@@ -77,28 +83,44 @@ func NewService(cfg Config) *Service {
 	}
 	searchProviderName := strings.ToLower(strings.TrimSpace(cfg.SearchProvider))
 	var search searchProvider
+	var searchChain []searchProvider
 	var searchConfig error
-	if searchProviderName != "" && searchProviderName != providerBrave && searchProviderName != providerExa {
-		searchConfig = unsupportedSearchProviderError(searchProviderName)
+	providerNames := splitProviderNames(searchProviderName)
+	if len(providerNames) == 0 {
+		providerNames = []string{providerBrave}
 	}
-
+	for _, name := range providerNames {
+		if name != providerBrave && name != providerExa {
+			searchConfig = unsupportedSearchProviderError(name)
+			break
+		}
+	}
 	client := NewClient(ClientConfig{
 		Timeout:              timeout,
 		MaxBodyBytes:         maxBodyBytes,
 		AllowPrivateNetworks: cfg.AllowPrivateNetworks,
 		UserAgent:            cfg.UserAgent,
 	})
-	switch searchProviderName {
-	case "", providerBrave:
-		search = braveProvider{client: client, endpoint: searchEndpoint, apiKey: cfg.BraveAPIKey}
-	case providerExa:
-		search = exaProvider{client: client, endpoint: exaSearchEndpoint, apiKey: cfg.ExaAPIKey}
+	if searchConfig == nil {
+		for _, name := range providerNames {
+			var provider searchProvider
+			switch name {
+			case providerExa:
+				provider = exaProvider{client: client, endpoint: exaSearchEndpoint, apiKey: cfg.ExaAPIKey}
+			default:
+				provider = braveProvider{client: client, endpoint: searchEndpoint, apiKey: cfg.BraveAPIKey}
+			}
+			searchChain = append(searchChain, provider)
+		}
+		search = searchChain[0]
 	}
 	return &Service{
 		client:        *client,
 		reader:        readerProvider{client: client, endpoint: readerEndpoint, apiKey: cfg.JinaAPIKey},
 		readerMode:    readerMode,
 		search:        search,
+		searchChain:   searchChain,
+		searchTimeout: timeout,
 		searchConfig:  searchConfig,
 		cache:         newURLCache(cfg.URLCacheTTL, cfg.URLCacheDir, maxBodyBytes),
 		renderFactory: newChromedpRenderer,
@@ -140,6 +162,11 @@ func (s *Service) Fetch(ctx context.Context, req FetchRequest) (Document, error)
 	renderOptions, err := normalizeRenderOptions(req, readerMode)
 	if err != nil {
 		return Document{}, err
+	}
+	if imageDoc, ok, imageErr := s.fetchImageIfPresent(ctx, target); imageErr != nil {
+		return Document{}, imageErr
+	} else if ok {
+		return imageDoc, nil
 	}
 	if s.cache != nil {
 		if doc, ok := s.cache.load(target.String(), readerMode, s.reader.endpoint, renderOptions.Mode, renderOptions.Wait); ok {
@@ -442,11 +469,30 @@ func unsupportedReaderError(readerMode string) error {
 func (s *Service) fetchRaw(ctx context.Context, target *url.URL) (Document, error) {
 	resp, err := s.client.Get(ctx, target.String(), nil)
 	if err != nil {
+		var coded *CodedError
+		if errors.As(err, &coded) && coded.Code == ErrorCodeResponseTooLarge {
+			if imageDoc, ok, imageErr := s.fetchImageByContentType(ctx, target); imageErr != nil {
+				return Document{}, imageErr
+			} else if ok {
+				return imageDoc, nil
+			}
+		}
 		return Document{}, err
 	}
 	contentType := resp.Header.Get("Content-Type")
 	if contentType == "" {
 		contentType = http.DetectContentType(resp.Body)
+	}
+	if mimeType := imageContentType(contentType); supportedImageTypes[mimeType] {
+		return Document{
+			URL:           target.String(),
+			FinalURL:      resp.URL,
+			StatusCode:    resp.StatusCode,
+			ContentType:   mimeType,
+			Source:        sourceImage,
+			ImageBytes:    resp.Body,
+			ImageMimeType: mimeType,
+		}, nil
 	}
 	return Document{
 		URL:         target.String(),

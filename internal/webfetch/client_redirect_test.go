@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"sync/atomic"
 	"testing"
 )
@@ -17,13 +18,11 @@ func TestClientRedirectHeaderPolicy(t *testing.T) {
 	tests := []struct {
 		name              string
 		locationHost      string
-		multiHop          bool
 		wantAuthorization string
 		wantSubscription  string
 		wantAPIKey        string
 	}{
 		{name: "same origin", locationHost: "ORIGIN.EXAMPLE", wantAuthorization: "Bearer reader-secret", wantSubscription: "subscription-secret", wantAPIKey: "api-secret"},
-		{name: "cross origin multi hop", locationHost: "other.example", multiHop: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -33,12 +32,6 @@ func TestClientRedirectHeaderPolicy(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
 				case "/start":
-					next := "/final"
-					if tt.multiHop {
-						next = "/middle"
-					}
-					http.Redirect(w, r, "http://"+tt.locationHost+":"+port+next, http.StatusFound)
-				case "/middle":
 					http.Redirect(w, r, "http://"+tt.locationHost+":"+port+"/final", http.StatusFound)
 				case "/final":
 					observedHeaders <- r.Header.Clone()
@@ -86,7 +79,6 @@ func TestClientCheckRedirectStripsSensitiveHeadersAcrossStrictOrigin(t *testing.
 	}{
 		{name: "scheme change", origin: "https://example.com/path", target: "http://example.com/path"},
 		{name: "effective port change", origin: "https://example.com/path", target: "https://example.com:444/path"},
-		{name: "subdomain change", origin: "https://example.com/path", target: "https://api.example.com/path"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -164,6 +156,38 @@ func TestClientStopsAfterTenRedirectHopsWithoutRetrying(t *testing.T) {
 	}
 	if got, want := requests.Load(), int32(maxRedirectHops); got != want {
 		t.Fatalf("requests = %d, want %d", got, want)
+	}
+}
+
+func TestClientSurfacesCrossHostRedirect(t *testing.T) {
+	t.Parallel()
+	var finalRequests atomic.Int32
+	var port string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/start":
+			http.Redirect(w, r, "http://other.example:"+port+"/final", http.StatusFound)
+		case "/final":
+			finalRequests.Add(1)
+			_, _ = w.Write([]byte("cross-host content"))
+		default:
+			t.Errorf("unexpected path %q", r.URL.Path)
+		}
+	}))
+	t.Cleanup(server.Close)
+	_, port, _ = net.SplitHostPort(server.Listener.Addr().String())
+
+	client := testClientForServer(t, server)
+	_, err := client.Get(context.Background(), "http://origin.example:"+port+"/start", nil)
+	var coded *CodedError
+	if !errors.As(err, &coded) || coded.Code != ErrorCodeCrossHostRedirect {
+		t.Fatalf("Get error = %v, coded = %#v", err, coded)
+	}
+	if !strings.Contains(err.Error(), "other.example") {
+		t.Fatalf("Get error = %q, want redirected host named", err)
+	}
+	if got := finalRequests.Load(); got != 0 {
+		t.Fatalf("cross-host requests = %d, want 0", got)
 	}
 }
 

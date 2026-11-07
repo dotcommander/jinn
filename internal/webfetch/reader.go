@@ -2,6 +2,7 @@ package webfetch
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -36,6 +37,9 @@ var jinaErrorPrefixes = []string{
 }
 
 func (p readerProvider) fetch(ctx context.Context, target *url.URL) (Document, error) {
+	if err := p.probeRedirects(ctx, target); err != nil {
+		return Document{}, err
+	}
 	readerURL := strings.TrimRight(p.endpoint, "/") + "/" + target.String()
 	headers := make(http.Header)
 	headers.Set("Accept", contentTypeMarkdown)
@@ -49,6 +53,9 @@ func (p readerProvider) fetch(ctx context.Context, target *url.URL) (Document, e
 	}
 	if err := validateJinaResponse(resp); err != nil {
 		return Document{}, fmt.Errorf("reader response: %w", err)
+	}
+	if err := checkJinaSourceURL(target, string(resp.Body)); err != nil {
+		return Document{}, err
 	}
 	return Document{
 		URL:         target.String(),
@@ -69,6 +76,12 @@ func (p readerProvider) fetchAuto(ctx context.Context, target *url.URL) (Documen
 	if ctx.Err() != nil {
 		return Document{}, codeContextError(ctx.Err())
 	}
+	var coded *CodedError
+	if errors.As(defuddleErr, &coded) && coded.Code == ErrorCodeCrossHostRedirect {
+		// A cross-host redirect is a policy stop, not a reader failure:
+		// falling back to the hosted reader would follow it silently.
+		return Document{}, defuddleErr
+	}
 
 	doc, jinaErr := p.fetch(ctx, target)
 	if jinaErr == nil {
@@ -82,6 +95,49 @@ func (p readerProvider) fetchAuto(ctx context.Context, target *url.URL) (Documen
 		ErrorCodeReaderFallback,
 		"use -reader jina, -reader defuddle, or -raw to choose one path",
 	)
+}
+
+// probeRedirects resolves the target's redirect chain through the shared
+// client (which stops at the first cross-host hop) before a hosted read.
+// A cross-host redirect is a policy stop; any other probe outcome
+// (including servers that refuse HEAD) is inconclusive and the hosted
+// reader proceeds, since the probe must not become a second fetch gate.
+func (p readerProvider) probeRedirects(ctx context.Context, target *url.URL) error {
+	headers := make(http.Header)
+	headers.Set("Accept", "*/*")
+	_, err := p.client.Do(ctx, http.MethodHead, target.String(), headers, nil)
+	if err == nil {
+		return nil
+	}
+	var coded *CodedError
+	if errors.As(err, &coded) && coded.Code == ErrorCodeCrossHostRedirect {
+		return err
+	}
+	return nil
+}
+
+// checkJinaSourceURL rejects hosted-read content whose reported source URL
+// points at a different host than requested. Absent or malformed metadata
+// is accepted: it cannot prove a host change.
+func checkJinaSourceURL(target *url.URL, content string) error {
+	for _, line := range strings.Split(content, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "URL Source:") {
+			continue
+		}
+		source, err := url.Parse(strings.TrimSpace(strings.TrimPrefix(line, "URL Source:")))
+		if err != nil {
+			return nil
+		}
+		if !sameHost(target, source) {
+			return newCodedError(
+				fmt.Errorf("hosted reader source is a different host: %s", source),
+				ErrorCodeCrossHostRedirect,
+				"fetch the redirected URL explicitly to confirm the new host",
+			)
+		}
+	}
+	return nil
 }
 
 func validateJinaResponse(resp httpResponse) error {

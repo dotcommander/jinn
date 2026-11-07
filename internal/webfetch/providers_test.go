@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -190,6 +193,59 @@ func TestServiceFetchReaderAllowsLateErrorTextAndShortContent(t *testing.T) {
 				t.Fatalf("Fetch = document=%+v error=%v", doc, err)
 			}
 		})
+	}
+}
+
+func TestCheckJinaSourceURL(t *testing.T) {
+	t.Parallel()
+	target, err := url.Parse("http://origin.example/page")
+	if err != nil {
+		t.Fatalf("parse target: %v", err)
+	}
+	if err := checkJinaSourceURL(target, "Title: T\nURL Source: http://origin.example/page\nMarkdown Content:\nbody"); err != nil {
+		t.Fatalf("same-host source: %v", err)
+	}
+	assertCodedError(t, checkJinaSourceURL(target, "Title: T\nURL Source: http://other.example/page\nMarkdown Content:\nbody"), ErrorCodeCrossHostRedirect)
+	assertCodedError(t, checkJinaSourceURL(target, "Title: T\nURL Source: http://api.origin.example/page\nMarkdown Content:\nbody"), ErrorCodeCrossHostRedirect)
+	if err := checkJinaSourceURL(target, "# Heading\n\nbody without metadata"); err != nil {
+		t.Fatalf("missing metadata: %v", err)
+	}
+	if err := checkJinaSourceURL(target, "URL Source: ://malformed\nbody"); err != nil {
+		t.Fatalf("malformed metadata: %v", err)
+	}
+}
+
+func TestServiceFetchReaderProbesCrossHostRedirect(t *testing.T) {
+	t.Parallel()
+	var readerRequests atomic.Int32
+	readerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		readerRequests.Add(1)
+		_, _ = w.Write([]byte("# Hosted\n\nshould not be returned\n"))
+	}))
+	t.Cleanup(readerServer.Close)
+
+	var port string
+	targetServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/start":
+			http.Redirect(w, r, "http://other.example:"+port+"/final", http.StatusFound)
+		case "/final":
+			_, _ = w.Write([]byte("cross-host content"))
+		default:
+			t.Errorf("unexpected path %q", r.URL.Path)
+		}
+	}))
+	t.Cleanup(targetServer.Close)
+	_, port, _ = net.SplitHostPort(targetServer.Listener.Addr().String())
+
+	service := NewService(Config{AllowPrivateNetworks: true, ReaderEndpoint: readerServer.URL})
+	_, err := service.Fetch(context.Background(), FetchRequest{URL: targetServer.URL + "/start", Reader: ReaderModeJina})
+	var coded *CodedError
+	if !errors.As(err, &coded) || coded.Code != ErrorCodeCrossHostRedirect {
+		t.Fatalf("Fetch error = %v, coded = %#v", err, coded)
+	}
+	if got := readerRequests.Load(); got != 0 {
+		t.Fatalf("hosted reader requests = %d, want 0 (cross-host redirect must stop before Jina)", got)
 	}
 }
 

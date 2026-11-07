@@ -2,6 +2,7 @@ package jinn
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -47,11 +48,17 @@ func (e *Engine) dispatchWeb(ctx context.Context, args map[string]any, tool stri
 		if err != nil {
 			return nil, true, mapWebError(err)
 		}
+		if doc.Source == "image" {
+			return webImageResult(doc), true, nil
+		}
+		if stringArg(args, "mode") == "extract" {
+			return dispatchWebExtract(doc, args)
+		}
 		projection, err := webfetch.ProjectFetchContentAt(doc.Content, format, startLine, startLineByte, limits)
 		if err != nil {
 			return nil, true, mapWebError(err)
 		}
-		return &ToolResult{Text: projection.Content, Meta: webFetchMeta(doc, projection, limits)}, true, nil
+		return &ToolResult{Text: webfetch.SanitizeText(projection.Content), Meta: webFetchMeta(doc, projection, limits)}, true, nil
 	case webSearchTool:
 		req, err := webfetch.ParseSearchRequest(args)
 		if err != nil {
@@ -62,21 +69,73 @@ func (e *Engine) dispatchWeb(ctx context.Context, args map[string]any, tool stri
 			return nil, true, mapWebError(err)
 		}
 		text, err := json.Marshal(struct {
-			Query   string                  `json:"query"`
-			Results []webfetch.SearchResult `json:"results"`
-		}{Query: result.Query, Results: result.Results})
+			Query     string                    `json:"query"`
+			Results   []webfetch.SearchResult   `json:"results"`
+			Fallbacks []webfetch.SearchFallback `json:"fallbacks,omitempty"`
+		}{Query: result.Query, Results: result.Results, Fallbacks: result.Fallbacks})
 		if err != nil {
 			return nil, true, fmt.Errorf("encode web search result: %w", err)
 		}
-		return &ToolResult{Text: string(text), Meta: map[string]any{"provider": result.Provider, "count": len(result.Results)}}, true, nil
+		meta := map[string]any{"provider": result.Provider, "count": len(result.Results)}
+		if len(result.Fallbacks) > 0 {
+			meta["fallbacks"] = result.Fallbacks
+		}
+		return &ToolResult{Text: string(text), Meta: meta}, true, nil
 	default:
 		return nil, false, nil
 	}
 }
 
+// dispatchWebExtract serves web_fetch mode="extract": typed fields are
+// grounded line by line in the fetched document, returning the value
+// with its source line, or an explicit not_on_page/uncertain result.
+// The page content itself is never returned.
+func dispatchWebExtract(doc webfetch.Document, args map[string]any) (*ToolResult, bool, error) {
+	fieldsArg, ok := args["fields"].(map[string]any)
+	if !ok || len(fieldsArg) == 0 {
+		return nil, true, mapWebError(webfetch.NewCodedError(errors.New("fields are required for extract mode"), webfetch.ErrorCodeInvalidArgument, "provide fields as a map of name to type (string, number, boolean)"))
+	}
+	fields := make(map[string]string, len(fieldsArg))
+	for name, rawType := range fieldsArg {
+		fieldType, ok := rawType.(string)
+		if !ok || !webfetch.ValidFieldType(fieldType) {
+			return nil, true, mapWebError(webfetch.NewCodedError(fmt.Errorf("unsupported type %v for field %q", rawType, name), webfetch.ErrorCodeInvalidArgument, "use string, number, or boolean"))
+		}
+		fields[name] = fieldType
+	}
+	results := webfetch.ExtractFields(doc.Content, fields)
+	text, err := json.Marshal(struct {
+		URL    string                 `json:"url"`
+		Fields []webfetch.FieldResult `json:"fields"`
+	}{URL: doc.FinalURL, Fields: results})
+	if err != nil {
+		return nil, true, fmt.Errorf("encode extraction result: %w", err)
+	}
+	return &ToolResult{Text: string(text), Meta: map[string]any{"url": doc.URL, "final_url": doc.FinalURL, "extracted": len(results), "mode": "extract"}}, true, nil
+}
+
 func stringArg(args map[string]any, key string) string {
 	value, _ := args[key].(string)
 	return value
+}
+
+func webImageResult(doc webfetch.Document) *ToolResult {
+	text := fmt.Sprintf("Image fetched: %s (%s, %d bytes)", doc.FinalURL, doc.ImageMimeType, len(doc.ImageBytes))
+	meta := map[string]any{
+		"url": doc.URL, "final_url": doc.FinalURL, "status_code": doc.StatusCode,
+		"content_type": doc.ContentType, "source": doc.Source,
+		"image_mime_type": doc.ImageMimeType, "image_bytes": len(doc.ImageBytes),
+		"converter": "image",
+	}
+	return &ToolResult{
+		Text: text,
+		Content: []ContentBlock{{
+			Type:     "image",
+			Data:     base64.StdEncoding.EncodeToString(doc.ImageBytes),
+			MimeType: doc.ImageMimeType,
+		}},
+		Meta: meta,
+	}
 }
 
 func webFetchMeta(doc webfetch.Document, projection webfetch.ContentProjection, limits webfetch.OutputLimits) map[string]any {
