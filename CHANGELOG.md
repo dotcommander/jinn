@@ -7,6 +7,12 @@ and jinn adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.17.2] - 2026-11-07
+
+### Changed
+
+- Restructure `jinn --help` output into Commands, Modes and flags, Environment, and Examples sections; clarify that running with no arguments on a terminal prints help. No behavior changes.
+
 ## [0.17.1] - 2026-11-07
 
 ### Removed
@@ -506,7 +512,8 @@ and jinn adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `--schema` flag to emit tool definitions
 - `--version` flag with ldflags and VCS fallback
 
-[Unreleased]: https://github.com/dotcommander/jinn/compare/v0.17.1...HEAD
+[Unreleased]: https://github.com/dotcommander/jinn/compare/v0.17.2...HEAD
+[0.17.2]: https://github.com/dotcommander/jinn/compare/v0.17.1...v0.17.2
 [0.17.1]: https://github.com/dotcommander/jinn/compare/v0.17.0...v0.17.1
 [0.17.0]: https://github.com/dotcommander/jinn/compare/v0.16.1...v0.17.0
 [0.16.0]: https://github.com/dotcommander/jinn/compare/v0.15.2...v0.16.0
