@@ -161,6 +161,9 @@ func (s *Service) Search(ctx context.Context, req SearchRequest) (SearchResponse
 		ctx, cancel = context.WithTimeout(ctx, s.searchTimeout)
 		defer cancel()
 	}
+	if validated.Combine && len(chain) > 1 {
+		return s.combineSearch(ctx, chain, validated)
+	}
 	var fallbacks []SearchFallback
 	for i, provider := range chain {
 		results, searchErr := provider.search(ctx, validated)
@@ -319,7 +322,7 @@ func canonicalSearchURL(raw string) string {
 }
 
 func unsupportedSearchProviderError(provider string) error {
-	return newCodedError(fmt.Errorf("unsupported search provider %q", provider), ErrorCodeInvalidArgument, "choose search provider brave or exa")
+	return newCodedError(fmt.Errorf("unsupported search provider %q", provider), ErrorCodeInvalidArgument, "choose search provider brave, exa, or searxng")
 }
 
 func unsupportedSearchOptionError(option string) error {

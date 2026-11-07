@@ -20,7 +20,10 @@ type Service struct {
 	// searchChain is the ordered provider fallback chain built from a
 	// comma-separated SearchProvider list; empty means the single
 	// configured provider (search) is the only candidate.
-	searchChain   []searchProvider
+	searchChain []searchProvider
+	// interceptors are the per-request URL specialists (e.g. GitHub) checked
+	// before the generic fetch; fresh state is read per request, never cached.
+	interceptors  []urlInterceptor
 	searchTimeout time.Duration
 	searchConfig  error
 	cache         *urlCache
@@ -69,14 +72,7 @@ func NewService(cfg Config) *Service {
 	if readerEndpoint == "" {
 		readerEndpoint = DefaultReaderEndpoint
 	}
-	searchEndpoint := strings.TrimSpace(cfg.SearchEndpoint)
-	if searchEndpoint == "" {
-		searchEndpoint = DefaultSearchEndpoint
-	}
-	exaSearchEndpoint := strings.TrimSpace(cfg.ExaSearchEndpoint)
-	if exaSearchEndpoint == "" {
-		exaSearchEndpoint = DefaultExaEndpoint
-	}
+
 	readerMode := strings.TrimSpace(cfg.ReaderMode)
 	if readerMode == "" {
 		readerMode = ReaderModeJina
@@ -90,7 +86,7 @@ func NewService(cfg Config) *Service {
 		providerNames = []string{providerBrave}
 	}
 	for _, name := range providerNames {
-		if name != providerBrave && name != providerExa {
+		if name != providerBrave && name != providerExa && name != providerSearXNG {
 			searchConfig = unsupportedSearchProviderError(name)
 			break
 		}
@@ -103,22 +99,23 @@ func NewService(cfg Config) *Service {
 	})
 	if searchConfig == nil {
 		for _, name := range providerNames {
-			var provider searchProvider
-			switch name {
-			case providerExa:
-				provider = exaProvider{client: client, endpoint: exaSearchEndpoint, apiKey: cfg.ExaAPIKey}
-			default:
-				provider = braveProvider{client: client, endpoint: searchEndpoint, apiKey: cfg.BraveAPIKey}
+			provider, _, resolveErr := resolveSearchProvider(name, client, cfg)
+			if resolveErr != nil {
+				searchConfig = resolveErr
+				break
 			}
 			searchChain = append(searchChain, provider)
 		}
-		search = searchChain[0]
+		if searchConfig == nil {
+			search = searchChain[0]
+		}
 	}
 	return &Service{
 		client:        *client,
 		reader:        readerProvider{client: client, endpoint: readerEndpoint, apiKey: cfg.JinaAPIKey},
 		readerMode:    readerMode,
 		search:        search,
+		interceptors:  []urlInterceptor{&githubInterceptor{client: client, apiEndpoint: githubAPIEndpoint(cfg), token: resolveGitHubToken(cfg)}},
 		searchChain:   searchChain,
 		searchTimeout: timeout,
 		searchConfig:  searchConfig,
@@ -145,6 +142,13 @@ func (s *Service) Fetch(ctx context.Context, req FetchRequest) (Document, error)
 	target, err := validateTarget(req.URL, s.client.allowPrivateNetworks)
 	if err != nil {
 		return Document{}, err
+	}
+	for _, interceptor := range s.interceptors {
+		if doc, claimed, interceptErr := interceptor.intercept(ctx, target); interceptErr != nil {
+			return Document{}, interceptErr
+		} else if claimed {
+			return doc, nil
+		}
 	}
 	if req.Raw {
 		if _, renderOptionErr := normalizeRenderOptions(req, ReaderModeDefuddle); renderOptionErr != nil {
@@ -500,6 +504,7 @@ func (s *Service) fetchRaw(ctx context.Context, target *url.URL) (Document, erro
 		StatusCode:  resp.StatusCode,
 		ContentType: contentType,
 		Source:      "raw",
+		Quality:     QualityOf(string(resp.Body)),
 		Content:     string(resp.Body),
 	}, nil
 }

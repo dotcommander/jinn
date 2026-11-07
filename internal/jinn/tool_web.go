@@ -54,6 +54,9 @@ func (e *Engine) dispatchWeb(ctx context.Context, args map[string]any, tool stri
 		if stringArg(args, "mode") == "extract" {
 			return dispatchWebExtract(doc, args)
 		}
+		if view := webFetchView(args); view != "" {
+			return dispatchWebView(doc, args, view)
+		}
 		projection, err := webfetch.ProjectFetchContentAt(doc.Content, format, startLine, startLineByte, limits)
 		if err != nil {
 			return nil, true, mapWebError(err)
@@ -76,7 +79,7 @@ func (e *Engine) dispatchWeb(ctx context.Context, args map[string]any, tool stri
 		if err != nil {
 			return nil, true, fmt.Errorf("encode web search result: %w", err)
 		}
-		meta := map[string]any{"provider": result.Provider, "count": len(result.Results)}
+		meta := map[string]any{"provider": result.Provider, "count": len(result.Results), "combine": result.Combine}
 		if len(result.Fallbacks) > 0 {
 			meta["fallbacks"] = result.Fallbacks
 		}
@@ -145,7 +148,7 @@ func webFetchMeta(doc webfetch.Document, projection webfetch.ContentProjection, 
 		"domain": doc.Domain, "favicon": doc.Favicon, "image": doc.Image,
 		"language": doc.Language, "published": doc.Published, "author": doc.Author,
 		"site": doc.Site, "word_count": doc.WordCount, "extractor": doc.Extractor,
-		"source": doc.Source, "rendered": doc.Rendered, "warnings": doc.Warnings,
+		"source": doc.Source, "rendered": doc.Rendered, "warnings": doc.Warnings, "quality": doc.Quality,
 		"format": projection.Format, "truncated": projection.Truncated, "truncated_by": projection.TruncatedBy,
 		"total_bytes": projection.TotalBytes, "output_bytes": projection.OutputBytes,
 		"total_lines": projection.TotalLines, "output_lines": projection.OutputLines,
@@ -161,4 +164,100 @@ func mapWebError(err error) error {
 		return &ErrWithSuggestion{Err: coded, Suggestion: coded.Suggestion, Code: coded.Code}
 	}
 	return err
+}
+
+// webFetchView selects one projection of the fetched document:
+// "toc", "section", or "must_contain" (inline modes, not extract fields).
+func webFetchView(args map[string]any) string {
+	if toc, _ := args["toc"].(bool); toc {
+		return "toc"
+	}
+	if section := stringArg(args, "section"); section != "" {
+		return "section"
+	}
+	if _, present := args["must_contain"]; present {
+		return "must_contain"
+	}
+	return ""
+}
+
+// dispatchWebView serves the toc/section/must_contain projections. Each is a
+// pure deterministic function of the document markdown; full content is never
+// returned for must_contain.
+func dispatchWebView(doc webfetch.Document, args map[string]any, view string) (*ToolResult, bool, error) {
+	switch view {
+	case "toc":
+		sections := webfetch.DocumentOutline(doc.Content)
+		text, err := json.Marshal(struct {
+			Sections []webfetch.SectionInfo `json:"sections"`
+		}{Sections: sections})
+		if err != nil {
+			return nil, true, fmt.Errorf("encode toc view: %w", err)
+		}
+		return &ToolResult{Text: string(text), Meta: map[string]any{"url": doc.URL, "final_url": doc.FinalURL, "view": "toc", "sections": len(sections)}}, true, nil
+	case "section":
+		sectionID := stringArg(args, "section")
+		sections := webfetch.DocumentOutline(doc.Content)
+		totalLines := len(splitLines(doc.Content))
+		start, end, found := webfetch.SectionRange(sections, sectionID, totalLines)
+		if !found {
+			return nil, true, mapWebError(webfetch.NewCodedError(fmt.Errorf("unknown section %q", sectionID), webfetch.ErrorCodeInvalidArgument, "use a section id from the toc view"))
+		}
+		text, err := json.Marshal(struct {
+			Section string `json:"section"`
+			Start   int    `json:"start_line"`
+			End     int    `json:"end_line"`
+			Content string `json:"content"`
+		}{Section: sectionID, Start: start, End: end, Content: joinLines(splitLines(doc.Content)[start:end])})
+		if err != nil {
+			return nil, true, fmt.Errorf("encode section view: %w", err)
+		}
+		return &ToolResult{Text: string(text), Meta: map[string]any{"url": doc.URL, "final_url": doc.FinalURL, "view": "section", "section": sectionID}}, true, nil
+	case "must_contain":
+		terms, err := stringSliceArg(args, "must_contain")
+		if err != nil {
+			return nil, true, mapWebError(err)
+		}
+		clean, err := webfetch.MustContainTerms(terms)
+		if err != nil {
+			return nil, true, mapWebError(err)
+		}
+		hits := make([]webfetch.ProbeHit, 0, len(clean))
+		for _, term := range clean {
+			hit, err := webfetch.ProbeDocument(doc.Content, term)
+			if err != nil {
+				return nil, true, mapWebError(err)
+			}
+			hits = append(hits, hit)
+		}
+		text, err := json.Marshal(struct {
+			Hits []webfetch.ProbeHit `json:"hits"`
+		}{Hits: hits})
+		if err != nil {
+			return nil, true, fmt.Errorf("encode must_contain view: %w", err)
+		}
+		return &ToolResult{Text: string(text), Meta: map[string]any{"url": doc.URL, "final_url": doc.FinalURL, "view": "must_contain", "terms": len(clean)}}, true, nil
+	default:
+		return nil, true, mapWebError(webfetch.NewCodedError(fmt.Errorf("unsupported view %q", view), webfetch.ErrorCodeInvalidArgument, "use toc, section, or must_contain"))
+	}
+}
+
+func stringSliceArg(args map[string]any, key string) ([]string, error) {
+	raw, present := args[key]
+	if !present {
+		return nil, webfetch.NewCodedError(errors.New("must_contain is required"), webfetch.ErrorCodeInvalidArgument, "provide must_contain as a list of probe terms")
+	}
+	list, ok := raw.([]any)
+	if !ok {
+		return nil, webfetch.NewCodedError(fmt.Errorf("%s must be a list of strings", key), webfetch.ErrorCodeInvalidArgument, "provide must_contain as a list of probe terms")
+	}
+	terms := make([]string, 0, len(list))
+	for _, item := range list {
+		term, ok := item.(string)
+		if !ok {
+			return nil, webfetch.NewCodedError(fmt.Errorf("%s must be a list of strings", key), webfetch.ErrorCodeInvalidArgument, "provide must_contain as a list of probe terms")
+		}
+		terms = append(terms, term)
+	}
+	return terms, nil
 }

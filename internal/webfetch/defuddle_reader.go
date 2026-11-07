@@ -106,6 +106,7 @@ func parseDefuddleHTML(ctx context.Context, target *url.URL, page defuddleHTML) 
 		Source:      ReaderModeDefuddle,
 		Rendered:    page.Rendered,
 		Warnings:    append([]string(nil), page.Warnings...),
+		Quality:     QualityOf(content),
 		Content:     content,
 	}, nil
 }

@@ -21,6 +21,7 @@ const (
 	DefaultReaderEndpoint        = "https://r.jina.ai"
 	DefaultSearchEndpoint        = "https://api.search.brave.com/res/v1/web/search"
 	DefaultExaEndpoint           = "https://api.exa.ai/search"
+	DefaultSearXNGEndpoint       = "http://localhost:8080/search"
 	DefaultUserAgent             = "webfetch/0.1"
 )
 
@@ -33,6 +34,7 @@ const (
 	contentTypeMarkdown        = "text/markdown"
 	providerBrave              = "brave"
 	providerExa                = "exa"
+	providerSearXNG            = "searxng"
 	sourceReader               = "reader"
 	sourceImage                = "image"
 	truncatedByLines           = "lines"
@@ -54,6 +56,8 @@ type Config struct {
 	ReaderEndpoint        string
 	SearchEndpoint        string
 	ExaSearchEndpoint     string
+	SearXNGSearchEndpoint string
+	SearXNGAPIKey         string
 	SearchProvider        string
 	URLCacheTTL           time.Duration
 	URLCacheDir           string
@@ -66,6 +70,8 @@ type Config struct {
 	RenderMaxNetworkBytes int64
 	RenderMaxHTMLBytes    int64
 	ChromePath            string
+	GitHubAPIEndpoint     string
+	GitHubToken           string
 }
 
 // ClientConfig controls the shared HTTP client.
@@ -87,24 +93,27 @@ type FetchRequest struct {
 
 // Document is the normalized result of a URL fetch.
 type Document struct {
-	URL           string
-	FinalURL      string
-	StatusCode    int
-	ContentType   string
-	Title         string
-	Description   string
-	Domain        string
-	Favicon       string
-	Image         string
-	Language      string
-	Published     string
-	Author        string
-	Site          string
-	WordCount     int
-	Extractor     string
-	Source        string
-	Rendered      bool
-	Warnings      []string
+	URL         string
+	FinalURL    string
+	StatusCode  int
+	ContentType string
+	Title       string
+	Description string
+	Domain      string
+	Favicon     string
+	Image       string
+	Language    string
+	Published   string
+	Author      string
+	Site        string
+	WordCount   int
+	Extractor   string
+	Source      string
+	Rendered    bool
+	Warnings    []string
+	// Quality is the extraction-quality signal ("content" or "chrome_only")
+	// computed from the extracted body at assembly time.
+	Quality       string
 	Content       string
 	ImageBytes    []byte
 	ImageMimeType string
@@ -119,6 +128,11 @@ type SearchRequest struct {
 	StartPublishedDate string
 	IncludeHighlights  bool
 	HighlightSentences int
+	// Combine queries up to targetUsable backends in parallel and merges
+	// their results by Reciprocal Rank Fusion instead of returning the
+	// first usable backend's ranking (opt-in: it costs one quota unit per
+	// backend it touches).
+	Combine bool
 }
 
 // SearchResponse is the normalized search result.
@@ -129,6 +143,8 @@ type SearchResponse struct {
 	// Fallbacks records each provider skipped before the answering one,
 	// with the reason (error code, "empty", or "domain-miss").
 	Fallbacks []SearchFallback `json:"fallbacks,omitempty"`
+	// Combine reports whether the results were fused from several backends.
+	Combine bool `json:"combine,omitempty"`
 }
 
 // SearchFallback records one provider that did not answer a search.
@@ -144,6 +160,8 @@ type SearchResult struct {
 	Description string   `json:"description,omitempty"`
 	PublishedAt string   `json:"published_at,omitempty"`
 	Highlights  []string `json:"highlights,omitempty"`
+	// Sources lists the backends that returned this hit (combine mode).
+	Sources []string `json:"sources,omitempty"`
 }
 
 type httpResponse struct {

@@ -64,6 +64,7 @@ func (p readerProvider) fetch(ctx context.Context, target *url.URL) (Document, e
 		ContentType: resp.Header.Get("Content-Type"),
 		Title:       markdownTitle(string(resp.Body)),
 		Source:      sourceReader,
+		Quality:     QualityOf(string(resp.Body)),
 		Content:     string(resp.Body),
 	}, nil
 }

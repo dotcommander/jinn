@@ -1405,6 +1405,22 @@
             ],
             "description": "With fields, return typed values grounded on source lines instead of page content"
           },
+          "toc": {
+            "type": "boolean",
+            "description": "Return the heading outline with stable section ids instead of page content",
+            "default": false
+          },
+          "section": {
+            "type": "string",
+            "description": "Section id (e.g. s3) from the toc view; returns only that section"
+          },
+          "must_contain": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Probe terms (phrases or /regex/) answered with counts and excerpts, never full content"
+          },
           "fields": {
             "type": "object",
             "description": "Extract mode only: map of field name to type (string, number, boolean)",
@@ -1435,6 +1451,11 @@
           "query": {
             "type": "string",
             "description": "Search terms"
+          },
+          "combine": {
+            "type": "boolean",
+            "description": "Query up to 3 backends in parallel and fuse by Reciprocal Rank Fusion; costs one quota unit per backend touched",
+            "default": false
           },
           "max_results": {
             "type": "integer",

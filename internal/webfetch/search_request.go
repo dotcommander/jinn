@@ -36,6 +36,10 @@ func ParseSearchRequest(args map[string]any) (SearchRequest, error) {
 	if err != nil {
 		return SearchRequest{}, err
 	}
+	combine, err := boolSearchArg(args, "combine", false)
+	if err != nil {
+		return SearchRequest{}, err
+	}
 	includeHighlights, err := boolSearchArg(args, "include_highlights", true)
 	if err != nil {
 		return SearchRequest{}, err
@@ -51,6 +55,7 @@ func ParseSearchRequest(args map[string]any) (SearchRequest, error) {
 		IncludeDomains:     domains,
 		StartPublishedDate: startDate,
 		IncludeHighlights:  includeHighlights,
+		Combine:            combine,
 		HighlightSentences: highlightSentences,
 	}, defaultProtocolSearchLimit)
 }
