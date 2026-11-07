@@ -279,7 +279,7 @@ func (e *Engine) verifyUndoVersion(args map[string]interface{}, ent historyEntry
 	got := sha256HexBytes(current)
 	if !strings.EqualFold(got, ent.Before.Hash) {
 		return &ErrWithSuggestion{
-			Err:        fmt.Errorf("stale write rejected: %s changed since the snapshot was recorded (checksum %.12s... != recorded %.12s...)", path, got, ent.Before.Hash),
+			Err:        fmt.Errorf("stale write rejected: %s changed since the snapshot was recorded (checksum %s != recorded %s)", path, got, ent.Before.Hash),
 			Suggestion: "re-read the file, then restore the matching version",
 			Code:       ErrCodeStaleFile,
 		}

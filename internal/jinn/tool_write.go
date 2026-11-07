@@ -234,8 +234,12 @@ func verifyChecksum(want, path string, current []byte, exists bool) error {
 	h := sha256.Sum256(current)
 	got := hex.EncodeToString(h[:])
 	if !strings.EqualFold(got, want) {
+		hint := ""
+		if len(want) != 64 {
+			hint = fmt.Sprintf("; supplied checksum is %d hex chars, not a full 64-char SHA-256 digest — it was likely truncated or corrupted in transit", len(want))
+		}
 		return &ErrWithSuggestion{
-			Err:        fmt.Errorf("stale write rejected: %s changed since read (checksum %.12s… != expected %.12s…)", path, got, want),
+			Err:        fmt.Errorf("stale write rejected: %s changed since read (checksum %s != expected %s%s)", path, got, want, hint),
 			Suggestion: "re-read the file, then retry with the new checksum",
 			Code:       ErrCodeStaleFile,
 		}
@@ -287,7 +291,7 @@ func (e *Engine) verifyPreflightState(path string, expected []byte, expectedExis
 	}
 	if !strings.EqualFold(currentHex, sha256HexBytes(expected)) {
 		return &ErrWithSuggestion{
-			Err:        fmt.Errorf("stale write rejected: %s changed since read (checksum %.12s\u2026 != expected %.12s\u2026)", path, currentHex, sha256HexBytes(expected)),
+			Err:        fmt.Errorf("stale write rejected: %s changed since read (checksum %s != expected %s)", path, currentHex, sha256HexBytes(expected)),
 			Suggestion: "re-read the file, then retry with the new checksum",
 			Code:       ErrCodeStaleFile,
 		}

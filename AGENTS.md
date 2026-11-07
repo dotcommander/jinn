@@ -285,7 +285,7 @@ To fix: extend `old_text` to include a few surrounding lines that are unique to 
 
 ## mutation tools — checksum stale-write guards
 
-`write_file`, `edit_file`, and `undo restore` accept an optional `if_checksum`: the SHA-256 hex digest from a previous `read_file` response (`meta.sha256`, requested with `include_checksum: true`). `multi_edit` accepts the same field on each edit entry. `apply_patch` and `search_replace` accept an `if_checksums` object keyed by target path. A mismatch rejects the mutation with `error_code: "stale_file"`. Each jinn call is a separate process, so use these guards whenever mutation content was derived from an earlier read. Batch tools also recheck their phase-1 bytes immediately before each write.
+`write_file` (replacing an existing file), `edit_file`, and `undo restore` require `if_checksum`: the SHA-256 hex digest from a previous `read_file` response (`meta.sha256`, requested with `include_checksum: true`). `multi_edit` requires the same field on each edit entry for an existing target. `apply_patch` and `search_replace` require an `if_checksums` object keyed by target path. A mismatch rejects the mutation with `error_code: "stale_file"`. Each jinn call is a separate process, so always read with `include_checksum: true` first and pass the digest — omitting it is rejected with `error_code: "invalid_args"`. Batch tools also recheck their phase-1 bytes immediately before each write.
 
 ```bash
 echo '{"tool":"read_file","args":{"path":"demo.txt","include_checksum":true}}' | jinn

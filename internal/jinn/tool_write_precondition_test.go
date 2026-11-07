@@ -95,6 +95,29 @@ func TestWriteFile_IfChecksum_Mismatch(t *testing.T) {
 	}
 }
 
+// Regression: a supplied digest sharing the current digest's 12-char prefix
+// must not render as "<same> != <same>"; the error carries full digests and
+// flags a non-64-char supplied digest as truncated/corrupted.
+func TestWriteFile_IfChecksum_SamePrefixTruncatedDigestIsDistinguishable(t *testing.T) {
+	t.Parallel()
+	e, dir := testEngine(t)
+	writeTestFile(t, dir, "a.txt", "current content")
+
+	current := sha256Hex([]byte("current content"))
+	corrupted := current[:44] + "0000000000000000" // 60 chars: same 12-char prefix, truncated tail
+	_, err := e.writeFile(args("path", "a.txt", "content", "clobber", "if_checksum", corrupted))
+	if err == nil {
+		t.Fatal("expected stale write rejection")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, current) || !strings.Contains(msg, corrupted) {
+		t.Fatalf("error must carry full digests, got: %s", msg)
+	}
+	if !strings.Contains(msg, "truncated or corrupted") {
+		t.Fatalf("error must flag the malformed supplied digest, got: %s", msg)
+	}
+}
+
 func TestWriteFile_IfChecksum_FileDeleted(t *testing.T) {
 	t.Parallel()
 	e, _ := testEngine(t)
