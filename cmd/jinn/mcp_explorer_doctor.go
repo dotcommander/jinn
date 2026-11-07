@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/dotcommander/jinn/internal/mcpexplore"
@@ -102,21 +103,30 @@ func runMCPDoctor(ctx context.Context, args []string) error {
 	}
 	warnings = append(warnings, snapshotWarnings...)
 	output := mcpDoctorOutput{SchemaVersion: 1, Checks: make([]mcpDoctorCheck, 0, len(config.aliases)), Warnings: warnings}
-	failed := len(warnings) != 0
-	approvalDrift := false
-	for _, alias := range config.aliases {
+	outcomes := make([]mcpDoctorLiveOutcome, len(config.aliases))
+	for index, alias := range config.aliases {
 		server, ok := registry.Servers[alias]
 		if !ok {
 			return fmt.Errorf("MCP server alias @%s not found", alias)
 		}
 		check, checkFailed := doctorOfflineCheck(alias, server)
-		if !checkFailed && config.live {
-			outcome := doctorLiveCheck(ctx, config.timeout, check)
-			check, checkFailed = outcome.check, outcome.failed
-			approvalDrift = approvalDrift || outcome.approvalDrift
+		outcomes[index] = mcpDoctorLiveOutcome{check: check, failed: checkFailed}
+	}
+	if config.all {
+		doctorConcurrentLiveChecks(ctx, config.timeout, outcomes, doctorLiveCheck)
+	} else if config.live {
+		for index := range outcomes {
+			if !outcomes[index].failed {
+				outcomes[index] = doctorLiveCheck(ctx, config.timeout, outcomes[index].check)
+			}
 		}
-		failed = failed || checkFailed
-		output.Checks = append(output.Checks, check)
+	}
+	failed := len(warnings) != 0
+	approvalDrift := false
+	for _, outcome := range outcomes {
+		failed = failed || outcome.failed
+		approvalDrift = approvalDrift || outcome.approvalDrift
+		output.Checks = append(output.Checks, outcome.check)
 	}
 	if err := writeMCPExplorerOutput(os.Stdout, format, output); err != nil {
 		return err
@@ -128,6 +138,28 @@ func runMCPDoctor(ctx context.Context, args []string) error {
 		return mcpDoctorDriftReportedError{}
 	}
 	return nil
+}
+
+// doctorConcurrentLiveChecks writes each result to its original slot so completion order
+// cannot change the report. Each live check owns its timeout and observes parent cancellation.
+func doctorConcurrentLiveChecks(ctx context.Context, timeout time.Duration, outcomes []mcpDoctorLiveOutcome, check func(context.Context, time.Duration, mcpDoctorCheck) mcpDoctorLiveOutcome) {
+	const maxConcurrent = 6
+	jobs := make(chan int, len(outcomes))
+	for index := range outcomes {
+		if !outcomes[index].failed {
+			jobs <- index
+		}
+	}
+	close(jobs)
+	var workers sync.WaitGroup
+	for range min(maxConcurrent, len(jobs)) {
+		workers.Go(func() {
+			for index := range jobs {
+				outcomes[index] = check(ctx, timeout, outcomes[index].check)
+			}
+		})
+	}
+	workers.Wait()
 }
 
 func parseMCPDoctor(args []string) (mcpDoctorConfig, error) {

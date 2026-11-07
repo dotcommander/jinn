@@ -172,6 +172,7 @@ func (e *Engine) runPlanTree(ctx context.Context, plan *PlanTree) (result *PlanR
 	currentID := plan.Root
 	var pathTaken []string
 	var transcript []PlanNodeResult
+	var transcriptBudget planTranscriptBudget
 	edgesEvaluated, edgesMatched := 0, 0
 	executedNodes, executedOperations := 0, 0
 
@@ -248,7 +249,7 @@ func (e *Engine) runPlanTree(ctx context.Context, plan *PlanTree) (result *PlanR
 
 		transcript = append(transcript, nodeResult)
 		audit.nodeEvent(nodeResult, edgesEvaluated, edgesMatched)
-		if !planTranscriptWithinBudget(transcript, pathTaken, opCtx.depth+depth, edgesEvaluated, edgesMatched) {
+		if !transcriptBudget.add(nodeResult, currentID) || !transcriptBudget.withinBudget(transcript, pathTaken, opCtx.depth+depth, edgesEvaluated, edgesMatched) {
 			transcript, pathTaken = fitPlanTranscript(transcript, pathTaken, opCtx.depth+depth, edgesEvaluated, edgesMatched)
 			if ctx.Err() != nil {
 				return newPlanRunResult(transcript, pathTaken, opCtx.depth+depth, StopAborted, edgesEvaluated, edgesMatched, executedNodes, executedOperations), nil
@@ -378,6 +379,33 @@ func fitPlanTranscript(transcript []PlanNodeResult, pathTaken []string, depth, e
 		}
 	}
 	return transcript, pathTaken
+}
+
+// planTranscriptBudget counts serialized node and path entries once. The
+// remaining result fields, array punctuation, and numeric values have a
+// conservative allowance; near the cap we retain the exact JSON check.
+type planTranscriptBudget struct {
+	approxBytes int
+}
+
+func (b *planTranscriptBudget) add(node PlanNodeResult, pathID string) bool {
+	encodedNode, err := json.Marshal(node)
+	if err != nil {
+		return false
+	}
+	encodedID, err := json.Marshal(pathID)
+	if err != nil {
+		return false
+	}
+	b.approxBytes += len(encodedNode) + len(encodedID) + 2 // array separators
+	return true
+}
+
+func (b *planTranscriptBudget) withinBudget(transcript []PlanNodeResult, pathTaken []string, depth, evaluated, matched int) bool {
+	if b.approxBytes+512 <= maxPlanTranscript {
+		return true
+	}
+	return planTranscriptWithinBudget(transcript, pathTaken, depth, evaluated, matched)
 }
 
 func planTranscriptWithinBudget(transcript []PlanNodeResult, pathTaken []string, depth, evaluated, matched int) bool {

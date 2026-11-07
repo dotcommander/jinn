@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -37,7 +38,7 @@ func (e *Engine) lspBatch(ctx context.Context, args map[string]interface{}) (str
 	return e.lspBatchWithLauncher(ctx, args, nil)
 }
 
-//nolint:gocognit,gocyclo,revive // branchy by design; splitting would scatter one sequential algorithm
+//nolint:gocognit,gocyclo,revive // branchy by design; splitting would scatter batch validation and dispatch
 func (e *Engine) lspBatchWithLauncher(ctx context.Context, args map[string]interface{}, launcher lspLauncher) (string, error) {
 	rawQueries, ok := args["queries"].([]interface{})
 	if !ok || len(rawQueries) == 0 || len(rawQueries) > lspBatchMaxQueries {
@@ -80,9 +81,18 @@ func (e *Engine) lspBatchWithLauncher(ctx context.Context, args map[string]inter
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
-	for _, key := range keys {
-		result.ServerStarts++
-		items := e.runLSPBatchGroup(ctx, groupArgv[key], groups[key], timeout, launcher)
+	result.ServerStarts = len(keys)
+	groupResults := make([][]lspBatchItem, len(keys))
+	var wg sync.WaitGroup
+	for index, key := range keys {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			groupResults[index] = e.runLSPBatchGroup(ctx, groupArgv[key], groups[key], timeout, launcher)
+		}()
+	}
+	wg.Wait()
+	for _, items := range groupResults {
 		for _, item := range items {
 			result.Results[item.Index] = item
 		}
@@ -133,10 +143,19 @@ func (e *Engine) runLSPBatchGroup(ctx context.Context, argv []string, jobs []lsp
 			done <- local
 			return
 		}
+		// A batch is one atomic tool call: each canonical file uses one snapshot
+		// for all its queries, even if the file changes while the batch runs.
+		byPath := make(map[string][]int)
+		var paths []string
 		for index, job := range jobs {
 			local[index].Index = job.index
-			out, err := e.runLSPQueryInSession(client, job.req)
-			setLSPBatchResult(&local[index], out, err)
+			if _, exists := byPath[job.req.absPath]; !exists {
+				paths = append(paths, job.req.absPath)
+			}
+			byPath[job.req.absPath] = append(byPath[job.req.absPath], index)
+		}
+		for _, path := range paths {
+			e.runLSPBatchFile(client, jobs, byPath[path], local)
 		}
 		done <- local
 	}()
@@ -158,6 +177,38 @@ func (e *Engine) runLSPBatchGroup(ctx context.Context, argv []string, jobs []lsp
 		items = <-done
 		markLSPBatchInterrupted(items, &ErrWithSuggestion{Err: errors.New("lsp_batch timed out"), Suggestion: "split the query batch", Code: ErrCodeTimeout})
 		return items
+	}
+}
+
+// runLSPBatchFile opens a single snapshot, dispatches its queries in their
+// original relative order, and closes it before moving to the next file.
+func (e *Engine) runLSPBatchFile(client *lspClient, jobs []lspBatchJob, indices []int, items []lspBatchItem) {
+	first := jobs[indices[0]].req
+	data, _, err := e.readRegularFile(first.absPath, maxLSPFileSize)
+	if err != nil {
+		err = fmt.Errorf("lsp didOpen read: %w", err)
+	} else {
+		err = client.didOpenText(first.absPath, langIDForExt(first.ext), data)
+	}
+	if err != nil {
+		for _, index := range indices {
+			setLSPBatchError(&items[index], err)
+		}
+		return
+	}
+	defer func() { _ = client.didClose(first.absPath) }()
+	for _, index := range indices {
+		req := jobs[index].req
+		var queryErr error
+		if req.needsSymbolResolution() {
+			req, queryErr = e.resolveSymbolRequest(client, req)
+		}
+		if queryErr != nil {
+			setLSPBatchError(&items[index], queryErr)
+			continue
+		}
+		out, queryErr := e.dispatchLSPAction(client, req)
+		setLSPBatchResult(&items[index], out, queryErr)
 	}
 }
 

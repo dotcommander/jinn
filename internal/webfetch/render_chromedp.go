@@ -15,18 +15,25 @@ import (
 	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/cdproto/network"
+	cdptarget "github.com/chromedp/cdproto/target"
 	"github.com/chromedp/chromedp"
 )
 
 const renderNetworkIdleWindow = 500 * time.Millisecond
 
 type chromedpRenderer struct {
-	config    rendererConfig
-	client    *Client
-	slots     chan struct{}
-	root      context.Context
-	cancel    context.CancelFunc
-	closeOnce sync.Once
+	config           rendererConfig
+	client           *Client
+	slots            chan struct{}
+	root             context.Context
+	cancel           context.CancelFunc
+	mu               sync.Mutex
+	browser          context.Context
+	browserErr       error
+	stopBrowser      context.CancelFunc
+	stopAllocator    context.CancelFunc
+	allocatorFactory func(context.Context, ...chromedp.ExecAllocatorOption) (context.Context, context.CancelFunc)
+	closeOnce        sync.Once
 }
 
 //nolint:gosec // The cancel function is retained by chromedpRenderer and called exactly once by Close.
@@ -84,6 +91,9 @@ func (r *chromedpRenderer) Render(ctx context.Context, target *url.URL, options 
 		return renderedPage{}, codeContextError(renderCtx.Err())
 	}
 
+	if err := renderCtx.Err(); err != nil {
+		return renderedPage{}, codeContextError(err)
+	}
 	budget := newProxyBudget(r.config.MaxRequests, r.config.MaxNetworkBytes, cancel)
 	proxy, err := startRenderProxy(r.client, budget)
 	if err != nil {
@@ -95,19 +105,23 @@ func (r *chromedpRenderer) Render(ctx context.Context, target *url.URL, options 
 		_ = proxy.Close(closeCtx)
 	}()
 
-	allocatorOptions := append([]chromedp.ExecAllocatorOption{}, chromedp.DefaultExecAllocatorOptions[:]...)
-	for name, value := range rendererChromeFlags(proxy.URL(), r.config.UserAgent) {
-		allocatorOptions = append(allocatorOptions, chromedp.Flag(name, value))
-	}
-	if r.config.ChromePath != "" {
-		if err := validateChromePath(r.config.ChromePath); err != nil {
+	browserCtx, err := r.browserContext(proxy.URL())
+	if err != nil {
+		if renderCtx.Err() != nil {
+			return renderedPage{}, codeContextError(renderCtx.Err())
+		}
+		if isBrowserUnavailable(err) {
 			return renderedPage{}, browserUnavailableError(err)
 		}
-		allocatorOptions = append(allocatorOptions, chromedp.ExecPath(r.config.ChromePath))
+		return renderedPage{}, newCodedError(fmt.Errorf("start browser: %w", err), ErrorCodeRenderFailed, "retry rendering the page")
 	}
-	allocatorCtx, allocatorCancel := chromedp.NewExecAllocator(renderCtx, allocatorOptions...)
-	defer allocatorCancel()
-	tabCtx, tabCancel := chromedp.NewContext(allocatorCtx)
+	if err := renderCtx.Err(); err != nil {
+		return renderedPage{}, codeContextError(err)
+	}
+	tabCtx, tabCancel := chromedp.NewContext(browserCtx, chromedp.WithNewBrowserContext(func(params *cdptarget.CreateBrowserContextParams) {
+		params.ProxyServer = proxy.URL()
+		params.ProxyBypassList = "<-loopback>"
+	}))
 	defer tabCancel()
 
 	tracker := newRenderTracker(r.config.MaxRequests, cancel)
@@ -209,11 +223,66 @@ func validateRenderRequestURL(rawURL string, allowPrivateNetworks bool) error {
 	return validateURL(target, allowPrivateNetworks)
 }
 
+// browserContext starts the browser once on the renderer lifetime, not the page timeout.
+// Chrome's default tab stays idle; each render owns a separate browser context and proxy.
+func (r *chromedpRenderer) browserContext(proxyURL string) (context.Context, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err := r.root.Err(); err != nil {
+		return nil, err
+	}
+	if r.browser != nil || r.browserErr != nil {
+		return r.browser, r.browserErr
+	}
+	// The browser is shared across renders, so no per-render proxy flag
+	// here: each render's proxy is set on its own browser context
+	// (WithNewBrowserContext above). A browser-level proxy would pin
+	// every later render to the first render's (now closed) proxy.
+	_ = proxyURL
+	allocatorOptions := append([]chromedp.ExecAllocatorOption{}, chromedp.DefaultExecAllocatorOptions[:]...)
+	for name, value := range rendererChromeFlags("", r.config.UserAgent) {
+		allocatorOptions = append(allocatorOptions, chromedp.Flag(name, value))
+	}
+	if r.config.ChromePath != "" {
+		if err := validateChromePath(r.config.ChromePath); err != nil {
+			r.browserErr = err
+			return nil, err
+		}
+		allocatorOptions = append(allocatorOptions, chromedp.ExecPath(r.config.ChromePath))
+	}
+	factory := r.allocatorFactory
+	if factory == nil {
+		factory = chromedp.NewExecAllocator
+	}
+	allocatorCtx, allocatorCancel := factory(r.root, allocatorOptions...)
+	browserCtx, browserCancel := chromedp.NewContext(allocatorCtx)
+	if err := chromedp.Do(browserCtx); err != nil {
+		browserCancel()
+		allocatorCancel()
+		r.browserErr = err
+		return nil, err
+	}
+	r.browser = browserCtx
+	r.stopBrowser = browserCancel
+	r.stopAllocator = allocatorCancel
+	return browserCtx, nil
+}
+
 func (r *chromedpRenderer) Close(context.Context) error {
 	if r == nil {
 		return nil
 	}
-	r.closeOnce.Do(r.cancel)
+	r.closeOnce.Do(func() {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		r.cancel()
+		if r.stopBrowser != nil {
+			r.stopBrowser()
+		}
+		if r.stopAllocator != nil {
+			r.stopAllocator()
+		}
+	})
 	return nil
 }
 
@@ -225,10 +294,12 @@ func rendererChromeFlags(proxyURL, userAgent string) map[string]any {
 		"host-resolver-rules":             "MAP * ~NOTFOUND, EXCLUDE 127.0.0.1",
 		"no-sandbox":                      false,
 		"proxy-bypass-list":               "<-loopback>",
-		"proxy-server":                    proxyURL,
 		"webrtc-ip-handling-policy":       webrtcDisableNonProxiedUDP,
 		"webrtc-multiple-routes-enabled":  false,
 		"webrtc-nonproxied-udp-enabled":   false,
+	}
+	if proxyURL != "" {
+		flags["proxy-server"] = proxyURL
 	}
 	if strings.TrimSpace(userAgent) != "" {
 		flags["user-agent"] = userAgent

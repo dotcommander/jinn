@@ -13,6 +13,7 @@ import (
 
 	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/network"
+	"github.com/chromedp/chromedp"
 )
 
 func TestRendererChromeFlagsForceProxyEgress(t *testing.T) {
@@ -51,6 +52,41 @@ func TestChromedpRendererReturnsStableUnavailableError(t *testing.T) {
 	target, _ := url.Parse("http://127.0.0.1:1/")
 	_, err = renderer.Render(context.Background(), target, renderOptions{Mode: RenderModeAlways, Wait: RenderWaitLoad})
 	assertCodedError(t, err, ErrorCodeBrowserUnavailable)
+}
+
+func TestChromedpRendererDoesNotAllocateTwice(t *testing.T) {
+	t.Parallel()
+	pageRenderer, err := newChromedpRenderer(rendererConfig{AllowPrivateNetworks: true})
+	if err != nil {
+		t.Fatalf("newChromedpRenderer: %v", err)
+	}
+	renderer := pageRenderer.(*chromedpRenderer)
+	t.Cleanup(func() { _ = renderer.Close(context.Background()) })
+	allocations := 0
+	cancellations := 0
+	renderer.allocatorFactory = func(parent context.Context, _ ...chromedp.ExecAllocatorOption) (context.Context, context.CancelFunc) {
+		allocations++
+		ctx, cancel := context.WithCancel(parent)
+		cancel() // Simulate unavailable Chrome without launching a browser.
+		return ctx, func() { cancellations++ }
+	}
+	target, _ := url.Parse("http://127.0.0.1:1/")
+	for range 2 {
+		if _, err := renderer.Render(context.Background(), target, renderOptions{}); err == nil {
+			t.Fatal("Render succeeded with unavailable browser")
+		}
+	}
+	if allocations != 1 || cancellations != 1 {
+		t.Fatalf("allocations = %d, cancellations = %d; want 1 each", allocations, cancellations)
+	}
+	_ = renderer.Close(context.Background())
+	_ = renderer.Close(context.Background())
+	if _, err := renderer.Render(context.Background(), target, renderOptions{}); err == nil {
+		t.Fatal("Render succeeded after Close")
+	}
+	if allocations != 1 || cancellations != 1 {
+		t.Fatalf("after Close: allocations = %d, cancellations = %d; want 1 each", allocations, cancellations)
+	}
 }
 
 func TestRenderTrackerEnforcesRequestBudget(t *testing.T) {

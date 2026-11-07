@@ -309,6 +309,52 @@ func TestRewritePlanShellClassificationPreservesHint(t *testing.T) {
 	}
 }
 
+func TestPlanIncrementalTranscriptBudgetMatchesExact(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name string
+		id   string
+		text string
+	}{
+		{name: "plain", id: "node", text: strings.Repeat("x", 1024)},
+		{name: "escaped", id: strings.Repeat("\x00", 256), text: strings.Repeat("\x00", 1024)},
+		{name: "mixed fields", id: "node\"\\", text: strings.Repeat("\"\\", 512)},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var budget planTranscriptBudget
+			var transcript []PlanNodeResult
+			var path []string
+			seenWithin, seenOver := false, false
+			for i := range 30 {
+				node := PlanNodeResult{NodeID: tt.id, Depth: i}
+				opCount := maxPlanCommands
+				if i == 0 {
+					opCount = 1
+				}
+				for range opCount {
+					node.Ops = append(node.Ops, PlanOpResult{OK: true, Result: tt.text, Error: tt.text, Stdout: tt.text, Stderr: tt.text})
+				}
+				transcript = append(transcript, node)
+				path = append(path, tt.id)
+				if !budget.add(node, tt.id) {
+					t.Fatal("incremental marshal failed")
+				}
+				got := budget.withinBudget(transcript, path, i, i, i)
+				want := planTranscriptWithinBudget(transcript, path, i, i, i)
+				if got != want {
+					t.Fatalf("node %d: incremental budget = %v, exact = %v", i, got, want)
+				}
+				seenWithin = seenWithin || got
+				seenOver = seenOver || !got
+			}
+			if !seenWithin || !seenOver {
+				t.Fatalf("budget boundary not crossed: within=%v over=%v", seenWithin, seenOver)
+			}
+		})
+	}
+}
+
 func TestPlanLimitsAndTranscriptBudget(t *testing.T) {
 	plan := &PlanTree{Root: "n", MaxDepth: maxPlanDepth + 1, Nodes: []PlanNode{{ID: "n", Commands: []PlanOp{{Tool: "list_dir"}}}}}
 	if err := validatePlan(plan); err == nil {
