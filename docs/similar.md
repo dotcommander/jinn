@@ -15,7 +15,7 @@ This document maps each of jinn's conditional tools to the closest similar pi.de
 | `run_plan` | `@juicesharp/rpiv-workflow` | per-stage output validation before edge routing | **reviewed/complete + implemented 2026-11-07**: `expect` gate + JSONL audit; remaining donors source-inspected, no compelling adoption | stage emits `{}` with `expect` requiring `status` → node fails, zero edges evaluated, stop names the failed expectation |
 | `web_fetch` | `pi-web-access` | typed field extraction with source-line provenance | **implemented 2026-11-07** (`mode:"extract"` + `fields`; grounded value + source line) | request `{price:"number"}` → grounded value + source line, never a full-page dump |
 | `web_search` | `pi-web-access` | ordered fallback on `empty` / `domain-miss` + routing deadline | **implemented 2026-11-07** (comma-separated `JINN_WEB_SEARCH_PROVIDER` chain, reasons reported) | first provider returns zero results → next provider is tried, fallback reason reported |
-| `list_tools` | `pi-tool-search` (partial) | query/filter on catalog metadata | learn-only | planner asks for `read_only` subset without receiving the full catalog |
+| `list_tools` | `pi-tool-search` (partial) | query/filter on catalog metadata | **reviewed/complete + implemented 2026-11-07** (`risk`/`names`/`query` filters + `describe` mode) | planner asks for `read_only` subset without receiving the full catalog |
 | `ask_user_question` | `@juicesharp/rpiv-ask-user-question` | pure validation before UI + input normalization at the boundary | **implemented 2026-11-07** (line-terminator normalization in `DecodeQuestionnaire`) | reserved `"Other\r"` label + duplicate option label → precise error, UI never opens |
 
 > Note: jinn does not currently ship an `ask_user_question` tool — that section is a target-shape reference for the contract the host questionnaire should satisfy.
@@ -89,7 +89,7 @@ This document maps each of jinn's conditional tools to the closest similar pi.de
 
 ## list_tools
 
-No direct equivalent was found. `list_tools` is a meta-capability (enumerating the registered tool surface with metadata), and no pi.dev package in the corpus advertises a tool-catalog/listing tool.
+**Status: reviewed — complete (2026-11-07).** No direct equivalent was found. `list_tools` is a meta-capability (enumerating the registered tool surface with metadata), and no pi.dev package in the corpus advertises a tool-catalog/listing tool. The one learn-only suggestion from the pi-tool-search comparison is now implemented: `risk`/`names`/`query` filters narrow the listing and `describe:true` adds one-line descriptions without the full schema payload (`internal/jinn/engine.go`, `internal/jinn/list_tools_test.go`).
 
 **Closest partial match:** [pi-tool-search](https://pi.dev/packages/pi-tool-search) — ★7, last updated 196 days ago per the snapshot. Hides all tools behind a manifest-aware `tool_search` gate — it manages tool visibility (the inverse direction) rather than listing the tool surface.
 
