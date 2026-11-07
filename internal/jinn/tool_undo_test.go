@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
 // ---- list ----
@@ -352,15 +351,15 @@ func TestUndoRestore_AcceptsMatchingChecksum(t *testing.T) {
 
 // ---- clear ----
 
-func TestUndoClear_EmptiesHistory(t *testing.T) {
+func TestUndoClear_RejectedPreservesHistory(t *testing.T) {
 	e, workDir := undoEngine(t)
 	undoMkFile(t, e, workDir, "f.txt", "hello")
 
 	if _, err := e.writeFile(map[string]interface{}{"path": "f.txt", "content": "world"}); err != nil {
 		t.Fatalf("writeFile: %v", err)
 	}
-	if _, err := e.undoTool(map[string]interface{}{"action": "clear"}); err != nil {
-		t.Fatalf("clear: %v", err)
+	if _, err := e.undoTool(map[string]interface{}{"action": "clear"}); err == nil {
+		t.Fatal("clear must be rejected: history is non-deletable")
 	}
 
 	result, err := e.undoTool(map[string]interface{}{"action": "list"})
@@ -371,8 +370,8 @@ func TestUndoClear_EmptiesHistory(t *testing.T) {
 	if err := json.Unmarshal([]byte(result), &out); err != nil {
 		t.Fatalf("json: %v", err)
 	}
-	if out["count"] != float64(0) {
-		t.Errorf("count after clear: got %v, want 0", out["count"])
+	if out["count"] == float64(0) {
+		t.Error("history must survive a rejected clear")
 	}
 }
 
@@ -387,7 +386,7 @@ func TestUndoTool_UnknownAction(t *testing.T) {
 	}
 }
 
-func TestUndoClearWaitsForPreparedMutation(t *testing.T) {
+func TestUndoClearRejectedDuringPreparedMutation(t *testing.T) {
 	e, dir := testEngine(t)
 	writeTestFile(t, dir, "file.txt", "before\n")
 	prepared, release := make(chan struct{}), make(chan struct{})
@@ -395,18 +394,12 @@ func TestUndoClearWaitsForPreparedMutation(t *testing.T) {
 	writeDone := make(chan error, 1)
 	go func() { _, err := e.writeFile(args("path", "file.txt", "content", "after\n")); writeDone <- err }()
 	<-prepared
-	clearDone := make(chan error, 1)
-	go func() { _, err := e.undoClear(); clearDone <- err }()
-	select {
-	case err := <-clearDone:
-		t.Fatalf("clear raced prepared mutation: %v", err)
-	case <-time.After(100 * time.Millisecond):
+	// clear is rejected immediately (non-deletable) and never races the prepare.
+	if _, err := e.undoTool(args("action", "clear")); err == nil {
+		t.Fatal("clear must be rejected while mutation is prepared")
 	}
 	close(release)
 	if err := <-writeDone; err != nil {
-		t.Fatal(err)
-	}
-	if err := <-clearDone; err != nil {
 		t.Fatal(err)
 	}
 }

@@ -20,6 +20,7 @@ type ToolCapabilities struct {
 	JinnVersion string              `json:"jinn_version"`
 	Tools       []string            `json:"tools"`
 	Features    map[string][]string `json:"features"`
+	ReplaySafe  map[string]bool     `json:"replay_safe,omitempty"` // true only for derived-state reads safe to re-run
 	Schema      any                 `json:"schema,omitempty"`
 }
 

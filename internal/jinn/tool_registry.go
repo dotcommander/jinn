@@ -32,7 +32,7 @@ var toolCatalog = [...]toolDescriptor{
 	{name: "edit_file", features: []string{"dry_run", "fuzzy_indent", "show_context"}, routeRisk: toolRouteRiskMutating},
 	{name: "multi_edit", features: []string{"overlap_detection", "show_context", "dry_run"}, routeRisk: toolRouteRiskMutating},
 	{name: "apply_patch", routeRisk: toolRouteRiskMutating},
-	{name: "search_files", features: []string{"literal", "context_lines", "format_json", "case_insensitive", "zero_match_reason", "offset", "next_call"}, routeRisk: toolRouteRiskReadOnly},
+	{name: "search_files", features: []string{"literal", "context_lines", "format_json", "case_insensitive", "zero_match_reason", "offset", "next_call", "rows_mode"}, routeRisk: toolRouteRiskReadOnly},
 	{name: "stat_file", features: []string{"encoding_detection", "line_ending_detection", "bom_detection"}, routeRisk: toolRouteRiskReadOnly},
 	{name: "list_dir", features: []string{"changed_since", "offset", "next_call"}, routeRisk: toolRouteRiskReadOnly},
 	{name: "find_files", features: []string{"offset", "next_call"}, routeRisk: toolRouteRiskReadOnly},
@@ -126,6 +126,21 @@ func registeredToolFeatures() map[string][]string {
 		}
 	}
 	return features
+}
+
+// registeredToolSafety classifies every catalog tool by effect and whether
+// re-running it after a lost result is replay-safe (derived-state reads only;
+// unclassified tools default to effect from route risk and replay_safe=false).
+func registeredToolSafety() (effects map[string]string, replaySafe map[string]bool) {
+	effects = make(map[string]string, len(toolCatalog))
+	replaySafe = make(map[string]bool)
+	for _, descriptor := range toolCatalog {
+		effects[descriptor.name] = string(descriptor.routeRisk)
+		if descriptor.routeRisk == toolRouteRiskReadOnly {
+			replaySafe[descriptor.name] = true
+		}
+	}
+	return effects, replaySafe
 }
 
 func (e *Engine) registeredToolFeatures() map[string][]string {

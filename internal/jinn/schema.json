@@ -10,7 +10,9 @@
           "plan": {
             "type": "object",
             "properties": {
-              "root": {"type": "string"},
+              "root": {
+                "type": "string"
+              },
               "nodes": {
                 "type": "array",
                 "minItems": 1,
@@ -18,7 +20,9 @@
                 "items": {
                   "type": "object",
                   "properties": {
-                    "id": {"type": "string"},
+                    "id": {
+                      "type": "string"
+                    },
                     "commands": {
                       "maxItems": 16,
                       "type": "array",
@@ -26,19 +30,72 @@
                       "items": {
                         "type": "object",
                         "properties": {
-                          "shell": {"type": "string", "minLength": 1},
-                          "tool": {"type": "string", "enum": ["run_plan", "run_shell", "read_file", "multi_read", "write_file", "edit_file", "multi_edit", "apply_patch", "search_files", "stat_file", "list_dir", "find_files", "list_tools", "detect_project", "memory", "undo", "lsp_query", "lsp_batch", "diff_files", "search_replace"]},
-                          "args": {"type": "object"}
+                          "shell": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "tool": {
+                            "type": "string",
+                            "enum": [
+                              "run_plan",
+                              "run_shell",
+                              "read_file",
+                              "multi_read",
+                              "write_file",
+                              "edit_file",
+                              "multi_edit",
+                              "apply_patch",
+                              "search_files",
+                              "stat_file",
+                              "list_dir",
+                              "find_files",
+                              "list_tools",
+                              "detect_project",
+                              "memory",
+                              "undo",
+                              "lsp_query",
+                              "lsp_batch",
+                              "diff_files",
+                              "search_replace"
+                            ]
+                          },
+                          "args": {
+                            "type": "object"
+                          }
                         },
                         "oneOf": [
-                          {"required": ["shell"], "not": {"required": ["tool"]}},
-                          {"required": ["tool"], "not": {"required": ["shell"]}}
+                          {
+                            "required": [
+                              "shell"
+                            ],
+                            "not": {
+                              "required": [
+                                "tool"
+                              ]
+                            }
+                          },
+                          {
+                            "required": [
+                              "tool"
+                            ],
+                            "not": {
+                              "required": [
+                                "shell"
+                              ]
+                            }
+                          }
                         ]
                       }
                     },
-                    "parallel": {"type": "boolean"},
-                    "mutates": {"type": "boolean"},
-                    "force": {"type": "boolean"},
+                    "parallel": {
+                      "type": "boolean"
+                    },
+                    "mutates": {
+                      "type": "boolean"
+                    },
+                    "force": {
+                      "type": "boolean"
+                    },
                     "edges": {
                       "maxItems": 32,
                       "type": "array",
@@ -48,61 +105,242 @@
                           "when": {
                             "type": "object",
                             "properties": {
-                              "kind": {"type": "string", "enum": ["exitCode", "fileExists", "jsonPath", "numeric", "match", "always"]},
-                              "op": {"type": "string"},
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "exitCode",
+                                  "fileExists",
+                                  "jsonPath",
+                                  "numeric",
+                                  "match",
+                                  "always"
+                                ]
+                              },
+                              "op": {
+                                "type": "string"
+                              },
                               "value": {},
-                              "path": {"type": "string"},
-                              "extract": {"type": "string"},
-                              "regex": {"type": "string"},
-                              "stream": {"type": "string", "enum": ["stdout", "stderr"]},
-                              "negate": {"type": "boolean"}
+                              "path": {
+                                "type": "string"
+                              },
+                              "extract": {
+                                "type": "string"
+                              },
+                              "regex": {
+                                "type": "string"
+                              },
+                              "stream": {
+                                "type": "string",
+                                "enum": [
+                                  "stdout",
+                                  "stderr"
+                                ]
+                              },
+                              "negate": {
+                                "type": "boolean"
+                              }
                             },
-                            "required": ["kind"],
+                            "required": [
+                              "kind"
+                            ],
                             "oneOf": [
                               {
-                                "properties": {"kind": {"enum": ["always"]}, "negate": {"type": "boolean"}},
-                                "required": ["kind"],
+                                "properties": {
+                                  "kind": {
+                                    "enum": [
+                                      "always"
+                                    ]
+                                  },
+                                  "negate": {
+                                    "type": "boolean"
+                                  }
+                                },
+                                "required": [
+                                  "kind"
+                                ],
                                 "additionalProperties": false
                               },
                               {
-                                "properties": {"kind": {"enum": ["exitCode"]}, "op": {"enum": ["eq", "ne", "lt", "lte", "gt", "gte"]}, "value": {"type": "integer"}, "negate": {"type": "boolean"}},
-                                "required": ["kind", "op", "value"],
+                                "properties": {
+                                  "kind": {
+                                    "enum": [
+                                      "exitCode"
+                                    ]
+                                  },
+                                  "op": {
+                                    "enum": [
+                                      "eq",
+                                      "ne",
+                                      "lt",
+                                      "lte",
+                                      "gt",
+                                      "gte"
+                                    ]
+                                  },
+                                  "value": {
+                                    "type": "integer"
+                                  },
+                                  "negate": {
+                                    "type": "boolean"
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "op",
+                                  "value"
+                                ],
                                 "additionalProperties": false
                               },
                               {
-                                "properties": {"kind": {"enum": ["fileExists"]}, "path": {"type": "string", "minLength": 1}, "negate": {"type": "boolean"}},
-                                "required": ["kind", "path"],
+                                "properties": {
+                                  "kind": {
+                                    "enum": [
+                                      "fileExists"
+                                    ]
+                                  },
+                                  "path": {
+                                    "type": "string",
+                                    "minLength": 1
+                                  },
+                                  "negate": {
+                                    "type": "boolean"
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "path"
+                                ],
                                 "additionalProperties": false
                               },
                               {
-                                "properties": {"kind": {"enum": ["jsonPath"]}, "path": {"type": "string", "minLength": 1}, "op": {"enum": ["eq", "ne", "lt", "lte", "gt", "gte"]}, "value": {"not": {"type": "null"}}, "negate": {"type": "boolean"}},
-                                "required": ["kind", "path", "op", "value"],
+                                "properties": {
+                                  "kind": {
+                                    "enum": [
+                                      "jsonPath"
+                                    ]
+                                  },
+                                  "path": {
+                                    "type": "string",
+                                    "minLength": 1
+                                  },
+                                  "op": {
+                                    "enum": [
+                                      "eq",
+                                      "ne",
+                                      "lt",
+                                      "lte",
+                                      "gt",
+                                      "gte"
+                                    ]
+                                  },
+                                  "value": {
+                                    "not": {
+                                      "type": "null"
+                                    }
+                                  },
+                                  "negate": {
+                                    "type": "boolean"
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "path",
+                                  "op",
+                                  "value"
+                                ],
                                 "additionalProperties": false
                               },
                               {
-                                "properties": {"kind": {"enum": ["numeric"]}, "op": {"enum": ["eq", "ne", "lt", "lte", "gt", "gte"]}, "value": {"type": "number"}, "extract": {"type": "string"}, "negate": {"type": "boolean"}},
-                                "required": ["kind", "op", "value"],
+                                "properties": {
+                                  "kind": {
+                                    "enum": [
+                                      "numeric"
+                                    ]
+                                  },
+                                  "op": {
+                                    "enum": [
+                                      "eq",
+                                      "ne",
+                                      "lt",
+                                      "lte",
+                                      "gt",
+                                      "gte"
+                                    ]
+                                  },
+                                  "value": {
+                                    "type": "number"
+                                  },
+                                  "extract": {
+                                    "type": "string"
+                                  },
+                                  "negate": {
+                                    "type": "boolean"
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "op",
+                                  "value"
+                                ],
                                 "additionalProperties": false
                               },
                               {
-                                "properties": {"kind": {"enum": ["match"]}, "regex": {"type": "string"}, "stream": {"enum": ["stdout", "stderr"]}, "negate": {"type": "boolean"}},
-                                "required": ["kind", "regex", "stream"],
+                                "properties": {
+                                  "kind": {
+                                    "enum": [
+                                      "match"
+                                    ]
+                                  },
+                                  "regex": {
+                                    "type": "string"
+                                  },
+                                  "stream": {
+                                    "enum": [
+                                      "stdout",
+                                      "stderr"
+                                    ]
+                                  },
+                                  "negate": {
+                                    "type": "boolean"
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "regex",
+                                  "stream"
+                                ],
                                 "additionalProperties": false
                               }
                             ]
                           },
-                          "to": {"type": "string"}
+                          "to": {
+                            "type": "string"
+                          }
                         },
-                        "required": ["when", "to"]
+                        "required": [
+                          "when",
+                          "to"
+                        ]
                       }
                     }
                   },
-                  "required": ["id", "commands"]
+                  "required": [
+                    "id",
+                    "commands"
+                  ]
                 }
               },
-              "cwd": {"type": "string"},
-              "max_depth": {"type": "integer", "minimum": 0, "maximum": 32},
-              "force": {"type": "boolean"},
+              "cwd": {
+                "type": "string"
+              },
+              "max_depth": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 32
+              },
+              "force": {
+                "type": "boolean"
+              },
               "steps": {
                 "type": "array",
                 "minItems": 1,
@@ -111,23 +349,86 @@
                 "items": {
                   "type": "object",
                   "properties": {
-                    "tool": {"type": "string", "enum": ["run_plan", "read_file", "multi_read", "write_file", "edit_file", "multi_edit", "apply_patch", "search_files", "stat_file", "list_dir", "find_files", "list_tools", "detect_project", "memory", "undo", "lsp_query", "lsp_batch", "diff_files", "search_replace"]},
-                    "args": {"type": "object"}
+                    "tool": {
+                      "type": "string",
+                      "enum": [
+                        "run_plan",
+                        "read_file",
+                        "multi_read",
+                        "write_file",
+                        "edit_file",
+                        "multi_edit",
+                        "apply_patch",
+                        "search_files",
+                        "stat_file",
+                        "list_dir",
+                        "find_files",
+                        "list_tools",
+                        "detect_project",
+                        "memory",
+                        "undo",
+                        "lsp_query",
+                        "lsp_batch",
+                        "diff_files",
+                        "search_replace"
+                      ]
+                    },
+                    "args": {
+                      "type": "object"
+                    }
                   },
-                  "required": ["tool"],
+                  "required": [
+                    "tool"
+                  ],
                   "additionalProperties": false
                 }
               },
-              "parallel": {"type": "boolean", "default": false},
-              "mutates": {"type": "boolean", "default": false}
+              "parallel": {
+                "type": "boolean",
+                "default": false
+              },
+              "mutates": {
+                "type": "boolean",
+                "default": false
+              }
             },
             "oneOf": [
-              {"required": ["root", "nodes"], "not": {"required": ["steps"]}},
-              {"required": ["steps"], "not": {"anyOf": [{"required": ["root"]}, {"required": ["nodes"]}]}}
+              {
+                "required": [
+                  "root",
+                  "nodes"
+                ],
+                "not": {
+                  "required": [
+                    "steps"
+                  ]
+                }
+              },
+              {
+                "required": [
+                  "steps"
+                ],
+                "not": {
+                  "anyOf": [
+                    {
+                      "required": [
+                        "root"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "nodes"
+                      ]
+                    }
+                  ]
+                }
+              }
             ]
           }
         },
-        "required": ["plan"]
+        "required": [
+          "plan"
+        ]
       }
     }
   },
@@ -139,12 +440,26 @@
       "parameters": {
         "type": "object",
         "properties": {
-          "command": {"type": "string", "description": "bash command to execute"},
-          "timeout": {"type": "integer", "description": "max seconds (default: 30)"},
-          "dry_run": {"type": "boolean", "description": "preview command without executing (default: false)"},
-          "force":   {"type": "boolean", "description": "If true, execute commands even when risk classification is 'dangerous'. Default false."}
+          "command": {
+            "type": "string",
+            "description": "bash command to execute"
+          },
+          "timeout": {
+            "type": "integer",
+            "description": "max seconds (default: 30)"
+          },
+          "dry_run": {
+            "type": "boolean",
+            "description": "preview command without executing (default: false)"
+          },
+          "force": {
+            "type": "boolean",
+            "description": "If true, execute commands even when risk classification is 'dangerous'. Default false."
+          }
         },
-        "required": ["command"]
+        "required": [
+          "command"
+        ]
       }
     }
   },
@@ -156,16 +471,53 @@
       "parameters": {
         "type": "object",
         "properties": {
-          "path": {"type": "string", "description": "file path to read"},
-          "start_line": {"type": "integer", "description": "first line (1-indexed, default: 1)"},
-          "end_line": {"type": "integer", "description": "last line (default: start_line+1999)"},
-          "tail": {"type": "integer", "description": "Read the last N lines of the file. Takes precedence over start_line/end_line. 0 = disabled.", "default": 0},
-          "line_numbers": {"type": "boolean", "description": "Include cat-n style line-number prefixes in output (default: true). Set false to receive raw file content with no numbering.", "default": true},
-          "truncate": {"type": "string", "enum": ["head", "tail", "middle", "none", "smart"], "description": "Strategy when output exceeds line limit. head=keep first N (default, paginates with start_line). tail=keep last N (logs). middle=keep both ends, elide middle. none=defer to byte cap only. smart=brace-depth heuristic for C-syntax files, falls back to head for others.", "default": "head"},
-          "include_checksum": {"type": "boolean", "description": "When true, response meta includes sha256 hex digest of the full file content. Zero extra I/O cost (computed during read).", "default": false},
-          "if_checksum": {"type": "string", "description": "SHA-256 hex digest from a previous read_file response (meta.sha256). When set and the file's current checksum matches, returns {\"unchanged\":true,\"path\":\"...\",\"checksum\":\"...\"} instead of file content — saves tokens in build→fix→build loops. Mismatched or absent checksum falls through to a normal full read."}
+          "path": {
+            "type": "string",
+            "description": "file path to read"
+          },
+          "start_line": {
+            "type": "integer",
+            "description": "first line (1-indexed, default: 1)"
+          },
+          "end_line": {
+            "type": "integer",
+            "description": "last line (default: start_line+1999)"
+          },
+          "tail": {
+            "type": "integer",
+            "description": "Read the last N lines of the file. Takes precedence over start_line/end_line. 0 = disabled.",
+            "default": 0
+          },
+          "line_numbers": {
+            "type": "boolean",
+            "description": "Include cat-n style line-number prefixes in output (default: true). Set false to receive raw file content with no numbering.",
+            "default": true
+          },
+          "truncate": {
+            "type": "string",
+            "enum": [
+              "head",
+              "tail",
+              "middle",
+              "none",
+              "smart"
+            ],
+            "description": "Strategy when output exceeds line limit. head=keep first N (default, paginates with start_line). tail=keep last N (logs). middle=keep both ends, elide middle. none=defer to byte cap only. smart=brace-depth heuristic for C-syntax files, falls back to head for others.",
+            "default": "head"
+          },
+          "include_checksum": {
+            "type": "boolean",
+            "description": "When true, response meta includes sha256 hex digest of the full file content. Zero extra I/O cost (computed during read).",
+            "default": false
+          },
+          "if_checksum": {
+            "type": "string",
+            "description": "SHA-256 hex digest from a previous read_file response (meta.sha256). When set and the file's current checksum matches, returns {\"unchanged\":true,\"path\":\"...\",\"checksum\":\"...\"} instead of file content \u2014 saves tokens in build\u2192fix\u2192build loops. Mismatched or absent checksum falls through to a normal full read."
+          }
         },
-        "required": ["path"]
+        "required": [
+          "path"
+        ]
       }
     }
   },
@@ -183,20 +535,52 @@
             "items": {
               "type": "object",
               "properties": {
-                "path":         {"type": "string",  "description": "file path to read"},
-                "start_line":   {"type": "integer", "description": "first line (1-indexed, default: 1)"},
-                "end_line":     {"type": "integer", "description": "last line (default: start_line+1999)"},
-                "tail":         {"type": "integer", "description": "Read last N lines. Overrides start_line/end_line. 0=disabled.", "default": 0},
-                "line_numbers": {"type": "boolean", "description": "Include line-number prefixes (default: true)", "default": true},
-                "truncate":     {"type": "string",  "enum": ["head","tail","middle","none","smart"], "description": "Truncation strategy. smart=brace-depth heuristic for C-syntax files.", "default": "head"}
+                "path": {
+                  "type": "string",
+                  "description": "file path to read"
+                },
+                "start_line": {
+                  "type": "integer",
+                  "description": "first line (1-indexed, default: 1)"
+                },
+                "end_line": {
+                  "type": "integer",
+                  "description": "last line (default: start_line+1999)"
+                },
+                "tail": {
+                  "type": "integer",
+                  "description": "Read last N lines. Overrides start_line/end_line. 0=disabled.",
+                  "default": 0
+                },
+                "line_numbers": {
+                  "type": "boolean",
+                  "description": "Include line-number prefixes (default: true)",
+                  "default": true
+                },
+                "truncate": {
+                  "type": "string",
+                  "enum": [
+                    "head",
+                    "tail",
+                    "middle",
+                    "none",
+                    "smart"
+                  ],
+                  "description": "Truncation strategy. smart=brace-depth heuristic for C-syntax files.",
+                  "default": "head"
+                }
               },
-              "required": ["path"]
+              "required": [
+                "path"
+              ]
             },
             "minItems": 1,
             "maxItems": 20
           }
         },
-        "required": ["files"]
+        "required": [
+          "files"
+        ]
       }
     }
   },
@@ -208,13 +592,31 @@
       "parameters": {
         "type": "object",
         "properties": {
-          "path": {"type": "string", "description": "file path to write"},
-          "content": {"type": "string", "description": "file content"},
-          "dry_run": {"type": "boolean", "description": "preview changes without writing (default: false)"},
-          "if_checksum": {"type": "string", "description": "Required when replacing an existing file. SHA-256 hex digest from read_file meta.sha256."},
-          "if_absent": {"type": "boolean", "description": "Required and true when creating a new file."}
+          "path": {
+            "type": "string",
+            "description": "file path to write"
+          },
+          "content": {
+            "type": "string",
+            "description": "file content"
+          },
+          "dry_run": {
+            "type": "boolean",
+            "description": "preview changes without writing (default: false)"
+          },
+          "if_checksum": {
+            "type": "string",
+            "description": "Required when replacing an existing file. SHA-256 hex digest from read_file meta.sha256."
+          },
+          "if_absent": {
+            "type": "boolean",
+            "description": "Required and true when creating a new file."
+          }
         },
-        "required": ["path", "content"]
+        "required": [
+          "path",
+          "content"
+        ]
       }
     }
   },
@@ -226,15 +628,41 @@
       "parameters": {
         "type": "object",
         "properties": {
-          "path": {"type": "string", "description": "file path to edit"},
-          "old_text": {"type": "string", "description": "exact text to find (must be unique in file)"},
-          "new_text": {"type": "string", "description": "replacement text"},
-          "dry_run": {"type": "boolean", "description": "preview changes without writing (default: false)"},
-          "fuzzy_indent": {"type": "boolean", "description": "auto-detect indentation at match site and apply to new_text (default: false)"},
-          "show_context": {"type": "integer", "description": "Number of context lines to show around the edit after applying. 0 = no context.", "default": 0},
-          "if_checksum": {"type": "string", "description": "SHA-256 hex digest from a previous read_file response (meta.sha256). When set, the edit is rejected with error_code=stale_file if the file's current content no longer hashes to this digest — protects against lost updates when the file changed since you read it."}
+          "path": {
+            "type": "string",
+            "description": "file path to edit"
+          },
+          "old_text": {
+            "type": "string",
+            "description": "exact text to find (must be unique in file)"
+          },
+          "new_text": {
+            "type": "string",
+            "description": "replacement text"
+          },
+          "dry_run": {
+            "type": "boolean",
+            "description": "preview changes without writing (default: false)"
+          },
+          "fuzzy_indent": {
+            "type": "boolean",
+            "description": "auto-detect indentation at match site and apply to new_text (default: false)"
+          },
+          "show_context": {
+            "type": "integer",
+            "description": "Number of context lines to show around the edit after applying. 0 = no context.",
+            "default": 0
+          },
+          "if_checksum": {
+            "type": "string",
+            "description": "SHA-256 hex digest from a previous read_file response (meta.sha256). When set, the edit is rejected with error_code=stale_file if the file's current content no longer hashes to this digest \u2014 protects against lost updates when the file changed since you read it."
+          }
         },
-        "required": ["path", "old_text", "new_text"]
+        "required": [
+          "path",
+          "old_text",
+          "new_text"
+        ]
       }
     }
   },
@@ -252,19 +680,49 @@
             "items": {
               "type": "object",
               "properties": {
-                "path": {"type": "string", "description": "file path to edit"},
-                "old_text": {"type": "string", "description": "exact text to find (must be unique)"},
-                "new_text": {"type": "string", "description": "replacement text"},
-                "if_checksum": {"type": "string", "description": "SHA-256 hex digest from a previous read_file response for this target. Rejects the whole batch with error_code=stale_file when the file changed."},
-                "fuzzy_indent": {"type": "boolean", "description": "Re-indent old_text to match surrounding indentation before matching", "default": false},
-                "show_context": {"type": "integer", "description": "Number of context lines to show around the edit after applying", "default": 0}
+                "path": {
+                  "type": "string",
+                  "description": "file path to edit"
+                },
+                "old_text": {
+                  "type": "string",
+                  "description": "exact text to find (must be unique)"
+                },
+                "new_text": {
+                  "type": "string",
+                  "description": "replacement text"
+                },
+                "if_checksum": {
+                  "type": "string",
+                  "description": "SHA-256 hex digest from a previous read_file response for this target. Rejects the whole batch with error_code=stale_file when the file changed."
+                },
+                "fuzzy_indent": {
+                  "type": "boolean",
+                  "description": "Re-indent old_text to match surrounding indentation before matching",
+                  "default": false
+                },
+                "show_context": {
+                  "type": "integer",
+                  "description": "Number of context lines to show around the edit after applying",
+                  "default": 0
+                }
               },
-              "required": ["path", "old_text", "new_text"]
+              "required": [
+                "path",
+                "old_text",
+                "new_text"
+              ]
             }
           },
-          "dry_run": {"type": "boolean", "description": "Preview all edits without writing. Returns diffs for each edit.", "default": false}
+          "dry_run": {
+            "type": "boolean",
+            "description": "Preview all edits without writing. Returns diffs for each edit.",
+            "default": false
+          }
         },
-        "required": ["edits"]
+        "required": [
+          "edits"
+        ]
       }
     }
   },
@@ -276,12 +734,29 @@
       "parameters": {
         "type": "object",
         "properties": {
-          "patch": {"type": "string", "description": "Codex-style patch payload. Must start with '*** Begin Patch' and end with '*** End Patch'. Supports *** Add File:, *** Delete File:, and *** Update File: operations."},
-          "if_checksums": {"type": "object", "description": "Optional map of patch target path to SHA-256 digest from read_file. Any mismatch rejects the patch before writes.", "additionalProperties": {"type": "string"}},
-          "if_absent": {"type": "boolean", "description": "Required and true when the patch adds files."},
-          "dry_run": {"type": "boolean", "description": "Preview changes without writing (default: false)"}
+          "patch": {
+            "type": "string",
+            "description": "Codex-style patch payload. Must start with '*** Begin Patch' and end with '*** End Patch'. Supports *** Add File:, *** Delete File:, and *** Update File: operations."
+          },
+          "if_checksums": {
+            "type": "object",
+            "description": "Optional map of patch target path to SHA-256 digest from read_file. Any mismatch rejects the patch before writes.",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "if_absent": {
+            "type": "boolean",
+            "description": "Required and true when the patch adds files."
+          },
+          "dry_run": {
+            "type": "boolean",
+            "description": "Preview changes without writing (default: false)"
+          }
         },
-        "required": ["patch"]
+        "required": [
+          "patch"
+        ]
       }
     }
   },
@@ -289,21 +764,70 @@
     "type": "function",
     "function": {
       "name": "search_files",
-      "description": "Search file contents with grep. Required shape: {\"pattern\":\"...\"}. JSON pages return offsets and exact next_call arguments. Zero results include zero_match_reason.",
+      "description": "Search file contents with grep, or rank whole JSON records with mode=rows. Required shape: {\"pattern\":\"...\"}.",
       "parameters": {
         "type": "object",
         "properties": {
-          "pattern": {"type": "string", "description": "grep regex pattern (or literal string when literal=true)"},
-          "path": {"type": "string", "description": "directory to search (default: .)"},
-          "include": {"type": "string", "description": "file glob filter, e.g. *.go"},
-          "context_lines": {"type": "integer", "description": "lines of context around matches (default: 0)"},
-          "case_insensitive": {"type": "boolean", "description": "case-insensitive search (default: false)"},
-          "literal": {"type": "boolean", "description": "treat pattern as a fixed string rather than a regex (default: false)", "default": false},
-          "max_matches": {"type": "integer", "description": "Maximum number of matches to return (default: 500). When exceeded, response includes truncated=true and total_count.", "default": 500},
-          "offset": {"type": "integer", "minimum": 0, "description": "Zero-based match offset. Requires format=json.", "default": 0},
-          "format": {"type": "string", "description": "output format: 'text' (default), 'json' (structured results with truncation metadata), or 'filenames' (filenames with match counts)", "enum": ["text", "json", "filenames"]}
+          "pattern": {
+            "type": "string",
+            "description": "grep regex pattern (or literal string when literal=true)"
+          },
+          "path": {
+            "type": "string",
+            "description": "directory to search (default: .)"
+          },
+          "include": {
+            "type": "string",
+            "description": "file glob filter, e.g. *.go"
+          },
+          "context_lines": {
+            "type": "integer",
+            "description": "lines of context around matches (default: 0)"
+          },
+          "case_insensitive": {
+            "type": "boolean",
+            "description": "case-insensitive search (default: false)"
+          },
+          "literal": {
+            "type": "boolean",
+            "description": "treat pattern as a fixed string rather than a regex (default: false)",
+            "default": false
+          },
+          "max_matches": {
+            "type": "integer",
+            "description": "Maximum number of matches to return (default: 500). When exceeded, response includes truncated=true and total_count.",
+            "default": 500
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Zero-based match offset. Requires format=json.",
+            "default": 0
+          },
+          "format": {
+            "type": "string",
+            "description": "output format: 'text' (default), 'json' (structured results with truncation metadata), or 'filenames' (filenames with match counts)",
+            "enum": [
+              "text",
+              "json",
+              "filenames"
+            ]
+          },
+          "mode": {
+            "type": "string",
+            "description": "content (default) or rows: rank whole JSON records in path by BM25 over queries."
+          },
+          "queries": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Rows mode only, required there: one or more query strings."
+          }
         },
-        "required": ["pattern"]
+        "required": [
+          "pattern"
+        ]
       }
     }
   },
@@ -315,9 +839,14 @@
       "parameters": {
         "type": "object",
         "properties": {
-          "path": {"type": "string", "description": "file path to stat"}
+          "path": {
+            "type": "string",
+            "description": "file path to stat"
+          }
         },
-        "required": ["path"]
+        "required": [
+          "path"
+        ]
       }
     }
   },
@@ -329,12 +858,36 @@
       "parameters": {
         "type": "object",
         "properties": {
-          "path": {"type": "string", "description": "directory to list (default: .)"},
-          "depth": {"type": "integer", "description": "max depth (default: 3)"},
-          "max_entries": {"type": "integer", "description": "Maximum number of entries to return (default: 500, minimum: 1, cap: 10000). When exceeded, response includes truncated=true and total_count.", "minimum": 1, "default": 500},
-          "offset": {"type": "integer", "minimum": 0, "maximum": 100000, "description": "Zero-based entry offset for continuation.", "default": 0},
-          "changed_since": {"type": "number", "description": "Unix epoch seconds. Only list entries modified after this timestamp. 0 or absent = no filter.", "default": 0}
-          ,"changed_after": {"type": "string", "description": "RFC3339Nano timestamp. Only entries modified strictly after this instant are included."}
+          "path": {
+            "type": "string",
+            "description": "directory to list (default: .)"
+          },
+          "depth": {
+            "type": "integer",
+            "description": "max depth (default: 3)"
+          },
+          "max_entries": {
+            "type": "integer",
+            "description": "Maximum number of entries to return (default: 500, minimum: 1, cap: 10000). When exceeded, response includes truncated=true and total_count.",
+            "minimum": 1,
+            "default": 500
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100000,
+            "description": "Zero-based entry offset for continuation.",
+            "default": 0
+          },
+          "changed_since": {
+            "type": "number",
+            "description": "Unix epoch seconds. Only list entries modified after this timestamp. 0 or absent = no filter.",
+            "default": 0
+          },
+          "changed_after": {
+            "type": "string",
+            "description": "RFC3339Nano timestamp. Only entries modified strictly after this instant are included."
+          }
         }
       }
     }
@@ -347,12 +900,35 @@
       "parameters": {
         "type": "object",
         "properties": {
-          "pattern": {"type": "string", "description": "Glob pattern to match files, e.g. '*.go', '**/*.json', or 'src/**/*_test.go'"},
-          "path": {"type": "string", "description": "Directory to search in (default: current directory)"},
-          "limit": {"type": "integer", "description": "Maximum number of results (default: 1000, minimum: 1)", "minimum": 1, "default": 1000},
-          "offset": {"type": "integer", "minimum": 0, "maximum": 100000, "description": "Zero-based result offset for continuation.", "default": 0}
+          "pattern": {
+            "type": "string",
+            "description": "Glob pattern to match files, e.g. '*.go', '**/*.json', or 'src/**/*_test.go'"
+          },
+          "path": {
+            "type": "string",
+            "description": "Directory to search in (default: current directory)"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Maximum number of results (default: 1000, minimum: 1)",
+            "minimum": 1,
+            "default": 1000
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100000,
+            "description": "Zero-based result offset for continuation.",
+            "default": 0
+          },
+          "include_meta": {
+            "type": "boolean",
+            "description": "When true, also return entries with path/type/size/mtime so a stat_file call is unnecessary."
+          }
         },
-        "required": ["pattern"]
+        "required": [
+          "pattern"
+        ]
       }
     }
   },
@@ -364,7 +940,11 @@
       "parameters": {
         "type": "object",
         "properties": {
-          "include_schema": {"type": "boolean", "description": "Also include the compact OpenAI tool schema (default: false).", "default": false}
+          "include_schema": {
+            "type": "boolean",
+            "description": "Also include the compact OpenAI tool schema (default: false).",
+            "default": false
+          }
         }
       }
     }
@@ -377,7 +957,10 @@
       "parameters": {
         "type": "object",
         "properties": {
-          "path": {"type": "string", "description": "directory to analyze (default: .)"}
+          "path": {
+            "type": "string",
+            "description": "directory to analyze (default: .)"
+          }
         }
       }
     }
@@ -390,18 +973,62 @@
       "parameters": {
         "type": "object",
         "properties": {
-          "action": {"type": "string", "enum": ["save", "recall", "list", "forget", "gc"], "description": "Operation to perform. gc sweeps expired entries (optionally restricted to scope)."},
-          "key":    {"type": "string", "description": "Key name (1-128 chars, [a-zA-Z0-9_.-]). Required for save, recall, forget."},
-          "value":  {"type": "string", "description": "Value to store (max 16 KiB). Required for save."},
-          "scope":          {"type": "string",  "description": "Optional. Omit for the current project (auto-detected). Use \"global\", \"project\", \"task\", or \"agent\"."},
-          "scope_id":       {"type": "string",  "description": "Optional project path, task ID, or agent name. Required for task and agent scopes; invalid with global."},
-          "kind":           {"type": "string",  "enum": ["fact", "directive", "lesson"], "description": "save only. Memory category: \"fact\" (default), \"directive\", or \"lesson\"."},
-          "pin":            {"type": "boolean", "description": "save only. When true, pins the entry so gc never sweeps it. Default false."},
-          "expires_in":     {"type": "string",  "description": "save only. Relative TTL after which the entry expires, e.g. \"12h\", \"30d\", \"2w\". Omit for no expiry."},
-          "request_id":     {"type": "string",  "description": "Optional idempotency key for save, forget, and gc. Replays the prior result instead of re-applying the mutation."},
-          "include_values": {"type": "boolean", "description": "list only. When true, returns {entries:[{key,value,updated}],count:N} instead of {keys:[...],count:N}. Default false."}
+          "action": {
+            "type": "string",
+            "enum": [
+              "save",
+              "recall",
+              "list",
+              "forget",
+              "gc"
+            ],
+            "description": "Operation to perform. gc sweeps expired entries (optionally restricted to scope)."
+          },
+          "key": {
+            "type": "string",
+            "description": "Key name (1-128 chars, [a-zA-Z0-9_.-]). Required for save, recall, forget."
+          },
+          "value": {
+            "type": "string",
+            "description": "Value to store (max 16 KiB). Required for save."
+          },
+          "scope": {
+            "type": "string",
+            "description": "Optional. Omit for the current project (auto-detected). Use \"global\", \"project\", \"task\", or \"agent\"."
+          },
+          "scope_id": {
+            "type": "string",
+            "description": "Optional project path, task ID, or agent name. Required for task and agent scopes; invalid with global."
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "fact",
+              "directive",
+              "lesson"
+            ],
+            "description": "save only. Memory category: \"fact\" (default), \"directive\", or \"lesson\"."
+          },
+          "pin": {
+            "type": "boolean",
+            "description": "save only. When true, pins the entry so gc never sweeps it. Default false."
+          },
+          "expires_in": {
+            "type": "string",
+            "description": "save only. Relative TTL after which the entry expires, e.g. \"12h\", \"30d\", \"2w\". Omit for no expiry."
+          },
+          "request_id": {
+            "type": "string",
+            "description": "Optional idempotency key for save, forget, and gc. Replays the prior result instead of re-applying the mutation."
+          },
+          "include_values": {
+            "type": "boolean",
+            "description": "list only. When true, returns {entries:[{key,value,updated}],count:N} instead of {keys:[...],count:N}. Default false."
+          }
         },
-        "required": ["action"]
+        "required": [
+          "action"
+        ]
       }
     }
   },
@@ -413,13 +1040,35 @@
       "parameters": {
         "type": "object",
         "properties": {
-          "action": {"type": "string", "enum": ["list", "preview", "restore", "clear"], "description": "Operation: list=show history, preview=diff snapshot vs current, restore=revert file, clear=delete all history for this workdir."},
-          "id":     {"type": "string", "description": "Snapshot ID (prefix match). Required for preview and restore."},
-          "if_checksum": {"type": "string", "description": "For restore, optional SHA-256 digest of the target's current bytes from read_file. A mismatch rejects the restore with error_code=stale_file."},
-          "if_absent": {"type": "boolean", "description": "For restore, required and true when recreating a missing target."},
-          "limit":  {"type": "integer", "description": "Max entries to return for list (default: 50)."}
+          "action": {
+            "type": "string",
+            "enum": [
+              "list",
+              "preview",
+              "restore"
+            ],
+            "description": "Operation: list=show history, preview=diff snapshot vs current, restore=revert file. History is non-deletable recovery evidence."
+          },
+          "id": {
+            "type": "string",
+            "description": "Snapshot ID (prefix match). Required for preview and restore."
+          },
+          "if_checksum": {
+            "type": "string",
+            "description": "For restore, optional SHA-256 digest of the target's current bytes from read_file. A mismatch rejects the restore with error_code=stale_file."
+          },
+          "if_absent": {
+            "type": "boolean",
+            "description": "For restore, required and true when recreating a missing target."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Max entries to return for list (default: 50)."
+          }
         },
-        "required": ["action"]
+        "required": [
+          "action"
+        ]
       }
     }
   },
@@ -431,14 +1080,43 @@
       "parameters": {
         "type": "object",
         "properties": {
-          "action":    {"type": "string", "enum": ["definition", "references", "hover", "symbols", "diagnostics", "rename"], "description": "Query type. diagnostics returns pull diagnostics; rename returns a preview of changes (does not apply them)."},
-          "path":      {"type": "string", "description": "Path to source file, relative to workDir."},
-          "line":      {"type": "integer", "description": "1-based line number. Optional when 'symbol' is set — jinn resolves the line from the file's document symbols. Otherwise required for definition/references/hover/rename."},
-          "character": {"type": "integer", "description": "1-based character offset within the line. Optional when 'symbol' is set. Otherwise required for definition/references/hover/rename."},
-          "symbol":    {"type": "string", "description": "Identifier name. Supply instead of line/character and jinn resolves the symbol's declaration position from the file's document symbols; with a line but no character it resolves just the column. Errors if the name matches zero or multiple declarations."},
-          "new_name":  {"type": "string", "description": "New name for the symbol. Required when action is rename."}
+          "action": {
+            "type": "string",
+            "enum": [
+              "definition",
+              "references",
+              "hover",
+              "symbols",
+              "diagnostics",
+              "rename"
+            ],
+            "description": "Query type. diagnostics returns pull diagnostics; rename returns a preview of changes (does not apply them)."
+          },
+          "path": {
+            "type": "string",
+            "description": "Path to source file, relative to workDir."
+          },
+          "line": {
+            "type": "integer",
+            "description": "1-based line number. Optional when 'symbol' is set \u2014 jinn resolves the line from the file's document symbols. Otherwise required for definition/references/hover/rename."
+          },
+          "character": {
+            "type": "integer",
+            "description": "1-based character offset within the line. Optional when 'symbol' is set. Otherwise required for definition/references/hover/rename."
+          },
+          "symbol": {
+            "type": "string",
+            "description": "Identifier name. Supply instead of line/character and jinn resolves the symbol's declaration position from the file's document symbols; with a line but no character it resolves just the column. Errors if the name matches zero or multiple declarations."
+          },
+          "new_name": {
+            "type": "string",
+            "description": "New name for the symbol. Required when action is rename."
+          }
         },
-        "required": ["action", "path"]
+        "required": [
+          "action",
+          "path"
+        ]
       }
     }
   },
@@ -457,19 +1135,45 @@
             "items": {
               "type": "object",
               "properties": {
-                "action": {"type": "string", "enum": ["definition", "references", "hover", "symbols", "diagnostics", "rename"], "description": "One of: definition, references, hover, symbols, diagnostics, rename."},
-                "path": {"type": "string"},
-                "line": {"type": "integer"},
-                "character": {"type": "integer"},
-                "symbol": {"type": "string"},
-                "new_name": {"type": "string"}
+                "action": {
+                  "type": "string",
+                  "enum": [
+                    "definition",
+                    "references",
+                    "hover",
+                    "symbols",
+                    "diagnostics",
+                    "rename"
+                  ],
+                  "description": "One of: definition, references, hover, symbols, diagnostics, rename."
+                },
+                "path": {
+                  "type": "string"
+                },
+                "line": {
+                  "type": "integer"
+                },
+                "character": {
+                  "type": "integer"
+                },
+                "symbol": {
+                  "type": "string"
+                },
+                "new_name": {
+                  "type": "string"
+                }
               },
-              "required": ["action", "path"],
+              "required": [
+                "action",
+                "path"
+              ],
               "additionalProperties": false
             }
           }
         },
-        "required": ["queries"],
+        "required": [
+          "queries"
+        ],
         "additionalProperties": false
       }
     }
@@ -482,11 +1186,24 @@
       "parameters": {
         "type": "object",
         "properties": {
-          "path_a": {"type": "string", "description": "first file path"},
-          "path_b": {"type": "string", "description": "second file path"},
-          "context_lines": {"type": "integer", "description": "lines of context around changes (default: 3)", "default": 3}
+          "path_a": {
+            "type": "string",
+            "description": "first file path"
+          },
+          "path_b": {
+            "type": "string",
+            "description": "second file path"
+          },
+          "context_lines": {
+            "type": "integer",
+            "description": "lines of context around changes (default: 3)",
+            "default": 3
+          }
         },
-        "required": ["path_a", "path_b"]
+        "required": [
+          "path_a",
+          "path_b"
+        ]
       }
     }
   },
@@ -498,16 +1215,61 @@
       "parameters": {
         "type": "object",
         "properties": {
-          "pattern": {"type": "string", "description": "Regex pattern to search for. Supports capture groups referenced as $1, $2, etc. in replacement. Default flags: multiline (m) — ^/$ match line boundaries."},
-          "replacement": {"type": "string", "description": "Replacement text. Supports $1, $2, etc. for capture group references. Use empty string for deletion."},
-          "files": {"description": "Target files: a single path, glob pattern, or array of paths/globs (max 50 files).", "oneOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}, "maxItems": 50}]},
-          "include": {"type": "string", "description": "Optional glob filter applied to resolved file paths (e.g. '*.go'). Only files matching this filter are processed."},
-          "if_checksums": {"type": "object", "description": "Optional map of target path to SHA-256 digest from read_file. Files with mismatched digests are rejected with error_code=stale_file before writes.", "additionalProperties": {"type": "string"}},
-          "case_insensitive": {"type": "boolean", "description": "Case-insensitive matching (default: false)", "default": false},
-          "multiline": {"type": "boolean", "description": "Multiline mode: ^/$ match line boundaries (default: true)", "default": true},
-          "dry_run": {"type": "boolean", "description": "Preview all replacements without writing. Returns diffs and match counts per file (default: false)", "default": false}
+          "pattern": {
+            "type": "string",
+            "description": "Regex pattern to search for. Supports capture groups referenced as $1, $2, etc. in replacement. Default flags: multiline (m) \u2014 ^/$ match line boundaries."
+          },
+          "replacement": {
+            "type": "string",
+            "description": "Replacement text. Supports $1, $2, etc. for capture group references. Use empty string for deletion."
+          },
+          "files": {
+            "description": "Target files: a single path, glob pattern, or array of paths/globs (max 50 files).",
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 50
+              }
+            ]
+          },
+          "include": {
+            "type": "string",
+            "description": "Optional glob filter applied to resolved file paths (e.g. '*.go'). Only files matching this filter are processed."
+          },
+          "if_checksums": {
+            "type": "object",
+            "description": "Optional map of target path to SHA-256 digest from read_file. Files with mismatched digests are rejected with error_code=stale_file before writes.",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "case_insensitive": {
+            "type": "boolean",
+            "description": "Case-insensitive matching (default: false)",
+            "default": false
+          },
+          "multiline": {
+            "type": "boolean",
+            "description": "Multiline mode: ^/$ match line boundaries (default: true)",
+            "default": true
+          },
+          "dry_run": {
+            "type": "boolean",
+            "description": "Preview all replacements without writing. Returns diffs and match counts per file (default: false)",
+            "default": false
+          }
         },
-        "required": ["pattern", "replacement", "files"]
+        "required": [
+          "pattern",
+          "replacement",
+          "files"
+        ]
       }
     }
   },
@@ -519,18 +1281,80 @@
       "parameters": {
         "type": "object",
         "properties": {
-          "url": {"type": "string", "description": "Absolute http or https URL to fetch"},
-          "raw": {"type": "boolean", "description": "Fetch raw response content instead of reader extraction", "default": false},
-          "reader": {"type": "string", "enum": ["jina", "defuddle", "auto"], "description": "HTML reader; omitted uses JINN_WEB_READER"},
-          "render": {"type": "string", "enum": ["never", "auto", "always"], "description": "Browser rendering policy for Defuddle extraction", "default": "never"},
-          "render_wait": {"type": "string", "enum": ["load", "networkidle"], "description": "Browser wait strategy when rendering"},
-          "format": {"type": "string", "enum": ["markdown", "headings", "links"], "description": "Content projection", "default": "markdown"},
-          "start_line": {"type": "integer", "minimum": 0, "description": "Zero-based line offset within the projection", "default": 0},
-          "start_line_byte": {"type": "integer", "minimum": 0, "description": "UTF-8 byte offset within start_line; resume with both next cursor fields", "default": 0},
-          "max_bytes": {"type": "integer", "minimum": 0, "description": "Maximum projected UTF-8 bytes; zero is unlimited", "default": 0},
-          "max_lines": {"type": "integer", "minimum": 0, "description": "Maximum projected lines; zero is unlimited", "default": 0}
+          "url": {
+            "type": "string",
+            "description": "Absolute http or https URL to fetch"
+          },
+          "raw": {
+            "type": "boolean",
+            "description": "Fetch raw response content instead of reader extraction",
+            "default": false
+          },
+          "reader": {
+            "type": "string",
+            "enum": [
+              "jina",
+              "defuddle",
+              "auto"
+            ],
+            "description": "HTML reader; omitted uses JINN_WEB_READER"
+          },
+          "render": {
+            "type": "string",
+            "enum": [
+              "never",
+              "auto",
+              "always"
+            ],
+            "description": "Browser rendering policy for Defuddle extraction",
+            "default": "never"
+          },
+          "render_wait": {
+            "type": "string",
+            "enum": [
+              "load",
+              "networkidle"
+            ],
+            "description": "Browser wait strategy when rendering"
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "markdown",
+              "headings",
+              "links"
+            ],
+            "description": "Content projection",
+            "default": "markdown"
+          },
+          "start_line": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Zero-based line offset within the projection",
+            "default": 0
+          },
+          "start_line_byte": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "UTF-8 byte offset within start_line; resume with both next cursor fields",
+            "default": 0
+          },
+          "max_bytes": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Maximum projected UTF-8 bytes; zero is unlimited",
+            "default": 0
+          },
+          "max_lines": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Maximum projected lines; zero is unlimited",
+            "default": 0
+          }
         },
-        "required": ["url"]
+        "required": [
+          "url"
+        ]
       }
     }
   },
@@ -542,15 +1366,48 @@
       "parameters": {
         "type": "object",
         "properties": {
-          "query": {"type": "string", "description": "Search terms"},
-          "max_results": {"type": "integer", "minimum": 1, "maximum": 50, "default": 10, "description": "Maximum normalized results"},
-          "category": {"type": "string", "description": "Provider search category"},
-          "include_domains": {"type": "array", "items": {"type": "string"}, "description": "Restrict results to these hostnames"},
-          "start_published_date": {"type": "string", "description": "RFC3339 or YYYY-MM-DD publication lower bound"},
-          "include_highlights": {"type": "boolean", "default": true, "description": "Include provider highlights when supported"},
-          "highlight_sentences": {"type": "integer", "minimum": 1, "maximum": 10, "default": 3, "description": "Requested number of highlight sentences"}
+          "query": {
+            "type": "string",
+            "description": "Search terms"
+          },
+          "max_results": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50,
+            "default": 10,
+            "description": "Maximum normalized results"
+          },
+          "category": {
+            "type": "string",
+            "description": "Provider search category"
+          },
+          "include_domains": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Restrict results to these hostnames"
+          },
+          "start_published_date": {
+            "type": "string",
+            "description": "RFC3339 or YYYY-MM-DD publication lower bound"
+          },
+          "include_highlights": {
+            "type": "boolean",
+            "default": true,
+            "description": "Include provider highlights when supported"
+          },
+          "highlight_sentences": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10,
+            "default": 3,
+            "description": "Requested number of highlight sentences"
+          }
         },
-        "required": ["query"]
+        "required": [
+          "query"
+        ]
       }
     }
   }

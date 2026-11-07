@@ -185,10 +185,12 @@ func (e *Engine) dispatchListTools(args map[string]interface{}) (*ToolResult, ma
 	if err := validateToolCatalogSchemaParity(); err != nil {
 		return nil, nil, fmt.Errorf("validate tool catalog: %w", err)
 	}
+	_, replaySafe := registeredToolSafety()
 	caps := ToolCapabilities{
 		JinnVersion: ResolveVersion(e.version),
 		Tools:       e.registeredToolNames(),
 		Features:    e.registeredToolFeatures(),
+		ReplaySafe:  replaySafe,
 	}
 	capsJSON, err := json.Marshal(caps)
 	if err != nil {

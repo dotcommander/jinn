@@ -52,7 +52,7 @@ func TestToolRegistryFeatureMap(t *testing.T) {
 		"edit_file":      {"dry_run", "fuzzy_indent", "show_context"},
 		"multi_edit":     {"overlap_detection", "show_context", "dry_run"},
 		"run_shell":      {"risk_classification", "exit_classification", "dry_run", "stdout_stderr_split", "recovery_hints", "compress_output"},
-		"search_files":   {"literal", "context_lines", "format_json", "case_insensitive", "zero_match_reason", "offset", "next_call"},
+		"search_files":   {"literal", "context_lines", "format_json", "case_insensitive", "zero_match_reason", "offset", "next_call", "rows_mode"},
 		"read_file":      {"truncate_strategy", "include_checksum", "tail", "next_call"},
 		"multi_read":     {"per_file_windowing", "partial_success", "next_calls"},
 		"write_file":     {"dry_run"},

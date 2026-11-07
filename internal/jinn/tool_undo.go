@@ -13,7 +13,8 @@ import (
 	"time"
 )
 
-// undoTool dispatches undo sub-actions: list, preview, restore, clear.
+// undoTool dispatches undo sub-actions: list, preview, restore.
+// History is non-deletable recovery evidence: no caller-reachable clear.
 func (e *Engine) undoTool(args map[string]interface{}) (string, error) {
 	action, _ := args["action"].(string)
 	switch action {
@@ -24,11 +25,15 @@ func (e *Engine) undoTool(args map[string]interface{}) (string, error) {
 	case "restore":
 		return e.undoRestore(args)
 	case "clear":
-		return e.undoClear()
+		return "", &ErrWithSuggestion{
+			Err:        errors.New("history is non-deletable recovery evidence"),
+			Suggestion: `history cannot be cleared; list entries and restore a committed snapshot instead`,
+			Code:       ErrCodeInvalidArgs,
+		}
 	default:
 		return "", &ErrWithSuggestion{
 			Err:        fmt.Errorf("unknown action: %q", action),
-			Suggestion: `use action="list", "preview", "restore", or "clear"`,
+			Suggestion: `use action="list", "preview", or "restore"`,
 			Code:       ErrCodeInvalidArgs,
 		}
 	}
@@ -152,7 +157,7 @@ func (e *Engine) undoRestore(args map[string]interface{}) (string, error) {
 	if err != nil {
 		return "", &ErrWithSuggestion{
 			Err:        fmt.Errorf("restore: path security check failed: %w", err),
-			Suggestion: `use action="clear" to reset history if this entry is corrupt`,
+			Suggestion: `list entries and restore a committed snapshot instead`,
 		}
 	}
 	var result string
@@ -225,10 +230,10 @@ func (e *Engine) resolveUndoTarget(ent historyEntry) (string, error) {
 	}
 	resolved, err := e.checkPathForMutation(target)
 	if err != nil {
-		return "", &ErrWithSuggestion{Err: fmt.Errorf("restore: path security check failed: %w", err), Suggestion: `use action="clear" to reset history if this entry is corrupt`}
+		return "", &ErrWithSuggestion{Err: fmt.Errorf("restore: path security check failed: %w", err), Suggestion: `list entries and restore a committed snapshot instead`}
 	}
 	if ent.AbsPath != "" && resolved != ent.AbsPath {
-		return "", &ErrWithSuggestion{Err: fmt.Errorf("restore: legacy path mismatch (index has %q, resolved to %q)", ent.AbsPath, resolved), Suggestion: `use action="clear" to reset history if this entry is corrupt`}
+		return "", &ErrWithSuggestion{Err: fmt.Errorf("restore: legacy path mismatch (index has %q, resolved to %q)", ent.AbsPath, resolved), Suggestion: `list entries and restore a committed snapshot instead`}
 	}
 	return resolved, nil
 }
@@ -242,19 +247,6 @@ func (e *Engine) verifyUndoChecksum(args map[string]interface{}, path string) er
 		return fmt.Errorf("restore: read current target: %w", err)
 	}
 	return verifyIfChecksum(args, path, current, err == nil)
-}
-
-// undoClear deletes all history for this workdir.
-func (e *Engine) undoClear() (string, error) {
-	err := withFileLock(e.mutationLockPath(), func() error {
-		return withFileLock(e.historyLockPath(), func() error {
-			return os.RemoveAll(e.historyDir())
-		})
-	})
-	if err != nil {
-		return "", fmt.Errorf("undo clear: %w", err)
-	}
-	return "cleared history for this workdir", nil
 }
 
 // findEntry looks up a snapshot entry by exact ID or unambiguous ID prefix.
@@ -301,13 +293,13 @@ func (e *Engine) readBlob(ent historyEntry) ([]byte, error) {
 	blobPath := ent.BlobPath
 	if ent.BlobID != "" {
 		if filepath.Base(ent.BlobID) != ent.BlobID {
-			return nil, &ErrWithSuggestion{Err: fmt.Errorf("invalid blob id for snapshot %s", ent.ID), Suggestion: `use action="clear" to reset history`}
+			return nil, &ErrWithSuggestion{Err: fmt.Errorf("invalid blob id for snapshot %s", ent.ID), Suggestion: `list entries and restore a committed snapshot instead`}
 		}
 		blobPath = filepath.Join(e.blobsDir(), ent.BlobID)
 	} else {
 		clean := filepath.Clean(blobPath)
 		if filepath.Dir(clean) != filepath.Clean(e.blobsDir()) || filepath.Base(clean) == "." {
-			return nil, &ErrWithSuggestion{Err: fmt.Errorf("invalid legacy blob path for snapshot %s", ent.ID), Suggestion: `use action="clear" to reset history`}
+			return nil, &ErrWithSuggestion{Err: fmt.Errorf("invalid legacy blob path for snapshot %s", ent.ID), Suggestion: `list entries and restore a committed snapshot instead`}
 		}
 		blobPath = clean
 	}
@@ -315,7 +307,7 @@ func (e *Engine) readBlob(ent historyEntry) ([]byte, error) {
 	if !strings.HasPrefix(blobPath, blobsRoot) {
 		return nil, &ErrWithSuggestion{
 			Err:        fmt.Errorf("blob path outside history store for id=%s: %q", ent.ID, ent.BlobPath),
-			Suggestion: `use action="clear" to reset history`,
+			Suggestion: `list entries and restore a committed snapshot instead`,
 		}
 	}
 	historyRoot, err := os.OpenRoot(e.historyDir())
@@ -329,25 +321,25 @@ func (e *Engine) readBlob(ent historyEntry) ([]byte, error) {
 	}
 	file, err := historyRoot.Open(relBlob)
 	if err != nil {
-		return nil, &ErrWithSuggestion{Err: fmt.Errorf("blob read failed for id=%s: %w", ent.ID, err), Suggestion: `use action="clear" to reset history`}
+		return nil, &ErrWithSuggestion{Err: fmt.Errorf("blob read failed for id=%s: %w", ent.ID, err), Suggestion: `list entries and restore a committed snapshot instead`}
 	}
 	defer func() { _ = file.Close() }()
 	info, err := file.Stat()
 	if err != nil || !info.Mode().IsRegular() || info.Size() > historyMaxBlobBytes+1<<20 {
-		return nil, &ErrWithSuggestion{Err: fmt.Errorf("invalid blob file for id=%s", ent.ID), Suggestion: `use action="clear" to reset history`}
+		return nil, &ErrWithSuggestion{Err: fmt.Errorf("invalid blob file for id=%s", ent.ID), Suggestion: `list entries and restore a committed snapshot instead`}
 	}
 	encoded, err := io.ReadAll(io.LimitReader(file, historyMaxBlobBytes+1<<20))
 	if err != nil {
 		return nil, &ErrWithSuggestion{
 			Err:        fmt.Errorf("blob read failed for id=%s: %w", ent.ID, err),
-			Suggestion: `use action="clear" to reset history`,
+			Suggestion: `list entries and restore a committed snapshot instead`,
 		}
 	}
 	data, err := decodeBlob(encoded)
 	if err != nil {
 		return nil, &ErrWithSuggestion{
 			Err:        fmt.Errorf("blob decode failed for id=%s: %w", ent.ID, err),
-			Suggestion: `use action="clear" to reset history`,
+			Suggestion: `list entries and restore a committed snapshot instead`,
 		}
 	}
 	h := sha256.Sum256(data)
@@ -355,7 +347,7 @@ func (e *Engine) readBlob(ent historyEntry) ([]byte, error) {
 	if got != ent.BlobHash {
 		return nil, &ErrWithSuggestion{
 			Err:        fmt.Errorf("blob integrity check failed for id=%s (got %s, want %s)", ent.ID, got, ent.BlobHash),
-			Suggestion: `use action="clear" to reset history`,
+			Suggestion: `list entries and restore a committed snapshot instead`,
 		}
 	}
 	return data, nil

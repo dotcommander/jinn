@@ -84,15 +84,12 @@ func TestUndoRestore_AbsPathMismatch(t *testing.T) {
 	}
 }
 
-// TestUndoClear_Empty verifies clear on empty history is a no-op success.
-func TestUndoClear_Empty(t *testing.T) {
+// TestUndoClear_Rejected verifies history is non-deletable: clear is rejected.
+func TestUndoClear_Rejected(t *testing.T) {
 	e, _ := undoEngine(t)
 
-	result, err := e.undoTool(args("action", "clear"))
-	if err != nil {
-		t.Fatalf("clear empty: %v", err)
-	}
-	if !strings.Contains(result, "cleared") {
-		t.Errorf("expected 'cleared' in result, got: %q", result)
+	_, err := e.undoTool(args("action", "clear"))
+	if err == nil || !strings.Contains(err.Error(), "non-deletable") {
+		t.Fatalf("clear must be rejected as non-deletable, got: %v", err)
 	}
 }

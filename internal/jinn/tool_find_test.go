@@ -209,6 +209,24 @@ func TestFindFiles_Dispatch(t *testing.T) {
 	}
 }
 
+func TestFindFiles_IncludeMeta(t *testing.T) {
+	t.Parallel()
+	e, dir := testEngine(t)
+	writeTestFile(t, dir, "hello.go", "package main")
+
+	result, err := e.findFiles(context.Background(), args("pattern", "*.go", "include_meta", true))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	res := parseFindResult(t, result)
+	if len(res.Entries) != 1 {
+		t.Fatalf("expected 1 entry, got %+v", res.Entries)
+	}
+	if res.Entries[0].Path != "hello.go" || res.Entries[0].Type != "file" || res.Entries[0].Size <= 0 || res.Entries[0].Mtime == "" {
+		t.Errorf("bad entry metadata: %+v", res.Entries[0])
+	}
+}
+
 // Ensure the import is used.
 var _ = json.Marshal
 var _ = fmt.Sprintf

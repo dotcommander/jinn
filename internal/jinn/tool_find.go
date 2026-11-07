@@ -31,16 +31,26 @@ var findExcludeSet = func() map[string]bool {
 	return m
 }()
 
+// findFileEntry is the consolidated discovery record: name plus metadata so
+// a stat_file call is unnecessary after find_files with include_meta=true.
+type findFileEntry struct {
+	Path  string `json:"path"`
+	Type  string `json:"type"`
+	Size  int64  `json:"size"`
+	Mtime string `json:"mtime"`
+}
+
 type findFilesResult struct {
-	Files           []string  `json:"files"`
-	Truncated       bool      `json:"truncated"`
-	TotalCount      int       `json:"total_count"`
-	TotalCountExact bool      `json:"total_count_exact"`
-	LimitUsed       int       `json:"limit_used"`
-	Offset          int       `json:"offset"`
-	Backend         string    `json:"backend"`
-	Hint            string    `json:"hint,omitempty"`
-	NextCall        *NextCall `json:"next_call,omitempty"`
+	Files           []string        `json:"files"`
+	Entries         []findFileEntry `json:"entries,omitempty"`
+	Truncated       bool            `json:"truncated"`
+	TotalCount      int             `json:"total_count"`
+	TotalCountExact bool            `json:"total_count_exact"`
+	LimitUsed       int             `json:"limit_used"`
+	Offset          int             `json:"offset"`
+	Backend         string          `json:"backend"`
+	Hint            string          `json:"hint,omitempty"`
+	NextCall        *NextCall       `json:"next_call,omitempty"`
 }
 
 func (e *Engine) findFiles(ctx context.Context, args map[string]interface{}) (string, error) {
@@ -63,6 +73,24 @@ func (e *Engine) findFiles(ctx context.Context, args map[string]interface{}) (st
 	result := findFilesResult{
 		Files: files, Truncated: !exact || total > offset+len(files), TotalCount: total,
 		TotalCountExact: exact, LimitUsed: limit, Offset: offset, Backend: "native",
+	}
+	if boolArg(args, "include_meta") {
+		for _, f := range files {
+			entry := findFileEntry{Path: f, Type: "file"}
+			if resolved, resErr := e.checkPath(f); resErr == nil {
+				if info, statErr := e.rootedStat(resolved); statErr == nil {
+					entry.Size = info.Size()
+					entry.Mtime = info.ModTime().UTC().Format(time.RFC3339Nano)
+					switch {
+					case info.Mode()&fs.ModeSymlink != 0:
+						entry.Type = "symlink"
+					case info.IsDir():
+						entry.Type = "directory"
+					}
+				}
+			}
+			result.Entries = append(result.Entries, entry)
+		}
 	}
 	if result.Truncated {
 		result.Hint = "TRUNCATED: use a more specific pattern or increase limit"
