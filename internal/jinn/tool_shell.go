@@ -4,14 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"os"
-	"os/exec"
-	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
-	"time"
 )
 
 // shellAllowList is the set of environment variables passed to shell subprocesses.
@@ -36,280 +32,6 @@ import (
 //	    like XDG_CONFIG_HOME, XDG_CACHE_HOME, XDG_DATA_HOME, XDG_RUNTIME_DIR are
 //	    omitted because they are not required for correctness and can leak host
 //	    paths / state into the subprocess. Omit unless a concrete need is proven.
-var shellAllowList = []string{"HOME", "GOMODCACHE", "LANG", "LC_ALL", "TERM", "TZ", "USER", "LOGNAME", "TMPDIR", "SHELL"}
-
-// subprocessEnv returns a minimal environment for subprocess tools, preventing
-// accidental leakage of host secrets (API keys, credentials). Extra values are
-// explicit per-tool overlays, such as a dedicated Go build cache.
-func subprocessEnv(extra map[string]string) []string {
-	env := []string{"PATH=/usr/bin:/bin:/usr/sbin:/sbin"}
-	for _, key := range shellAllowList {
-		if v, ok := os.LookupEnv(key); ok {
-			env = append(env, key+"="+v)
-		}
-	}
-	for key, value := range extra {
-		env = append(env, key+"="+value)
-	}
-	return env
-}
-
-func (e *Engine) subprocessEnv() []string {
-	env := subprocessEnv(nil)
-	if len(e.execPath) == 0 {
-		return env
-	}
-	for i, value := range env {
-		if strings.HasPrefix(value, "PATH=") {
-			env[i] = "PATH=" + strings.Join(e.execPath, string(os.PathListSeparator))
-			break
-		}
-	}
-	return env
-}
-
-// waitExitCode waits for c and returns its exit code: the process exit code for
-// a normal exit error, or 1 for any non-ExitError failure.
-func waitExitCode(c *exec.Cmd) int {
-	if err := c.Wait(); err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			return exitErr.ExitCode()
-		}
-		return 1
-	}
-	return 0
-}
-
-const shellCanceledExitCode = 130
-
-type shellRunResult struct {
-	exitCode        int
-	canceled        bool
-	resourceLimited bool
-}
-
-func runWithTimeoutControl(ctx context.Context, group *shellProcessGroup, timeout int, resourceLimit <-chan struct{}, interrupt func()) shellRunResult {
-	if err := ctx.Err(); err != nil {
-		return shellRunResult{exitCode: shellCanceledExitCode, canceled: true}
-	}
-	if err := group.start(); err != nil {
-		return shellRunResult{exitCode: 1}
-	}
-	killGroup := func() {
-		group.kill()
-		if interrupt != nil {
-			interrupt()
-		}
-	}
-	done := make(chan int, 1)
-	go func() { done <- waitExitCode(group.command) }()
-
-	timer := time.NewTimer(time.Duration(timeout) * time.Second)
-	defer timer.Stop()
-
-	select {
-	case exitCode := <-done:
-		return shellRunResult{exitCode: exitCode}
-	case <-timer.C:
-		killGroup()
-		<-done
-		return shellRunResult{exitCode: 124} // preserves "timed out after N seconds" message
-	case <-ctx.Done():
-		killGroup()
-		<-done
-		return shellRunResult{exitCode: shellCanceledExitCode, canceled: true}
-	case <-resourceLimit:
-		killGroup()
-		<-done
-		return shellRunResult{exitCode: 1, resourceLimited: true}
-	}
-}
-
-func killCommandGroup(group *shellProcessGroup, interrupt func()) {
-	group.kill()
-	if interrupt != nil {
-		interrupt()
-	}
-}
-
-// shapeShellOutput compresses, truncates and frames captured output, appending a
-// spill/truncation annotation and a timeout note (when exitCode is 124).
-func shapeShellOutput(capture *shellOutputCapture, cmd string, exitCode, timeout int) string {
-	raw := collapseRepeatedLines(capture.String())
-	raw = collapseBlankLines(raw, 3)
-	// Apply command-aware compression before framing (compress_shell.go dispatches on
-	// the last pipeline segment's verb, then falls through to the generic strategy chain).
-	raw = compressShellOutput(raw, cmd)
-
-	// Apply tail truncation with line + byte limits (matching pi conventions).
-	content, trunc := truncateTailDetailed(raw, DefaultMaxLines, DefaultMaxBytes)
-	if capture.Truncated() {
-		trunc.TotalBytes = capture.TotalBytes()
-		trunc.TotalLines = capture.TotalLines()
-	}
-
-	if capture.Truncated() || trunc.Truncated {
-		spill := ""
-		if tmpPath := capture.EnsureSpill(); tmpPath != "" {
-			spill = ". Full output: " + tmpPath
-		}
-		content += fmt.Sprintf(
-			"\n\n[Showing %d of %d lines (%s of %s)%s]",
-			trunc.OutputLines, trunc.TotalLines,
-			formatSize(trunc.OutputBytes), formatSize(trunc.TotalBytes),
-			spill,
-		)
-	}
-
-	if exitCode == 124 {
-		content += fmt.Sprintf("\n\nCommand timed out after %d seconds", timeout)
-	}
-	return content
-}
-
-// shellExecution carries the post-run outputs runShell needs to build its
-// result envelope and meta map: the shaped/framed content, the process exit
-// code, and the separately-buffered stdout/stderr (stderr also feeds hint matching).
-type shellExecution struct {
-	content         string
-	exitCode        int
-	canceled        bool
-	resourceLimited bool
-	stdout          string
-	stderr          string
-	durationMs      int64
-}
-
-// executeShellCommand sets up the bash subprocess (minimal env, process group,
-// bounded capture + stdout/stderr buffers), runs it under the timeout, and shapes
-// the captured output. It covers the execution half of runShell; classification,
-// hint matching and meta assembly stay in the caller. ctx threads to the subprocess
-// via explicit cancellation handling; a nil ctx is a caller bug and panics.
-//
-//nolint:funlen,gocyclo // process setup, capture wiring, deadline drainage, and cleanup share cancellation ownership.
-func (e *Engine) executeShellCommand(ctx context.Context, cmd string, timeout int) shellExecution {
-	// Always use a process group so SIGKILL reaches background processes too.
-	// Both timeout and parent cancellation must kill -pgid, not only bash.
-	// nil ctx is a caller bug — guard with panic so it surfaces in tests rather
-	// than masking parent cancellation in production.
-	if ctx == nil {
-		panic("runShell: nil ctx")
-	}
-	runDir, err := os.MkdirTemp("", "jinn-run-")
-	if err != nil {
-		return shellExecution{exitCode: 1, stderr: err.Error()}
-	}
-	defer func() { _ = os.RemoveAll(runDir) }()
-	homeDir := filepath.Join(runDir, "home")
-	tmpDir := filepath.Join(runDir, "tmp")
-	if mkdirErr := os.MkdirAll(homeDir, 0o700); mkdirErr != nil {
-		return shellExecution{exitCode: 1, stderr: mkdirErr.Error()}
-	}
-	if mkdirErr := os.MkdirAll(tmpDir, 0o700); mkdirErr != nil {
-		return shellExecution{exitCode: 1, stderr: mkdirErr.Error()}
-	}
-	argv := e.shellArgv(cmd, runDir, homeDir, tmpDir)
-	c := exec.CommandContext(context.WithoutCancel(ctx), argv[0], argv[1:]...) //nolint:gosec // explicit policy-gated shell execution
-	group, err := prepareShellProcessGroup(c)
-	if err != nil {
-		return shellExecution{exitCode: 1, stderr: err.Error()}
-	}
-	defer group.close()
-	c.Dir = e.workDir
-
-	capture := newShellOutputCapture(1 << 20) // 1 MB response tail + bounded spill on overflow
-	defer capture.Close()
-	outBuf := &boundedWriter{limit: 1 << 20} // 1 MB stdout meta buffer
-	errBuf := &boundedWriter{limit: 1 << 20} // 1 MB stderr meta buffer
-	c.Env = e.shellProcessEnv(homeDir, tmpDir)
-	stdoutR, stdoutW, err := os.Pipe()
-	if err != nil {
-		return shellExecution{exitCode: 1, stderr: err.Error()}
-	}
-	defer func() { _ = stdoutR.Close() }()
-	defer func() { _ = stdoutW.Close() }()
-	stderrR, stderrW, err := os.Pipe()
-	if err != nil {
-		return shellExecution{exitCode: 1, stderr: err.Error()}
-	}
-	defer func() { _ = stderrR.Close() }()
-	defer func() { _ = stderrW.Close() }()
-	c.Stdout = stdoutW
-	c.Stderr = stderrW
-	copyDone := make(chan struct{}, 2)
-	go func() {
-		_, _ = io.Copy(io.MultiWriter(capture, outBuf), stdoutR)
-		copyDone <- struct{}{}
-	}()
-	go func() {
-		_, _ = io.Copy(io.MultiWriter(capture, errBuf), stderrR)
-		copyDone <- struct{}{}
-	}()
-	interrupt := func() {
-		_ = stdoutR.Close()
-		_ = stderrR.Close()
-		_ = stdoutW.Close()
-		_ = stderrW.Close()
-	}
-
-	start := time.Now()
-	run := runWithTimeoutControl(ctx, group, timeout, capture.LimitReached(), interrupt)
-	_ = stdoutW.Close()
-	_ = stderrW.Close()
-	drained := make(chan struct{})
-	go func() {
-		<-copyDone
-		<-copyDone
-		close(drained)
-	}()
-	// bash can exit while a background descendant still owns its pipes. Keep
-	// the same deadline authority until those pipes drain, otherwise a command
-	// such as `sleep 30 & echo done` would outlive its requested timeout.
-	if run.exitCode != 124 && !run.canceled && !run.resourceLimited {
-		remaining := time.Duration(timeout)*time.Second - time.Since(start)
-		if remaining < 0 {
-			remaining = 0
-		}
-		timer := time.NewTimer(remaining)
-		select {
-		case <-drained:
-		case <-timer.C:
-			killCommandGroup(group, interrupt)
-			run.exitCode = 124
-			<-drained
-		case <-ctx.Done():
-			killCommandGroup(group, interrupt)
-			run.exitCode = shellCanceledExitCode
-			run.canceled = true
-			<-drained
-		case <-capture.LimitReached():
-			killCommandGroup(group, interrupt)
-			run.exitCode = 1
-			run.resourceLimited = true
-			<-drained
-		}
-		if !timer.Stop() {
-			select {
-			case <-timer.C:
-			default:
-			}
-		}
-	} else {
-		<-drained
-	}
-	content := shapeShellOutput(capture, cmd, run.exitCode, timeout)
-
-	return shellExecution{
-		content:         content,
-		exitCode:        run.exitCode,
-		canceled:        run.canceled,
-		resourceLimited: run.resourceLimited || capture.ResourceLimited(),
-		stdout:          outBuf.String(),
-		stderr:          errBuf.String(),
-		durationMs:      time.Since(start).Milliseconds(),
-	}
-}
 
 func (e *Engine) shellProcessEnv(homeDir, tmpDir string) []string {
 	if e.shellMode == ShellModeUnsafe {
@@ -400,22 +122,22 @@ func (e *Engine) runShell(ctx context.Context, args map[string]interface{}) (str
 			// Explicit allow: proceeds to the classifier and execution below.
 		case launchDeny:
 			return "", map[string]any{
-				"risk":          riskLevel.String(),
-				"launch_policy": string(decision),
-			}, &ErrWithSuggestion{
-				Err:        fmt.Errorf("blocked by launch policy: %s", cmd),
-				Suggestion: "remove or change the deny rule in the global launch policy file, or use a different command",
-				Code:       ErrCodeCommandBlocked,
-			}
+					"risk":          riskLevel.String(),
+					"launch_policy": string(decision),
+				}, &ErrWithSuggestion{
+					Err:        fmt.Errorf("blocked by launch policy: %s", cmd),
+					Suggestion: "remove or change the deny rule in the global launch policy file, or use a different command",
+					Code:       ErrCodeCommandBlocked,
+				}
 		case launchAsk:
 			return "", map[string]any{
-				"risk":          riskLevel.String(),
-				"launch_policy": string(decision),
-			}, &ErrWithSuggestion{
-				Err:        fmt.Errorf("launch policy requires confirmation for: %s", cmd),
-				Suggestion: "add an allow rule for this exact command to the global launch policy file, or run it through a host that can confirm",
-				Code:       ErrCodeCommandBlocked,
-			}
+					"risk":          riskLevel.String(),
+					"launch_policy": string(decision),
+				}, &ErrWithSuggestion{
+					Err:        fmt.Errorf("launch policy requires confirmation for: %s", cmd),
+					Suggestion: "add an allow rule for this exact command to the global launch policy file, or run it through a host that can confirm",
+					Code:       ErrCodeCommandBlocked,
+				}
 		}
 	}
 	if boolArg(args, "dry_run") {
@@ -436,12 +158,12 @@ func (e *Engine) runShell(ctx context.Context, args map[string]interface{}) (str
 	if riskLevel == RiskDangerous {
 		if force, _ := args["force"].(bool); !force {
 			return "", map[string]any{
-				"risk": riskLevel.String(),
-			}, &ErrWithSuggestion{
-				Err:        fmt.Errorf("blocked by risk classifier: %s — %s", riskLevel, riskReason),
-				Suggestion: `pass force:true in args to override, or use a less-destructive command`,
-				Code:       ErrCodeCommandBlocked,
-			}
+					"risk": riskLevel.String(),
+				}, &ErrWithSuggestion{
+					Err:        fmt.Errorf("blocked by risk classifier: %s — %s", riskLevel, riskReason),
+					Suggestion: `pass force:true in args to override, or use a less-destructive command`,
+					Code:       ErrCodeCommandBlocked,
+				}
 		}
 	}
 
