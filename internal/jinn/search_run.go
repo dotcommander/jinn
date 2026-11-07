@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
-	"regexp"
 	"time"
 )
 
@@ -69,13 +68,8 @@ func (e *Engine) runGrep(ctx context.Context, cmd string, cmdArgs []string) (gre
 	return grepResult{stdout: out, stderr: errBuf.String(), exitCode: exitCode}, nil
 }
 
-// classifyZeroMatch determines why a grep returned zero results.
-func (e *Engine) classifyZeroMatch(pattern, searchPath string, literal bool) string {
-	if !literal {
-		if _, err := regexp.Compile(pattern); err != nil {
-			return "invalid_regex"
-		}
-	}
+// classifyZeroMatch determines why a validated search returned zero results.
+func (e *Engine) classifyZeroMatch(searchPath string) string {
 	resolved, err := e.checkPath(searchPath)
 	if err != nil {
 		return "path_not_found"

@@ -2,6 +2,8 @@ package jinn
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,6 +22,48 @@ func (c *cancelAfterErrChecksContext) Err() error {
 		return context.Canceled
 	}
 	return nil
+}
+
+func TestPlanJSONPathEvaluationAcrossNodes(t *testing.T) {
+	t.Parallel()
+	e, _ := testEngine(t)
+	condition := func(count int) Condition {
+		return Condition{Kind: "jsonPath", Path: "count", Op: "eq", Value: count}
+	}
+	command := func(count int) string {
+		data, err := json.Marshal(map[string]int{"count": count})
+		if err != nil {
+			t.Fatalf("marshal fixture: %v", err)
+		}
+		return fmt.Sprintf("printf '%%s' '%s'", data)
+	}
+	plan := &PlanTree{Root: "first", Nodes: []PlanNode{
+		{
+			ID: "first", Commands: []PlanOp{{Shell: command(2)}},
+			Expect: &Condition{Kind: "jsonPath", Path: "count", Op: "eq", Value: 2},
+			Edges: []PlanEdge{
+				{When: condition(1), To: "wrong"},
+				{When: condition(2), To: "next"},
+			},
+		},
+		{
+			ID: "next", Commands: []PlanOp{{Shell: command(3)}},
+			Expect: &Condition{Kind: "jsonPath", Path: "count", Op: "eq", Value: 3},
+			Edges: []PlanEdge{
+				{When: condition(2), To: "wrong"},
+				{When: condition(3), To: "leaf"},
+			},
+		},
+		{ID: "wrong", Commands: []PlanOp{{Tool: "list_dir"}}},
+		{ID: "leaf", Commands: []PlanOp{{Tool: "list_dir"}}},
+	}}
+	result, err := e.runPlanTree(context.Background(), plan)
+	if err != nil {
+		t.Fatalf("runPlanTree: %v", err)
+	}
+	if result.StoppedReason != StopLeaf || strings.Join(result.PathTaken, ",") != "first,next,leaf" || result.EdgesEvaluated != 4 || result.EdgesMatched != 2 {
+		t.Fatalf("routing = %+v, want first,next,leaf with four evaluated and two matched edges", result)
+	}
 }
 
 func TestRunPlanTree(t *testing.T) {

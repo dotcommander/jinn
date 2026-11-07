@@ -245,6 +245,50 @@ func TestValidatePlanRejectsUnsafeShapes(t *testing.T) {
 	}
 }
 
+func TestPlanNodeJSONEvaluationCache(t *testing.T) {
+	t.Parallel()
+	e, _ := testEngine(t)
+	cond := Condition{Kind: "jsonPath", Path: "count", Op: "eq", Value: 2}
+	jsonText := func(v any) string {
+		data, err := json.Marshal(v)
+		if err != nil {
+			t.Fatalf("marshal fixture: %v", err)
+		}
+		return string(data)
+	}
+	for _, tt := range []struct {
+		name string
+		last PlanOpResult
+		want bool
+	}{
+		{"stdout precedence", PlanOpResult{Stdout: jsonText(map[string]int{"count": 2}), Result: jsonText(map[string]int{"count": 9})}, true},
+		{"result fallback", PlanOpResult{Result: jsonText(map[string]int{"count": 2})}, true},
+		{"nonmatching value", PlanOpResult{Result: jsonText(map[string]int{"count": 3})}, false},
+		{"malformed stdout", PlanOpResult{Stdout: `{`, Result: jsonText(map[string]int{"count": 2})}, false},
+		{"missing", PlanOpResult{Result: jsonText(map[string]int{})}, false},
+		{"null", PlanOpResult{Result: jsonText(nil)}, false},
+		{"array", PlanOpResult{Result: jsonText([]int{})}, false},
+		{"number", PlanOpResult{Result: jsonText(2)}, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			ev := &planNodeEvaluation{last: tt.last}
+			if ev.jsonDecoded {
+				t.Fatal("decoded before jsonPath")
+			}
+			for range 2 {
+				got, err := e.evaluateNodeCondition(ev, cond)
+				if err != nil || got != tt.want || !ev.jsonDecoded {
+					t.Fatalf("jsonPath = %v, decoded = %v, err = %v; want %v", got, ev.jsonDecoded, err, tt.want)
+				}
+			}
+			if got, err := e.evaluateNodeCondition(ev, Condition{Kind: "jsonPath", Path: "count", Op: "eq", Value: 2, Negate: true}); err != nil || got != (tt.name == "nonmatching value") {
+				t.Fatalf("negated jsonPath = %v, err = %v", got, err)
+			}
+		})
+	}
+}
+
 func TestPlanShellCommandPreservesDangerousClassification(t *testing.T) {
 	t.Parallel()
 	risk, _ := ClassifyCommand(planShellCommand(t.TempDir(), "rm disposable.txt"))

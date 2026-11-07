@@ -40,6 +40,10 @@ var probes = []probe{
 }
 
 func (e *Engine) detectProject(args map[string]interface{}) (string, error) {
+	return e.detectProjectWithReader(args, e.readProjectMarker)
+}
+
+func (e *Engine) detectProjectWithReader(args map[string]interface{}, readMarker func(string, string) ([]byte, bool)) (string, error) {
 	detectPath := "."
 	if p, ok := args["path"].(string); ok && p != "" {
 		detectPath = p
@@ -59,12 +63,18 @@ func (e *Engine) detectProject(args map[string]interface{}) (string, error) {
 	}
 
 	result := projectInfo{}
+	var packageData []byte
+	var packageOK bool
 	for _, p := range probes {
-		e.probeMarker(resolved, p, &result)
+		data, ok := readMarker(resolved, p.configFile)
+		if p.configFile == "package.json" {
+			packageData, packageOK = data, ok
+		}
+		probeMarker(p, data, ok, &result)
 	}
 
 	e.applyTypeScriptSignal(resolved, &result)
-	e.applyPackageScripts(resolved, &result)
+	applyPackageScripts(packageData, packageOK, &result)
 	e.applyJustfile(resolved, &result)
 	e.applyFrameworks(resolved, &result)
 
@@ -75,9 +85,8 @@ func (e *Engine) detectProject(args map[string]interface{}) (string, error) {
 	return string(out), nil
 }
 
-// probeMarker records a marker file's signals when it exists in dir.
-func (e *Engine) probeMarker(dir string, p probe, result *projectInfo) {
-	data, ok := e.readProjectMarker(dir, p.configFile)
+// probeMarker records a marker file's signals when it exists.
+func probeMarker(p probe, data []byte, ok bool, result *projectInfo) {
 	if !ok || !validProjectMarker(p.configFile, data) {
 		return
 	}
@@ -104,9 +113,8 @@ func (e *Engine) applyTypeScriptSignal(dir string, result *projectInfo) {
 	}
 }
 
-// applyPackageScripts reads package.json scripts and overrides build/test/lint.
-func (e *Engine) applyPackageScripts(dir string, result *projectInfo) {
-	data, ok := e.readProjectMarker(dir, "package.json")
+// applyPackageScripts uses the probed package.json to override build/test/lint.
+func applyPackageScripts(data []byte, ok bool, result *projectInfo) {
 	if !ok {
 		return
 	}

@@ -198,7 +198,8 @@ func enrichMCPLogRecord(record *mcpLogRecord, req *server.Request, result protoc
 	if !ok || call.StructuredContent == nil {
 		return
 	}
-	if data, err := json.Marshal(call.StructuredContent); err == nil {
+	data, err := json.Marshal(call.StructuredContent)
+	if err == nil {
 		record.ResultBytes = len(data)
 	}
 	switch output := call.StructuredContent.(type) {
@@ -221,15 +222,13 @@ func enrichMCPLogRecord(record *mcpLogRecord, req *server.Request, result protoc
 		retryable := output.Retryable
 		record.Retryable = &retryable
 	default:
-		enrichMCPLogMap(record, call.StructuredContent)
+		if err == nil {
+			enrichMCPLogMap(record, data)
+		}
 	}
 }
 
-func enrichMCPLogMap(record *mcpLogRecord, value any) {
-	data, err := json.Marshal(value)
-	if err != nil {
-		return
-	}
+func enrichMCPLogMap(record *mcpLogRecord, data []byte) {
 	var object map[string]any
 	if json.Unmarshal(data, &object) != nil {
 		return

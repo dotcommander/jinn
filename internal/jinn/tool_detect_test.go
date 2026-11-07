@@ -150,6 +150,63 @@ func TestDetectProject_TypeScript(t *testing.T) {
 	}
 }
 
+func TestDetectProject_PackageReadOncePerCall(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name    string
+		initial string
+	}{
+		{name: "present", initial: `{"scripts":{"build":"tsc"}}`},
+		{name: "absent"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			e, dir := testEngine(t)
+			if tc.initial != "" {
+				writeTestFile(t, dir, "package.json", tc.initial)
+			}
+			attempts := 0
+			readMarker := func(dir, name string) ([]byte, bool) {
+				if name == "package.json" {
+					attempts++
+				}
+				return e.readProjectMarker(dir, name)
+			}
+			detect := func() projectInfo {
+				t.Helper()
+				attempts = 0
+				result, err := e.detectProjectWithReader(args(), readMarker)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if attempts != 1 {
+					t.Fatalf("package.json open attempts = %d, want 1", attempts)
+				}
+				var info projectInfo
+				if err := json.Unmarshal([]byte(result), &info); err != nil {
+					t.Fatal(err)
+				}
+				return info
+			}
+
+			first := detect()
+			if tc.initial == "" {
+				if len(first.Languages) != 0 || first.BuildTool != "" {
+					t.Fatalf("absent package.json: %+v", first)
+				}
+			} else if first.BuildTool != "npm run build" || len(first.Languages) != 1 || first.Languages[0] != "JavaScript" {
+				t.Fatalf("initial package.json: %+v", first)
+			}
+
+			writeTestFile(t, dir, "package.json", `{"scripts":{"test":"vitest"}}`)
+			second := detect()
+			if second.BuildTool != "npm" || second.TestCommand != "npm run test" || len(second.Languages) != 1 || second.Languages[0] != "JavaScript" {
+				t.Fatalf("updated package.json: %+v", second)
+			}
+		})
+	}
+}
+
 func TestDetectProject_Python(t *testing.T) {
 	t.Parallel()
 	e, dir := testEngine(t)

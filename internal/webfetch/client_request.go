@@ -123,7 +123,14 @@ func (c *Client) do(ctx context.Context, method, rawURL string, headers http.Hea
 			continue
 		}
 
-		responseBody, readErr := readBounded(resp.Body, maxBodyBytes)
+		retrying := shouldRetry(resp.StatusCode) && attempt < attempts
+		var responseBody []byte
+		var readErr error
+		if retrying {
+			readErr = drainBounded(resp.Body, maxBodyBytes)
+		} else {
+			responseBody, readErr = readBounded(resp.Body, maxBodyBytes)
+		}
 		closeErr := resp.Body.Close()
 		if readErr != nil {
 			if errors.Is(readErr, ErrTooLarge) {
@@ -135,7 +142,7 @@ func (c *Client) do(ctx context.Context, method, rawURL string, headers http.Hea
 			return httpResponse{}, fmt.Errorf("close %s response: %w", target, closeErr)
 		}
 
-		if shouldRetry(resp.StatusCode) && attempt < attempts {
+		if retrying {
 			if err := waitForRetry(ctx, retryDelay(attempt, resp)); err != nil {
 				return httpResponse{}, codeContextError(err)
 			}

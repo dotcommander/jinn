@@ -262,12 +262,13 @@ func (e *Engine) runPlanTree(ctx context.Context, plan *PlanTree) (result *PlanR
 			return newPlanRunResult(transcript, pathTaken, opCtx.depth+depth, StopMutationBlocked, edgesEvaluated, edgesMatched, executedNodes, executedOperations), nil
 		}
 
+		evaluation := planNodeEvaluation{last: lastOpResult}
 		// Stage-boundary gate: expect must hold on this node's last op result
 		// before any edge is evaluated. A failed expectation stops the run
 		// with the offending value recorded — the malformed result never
 		// reaches edge routing, so it cannot silently misroute.
 		if node.Expect != nil {
-			expectOK, expectErr := planEngine.evaluateCondition(lastOpResult, *node.Expect)
+			expectOK, expectErr := planEngine.evaluateNodeCondition(&evaluation, *node.Expect)
 			if expectErr != nil {
 				return newPlanRunResult(transcript, pathTaken, opCtx.depth+depth, StopError, edgesEvaluated, edgesMatched, executedNodes, executedOperations), nil
 			}
@@ -284,7 +285,7 @@ func (e *Engine) runPlanTree(ctx context.Context, plan *PlanTree) (result *PlanR
 				return newPlanRunResult(transcript, pathTaken, opCtx.depth+depth, StopAborted, edgesEvaluated, edgesMatched, executedNodes, executedOperations), nil
 			}
 			edgesEvaluated++
-			ok, err := planEngine.evaluateCondition(lastOpResult, edge.When)
+			ok, err := planEngine.evaluateNodeCondition(&evaluation, edge.When)
 			if err != nil {
 				return newPlanRunResult(transcript, pathTaken, opCtx.depth+depth, StopError, edgesEvaluated, edgesMatched, executedNodes, executedOperations), nil
 			}

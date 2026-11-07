@@ -155,21 +155,69 @@ func TestSearchFiles_NoMatch(t *testing.T) {
 	e, dir := testEngine(t)
 	writeTestFile(t, dir, "empty.go", "package main\n")
 
+	text, err := e.searchFiles(args("pattern", "ZZZ_NO_SUCH_PATTERN_ZZZ"))
+	if err != nil {
+		t.Fatalf("text search: %v", err)
+	}
+	if !strings.Contains(text, "[no matches: pattern_matched_nothing]") {
+		t.Errorf("unexpected text zero-match reason: %s", text)
+	}
+
 	result, err := e.searchFiles(args("pattern", "ZZZ_NO_SUCH_PATTERN_ZZZ", "format", "json"))
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("JSON search: %v", err)
 	}
-	if !strings.Contains(result, `"results":[]`) {
-		t.Errorf("expected empty results array for no match, got: %s", result)
+	var resp struct {
+		Results         []searchResult `json:"results"`
+		ZeroMatchReason string         `json:"zero_match_reason"`
+	}
+	if err := json.Unmarshal([]byte(result), &resp); err != nil {
+		t.Fatalf("decode JSON search: %v", err)
+	}
+	if len(resp.Results) != 0 || resp.ZeroMatchReason != "pattern_matched_nothing" {
+		t.Errorf("unexpected JSON zero-match result: %+v", resp)
+	}
+}
+
+func TestSearchFiles_EmptyDir(t *testing.T) {
+	t.Parallel()
+	e, _ := testEngine(t)
+
+	text, err := e.searchFiles(args("pattern", "needle"))
+	if err != nil {
+		t.Fatalf("text search: %v", err)
+	}
+	if !strings.Contains(text, "[no matches: path_is_empty_dir]") {
+		t.Errorf("unexpected empty-dir reason: %s", text)
+	}
+
+	result, err := e.searchFiles(args("pattern", "needle", "format", "json"))
+	if err != nil {
+		t.Fatalf("JSON search: %v", err)
+	}
+	var resp struct {
+		ZeroMatchReason string `json:"zero_match_reason"`
+	}
+	if err := json.Unmarshal([]byte(result), &resp); err != nil {
+		t.Fatalf("decode JSON search: %v", err)
+	}
+	if resp.ZeroMatchReason != "path_is_empty_dir" {
+		t.Errorf("unexpected JSON empty-dir reason: %s", resp.ZeroMatchReason)
 	}
 }
 
 func TestSearchFiles_InvalidRegex(t *testing.T) {
 	t.Parallel()
-	e, _ := testEngine(t)
-	_, err := e.searchFiles(args("pattern", "[invalid"))
-	if err == nil || !strings.Contains(err.Error(), "invalid regex") {
-		t.Errorf("expected 'invalid regex' error, got: %v", err)
+	for _, format := range []string{"text", "json"} {
+		t.Run(format, func(t *testing.T) {
+			t.Parallel()
+			e, _ := testEngine(t)
+			_, err := e.searchFiles(args("pattern", "[invalid", "format", format))
+			var sErr *ErrWithSuggestion
+			if !errors.As(err, &sErr) || sErr.Code != ErrCodeInvalidRegex {
+				t.Fatalf("expected invalid-regex error for %s, got: %v", format, err)
+			}
+		})
 	}
 }
 
@@ -320,5 +368,18 @@ func TestSearchFiles_LiteralFlag(t *testing.T) {
 	}
 	if !strings.Contains(result2, "bracket.txt") {
 		t.Errorf("expected bracket.txt in literal results, got: %s", result2)
+	}
+	result3, err := e.searchFiles(args("pattern", "[missing", "literal", true, "format", "json"))
+	if err != nil {
+		t.Fatalf("unmatched literal metacharacters: %v", err)
+	}
+	var resp struct {
+		ZeroMatchReason string `json:"zero_match_reason"`
+	}
+	if err := json.Unmarshal([]byte(result3), &resp); err != nil {
+		t.Fatalf("decode unmatched literal search: %v", err)
+	}
+	if resp.ZeroMatchReason != "pattern_matched_nothing" {
+		t.Errorf("unexpected literal zero-match reason: %s", resp.ZeroMatchReason)
 	}
 }

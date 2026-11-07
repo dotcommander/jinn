@@ -15,6 +15,28 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (fn roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return fn(req) }
 
+type trackedResponseBody struct {
+	reader   io.Reader
+	read     int
+	closed   bool
+	closeErr error
+}
+
+func (b *trackedResponseBody) Read(p []byte) (int, error) {
+	n, err := b.reader.Read(p)
+	b.read += n
+	return n, err
+}
+
+func (b *trackedResponseBody) Close() error {
+	b.closed = true
+	return b.closeErr
+}
+
+type failingReader struct{ err error }
+
+func (r failingReader) Read([]byte) (int, error) { return 0, r.err }
+
 func TestValidateURLRejectsUnsafeTargets(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -152,6 +174,122 @@ func TestGETRetryKeepsOriginalEmptyBody(t *testing.T) {
 	resp, err := client.Get(context.Background(), "https://example.com/article", nil)
 	if err != nil || calls != 2 || string(resp.Body) != "success" {
 		t.Fatalf("GET = (%+v, %v), calls = %d", resp, err, calls)
+	}
+}
+
+func TestGETRetryDrainsIntermediateBody(t *testing.T) {
+	t.Parallel()
+	client := NewClient(ClientConfig{MaxBodyBytes: 4})
+	first := &trackedResponseBody{reader: strings.NewReader("fail")}
+	calls := 0
+	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		calls++
+		if calls == 2 && !first.closed {
+			t.Error("retry started before first response body was closed")
+		}
+		status, body := http.StatusServiceUnavailable, io.ReadCloser(first)
+		if calls == 2 {
+			status = http.StatusOK
+			body = io.NopCloser(strings.NewReader("done"))
+		}
+		return &http.Response{
+			StatusCode: status,
+			Status:     http.StatusText(status),
+			Header:     http.Header{"Retry-After": []string{"0"}},
+			Body:       body,
+			Request:    req,
+		}, nil
+	})
+	resp, err := client.Get(context.Background(), "https://example.com/article", nil)
+	if err != nil || calls != 2 || resp.StatusCode != http.StatusOK || string(resp.Body) != "done" || resp.URL != "https://example.com/article" {
+		t.Fatalf("GET = (%+v, %v), calls = %d", resp, err, calls)
+	}
+	if !first.closed || first.read != 4 {
+		t.Fatalf("intermediate body: closed = %v, bytes read = %d", first.closed, first.read)
+	}
+}
+
+func TestGETRetryDrainBoundariesAndErrors(t *testing.T) {
+	t.Parallel()
+	readFailure := errors.New("injected read failure")
+	closeFailure := errors.New("injected close failure")
+	tests := []struct {
+		name     string
+		reader   io.Reader
+		closeErr error
+		wantRead int
+		wantErr  error
+		wantCode string
+		attempts int
+	}{
+		{name: "exact limit", reader: strings.NewReader("1234"), wantRead: 4, attempts: 2},
+		{name: "limit plus one", reader: strings.NewReader("123456"), wantRead: 5, wantErr: ErrTooLarge, wantCode: ErrorCodeResponseTooLarge, attempts: 1},
+		{name: "read failure", reader: io.MultiReader(strings.NewReader("12"), failingReader{readFailure}), wantRead: 2, wantErr: readFailure, attempts: 1},
+		{name: "close failure", reader: strings.NewReader("12"), closeErr: closeFailure, wantRead: 2, wantErr: closeFailure, attempts: 1},
+		{name: "read before close failure", reader: failingReader{readFailure}, closeErr: closeFailure, wantErr: readFailure, attempts: 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			client := NewClient(ClientConfig{MaxBodyBytes: 4})
+			first := &trackedResponseBody{reader: tt.reader, closeErr: tt.closeErr}
+			calls := 0
+			client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				calls++
+				if calls == 2 && !first.closed {
+					t.Error("retry started before first body was closed")
+				}
+				status, body := http.StatusServiceUnavailable, io.ReadCloser(first)
+				if calls == 2 {
+					status = http.StatusOK
+					body = io.NopCloser(strings.NewReader("done"))
+				}
+				return &http.Response{
+					StatusCode: status,
+					Status:     http.StatusText(status),
+					Header:     http.Header{"Retry-After": []string{"0"}},
+					Body:       body,
+					Request:    req,
+				}, nil
+			})
+			resp, err := client.Get(context.Background(), "https://example.com/article", nil)
+			if !errors.Is(err, tt.wantErr) || calls != tt.attempts {
+				t.Fatalf("GET = (%+v, %v), calls = %d; want error %v, calls %d", resp, err, calls, tt.wantErr, tt.attempts)
+			}
+			if tt.wantErr == nil && string(resp.Body) != "done" {
+				t.Fatalf("final body = %q, want done", resp.Body)
+			}
+			if !first.closed || first.read != tt.wantRead {
+				t.Fatalf("intermediate body: closed = %v, bytes read = %d; want %d", first.closed, first.read, tt.wantRead)
+			}
+			if tt.wantCode != "" {
+				var coded *CodedError
+				if !errors.As(err, &coded) || coded.Code != tt.wantCode {
+					t.Fatalf("error = %v, want code %q", err, tt.wantCode)
+				}
+			}
+		})
+	}
+}
+
+func TestGETFinalRetryAttemptRetainsBody(t *testing.T) {
+	t.Parallel()
+	client := NewClient(ClientConfig{MaxBodyBytes: 16})
+	calls := 0
+	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		calls++
+		return &http.Response{
+			StatusCode: http.StatusServiceUnavailable,
+			Status:     http.StatusText(http.StatusServiceUnavailable),
+			Header:     http.Header{"Retry-After": []string{"0"}},
+			Body:       io.NopCloser(strings.NewReader(fmt.Sprintf("attempt %d", calls))),
+			Request:    req,
+		}, nil
+	})
+	_, err := client.Get(context.Background(), "https://example.com/article", nil)
+	var httpErr *HTTPError
+	if calls != maxAttempts || !errors.As(err, &httpErr) || httpErr.Body != "attempt 3" {
+		t.Fatalf("GET error = %v, attempts = %d; want final attempt body", err, calls)
 	}
 }
 

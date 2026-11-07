@@ -261,7 +261,7 @@ func (e *Engine) formatSearchJSON(raw string, req searchRequest, args map[string
 
 	resp := searchFilesResult{Results: shown, Truncated: truncated, TotalCount: total, TotalCountExact: !truncated, Offset: req.offset}
 	if total == 0 {
-		resp.ZeroMatchReason = e.classifyZeroMatch(req.pattern, req.searchPath, req.literal)
+		resp.ZeroMatchReason = e.classifyZeroMatch(req.searchPath)
 	}
 	if truncated {
 		resp.Hint = "TRUNCATED: use max_matches or a more specific pattern"
@@ -306,7 +306,7 @@ func (e *Engine) formatSearchText(raw string, req searchRequest) string {
 		result += "\n" + formatTruncatedHint(req.maxMatches, count, "'max_matches' or a more specific pattern")
 	}
 	if count == 0 {
-		reason := e.classifyZeroMatch(req.pattern, req.searchPath, req.literal)
+		reason := e.classifyZeroMatch(req.searchPath)
 		result += "[no matches: " + reason + "]"
 	}
 	return result

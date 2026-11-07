@@ -115,6 +115,20 @@ func readBounded(r io.Reader, maxBytes int64) ([]byte, error) {
 	return data, nil
 }
 
+func drainBounded(r io.Reader, maxBytes int64) error {
+	if maxBytes <= 0 {
+		maxBytes = DefaultMaxBodyBytes
+	}
+	n, err := io.Copy(io.Discard, io.LimitReader(r, maxBytes+1))
+	if err != nil {
+		return err
+	}
+	if n > maxBytes {
+		return errBodyTooLarge
+	}
+	return nil
+}
+
 func shouldRetry(statusCode int) bool {
 	switch statusCode {
 	case http.StatusTooManyRequests, http.StatusInternalServerError,

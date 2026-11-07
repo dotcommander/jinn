@@ -121,8 +121,34 @@ func negateCondition(matched, negate bool) bool {
 	return matched
 }
 
-//nolint:funlen,gocognit,gocyclo,nilerr,revive // malformed result data is deliberately a non-matching condition.
+// planNodeEvaluation belongs to one execution of a node, not its ID or tree.
+// JSON is decoded only if an expectation or edge asks for jsonPath.
+type planNodeEvaluation struct {
+	last        PlanOpResult
+	jsonValue   any
+	jsonDecoded bool
+	jsonValid   bool
+}
+
+func (ev *planNodeEvaluation) json() (any, bool) {
+	if !ev.jsonDecoded {
+		ev.jsonDecoded = true
+		raw := ev.last.Stdout
+		if raw == "" {
+			raw = ev.last.Result
+		}
+		ev.jsonValid = json.Unmarshal([]byte(raw), &ev.jsonValue) == nil
+	}
+	return ev.jsonValue, ev.jsonValid
+}
+
 func (e *Engine) evaluateCondition(last PlanOpResult, cond Condition) (bool, error) {
+	return e.evaluateNodeCondition(&planNodeEvaluation{last: last}, cond)
+}
+
+//nolint:funlen,gocognit,gocyclo,nilerr,revive // malformed result data is deliberately a non-matching condition.
+func (e *Engine) evaluateNodeCondition(ev *planNodeEvaluation, cond Condition) (bool, error) {
+	last := ev.last
 	var matched bool
 	switch cond.Kind {
 	case "always":
@@ -195,12 +221,8 @@ func (e *Engine) evaluateCondition(last PlanOpResult, cond Condition) (bool, err
 		}
 		matched = compareNumeric(val, expected, cond.Op)
 	case "jsonPath":
-		var v any
-		raw := last.Stdout
-		if raw == "" {
-			raw = last.Result
-		}
-		if err := json.Unmarshal([]byte(raw), &v); err != nil {
+		v, valid := ev.json()
+		if !valid {
 			return false, nil
 		}
 		segments := strings.Split(cond.Path, ".")

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +14,90 @@ import (
 	"github.com/voocel/mcp-sdk-go/protocol"
 	"github.com/voocel/mcp-sdk-go/server"
 )
+
+type countingMCPContent struct {
+	calls   *int
+	payload string
+	err     error
+}
+
+func (c countingMCPContent) MarshalJSON() ([]byte, error) {
+	(*c.calls)++
+	return []byte(c.payload), c.err
+}
+
+func TestMCPLoggingEnrichment(t *testing.T) {
+	t.Parallel()
+	t.Run("generic custom marshaler", func(t *testing.T) {
+		t.Parallel()
+		const payload = `{"route_id":"route","tool":"search","confidence":"high","score_margin":3,"error_code":"failed","retryable":true,"matches":[{"name":"first"}],"result":"{\"truncated\":true}"}`
+		calls := 0
+		record := mcpLogRecord{}
+		enrichMCPLogRecord(&record, nil, &protocol.CallToolResult{StructuredContent: countingMCPContent{calls: &calls, payload: payload}})
+		if calls != 1 || record.ResultBytes != len(payload) || record.RouteID != "route" || record.JinnTool != "search" || record.Confidence != "high" || record.ScoreMargin == nil || *record.ScoreMargin != 3 || record.ErrorCode != "failed" || record.Retryable == nil || !*record.Retryable || len(record.Recommendations) != 1 || record.Recommendations[0] != "first" || !record.Truncated {
+			t.Fatalf("calls = %d, record = %+v", calls, record)
+		}
+	})
+	t.Run("generic tags", func(t *testing.T) {
+		t.Parallel()
+		value := struct {
+			Route string `json:"route_id"`
+			Tool  string `json:"tool"`
+		}{Route: "tagged", Tool: "read_file"}
+		data, err := json.Marshal(value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		record := mcpLogRecord{}
+		enrichMCPLogRecord(&record, nil, &protocol.CallToolResult{StructuredContent: value})
+		if record.ResultBytes != len(data) || record.RouteID != "tagged" || record.JinnTool != "read_file" {
+			t.Fatalf("record = %+v", record)
+		}
+	})
+	t.Run("null", func(t *testing.T) {
+		t.Parallel()
+		calls := 0
+		record := mcpLogRecord{RouteID: "existing"}
+		enrichMCPLogRecord(&record, nil, &protocol.CallToolResult{StructuredContent: countingMCPContent{calls: &calls, payload: "null"}})
+		// req is nil, so RouteID is reset from request params (empty) before
+		// generic extraction; "null" yields no fields to restore it.
+		if calls != 1 || record.ResultBytes != len("null") || record.RouteID != "" {
+			t.Fatalf("calls = %d, record = %+v", calls, record)
+		}
+	})
+	t.Run("generic marshal failure", func(t *testing.T) {
+		t.Parallel()
+		calls := 0
+		record := mcpLogRecord{RouteID: "existing"}
+		enrichMCPLogRecord(&record, nil, &protocol.CallToolResult{StructuredContent: countingMCPContent{calls: &calls, err: errors.New("cannot marshal")}})
+		if calls != 1 || record.ResultBytes != 0 || record.RouteID != "" {
+			t.Fatalf("calls = %d, record = %+v", calls, record)
+		}
+	})
+	t.Run("typed marshal failure", func(t *testing.T) {
+		t.Parallel()
+		margin := 7
+		output := jinn.RouteResponse{RouteID: "typed", Confidence: "high", ScoreMargin: &margin, Matches: []jinn.RouteMatch{{Name: "first", Schema: make(chan int)}}}
+		record := mcpLogRecord{}
+		enrichMCPLogRecord(&record, nil, &protocol.CallToolResult{StructuredContent: output})
+		if record.ResultBytes != 0 || record.RouteID != "typed" || record.Confidence != "high" || record.ScoreMargin != &margin || len(record.Recommendations) != 1 || record.Recommendations[0] != "first" {
+			t.Fatalf("record = %+v", record)
+		}
+	})
+	t.Run("typed output", func(t *testing.T) {
+		t.Parallel()
+		output := mcpCallOutput{RouteID: "typed", Tool: "read_file", Result: `{"truncated_global":true}`}
+		data, err := json.Marshal(output)
+		if err != nil {
+			t.Fatal(err)
+		}
+		record := mcpLogRecord{}
+		enrichMCPLogRecord(&record, nil, &protocol.CallToolResult{StructuredContent: output})
+		if record.ResultBytes != len(data) || record.RouteID != "typed" || record.JinnTool != "read_file" || !record.Truncated {
+			t.Fatalf("record = %+v", record)
+		}
+	})
+}
 
 func TestMCPLoggerConfigurationAndPrivatePath(t *testing.T) {
 	base := t.TempDir()
