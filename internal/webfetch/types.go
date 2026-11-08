@@ -21,8 +21,16 @@ const (
 	DefaultReaderEndpoint        = "https://r.jina.ai"
 	DefaultSearchEndpoint        = "https://api.search.brave.com/res/v1/web/search"
 	DefaultExaEndpoint           = "https://api.exa.ai/search"
+	DefaultTavilyEndpoint        = "https://api.tavily.com/search"
 	DefaultSearXNGEndpoint       = "http://localhost:8080/search"
 	DefaultUserAgent             = "webfetch/0.1"
+	// Snapshot store defaults (slice 1): durable, opt-in result snapshots.
+	DefaultSnapshotTTL           = 24 * time.Hour
+	DefaultSnapshotMaxEntries    = 50
+	DefaultSnapshotMaxBytes      = 64 << 20
+	DefaultSnapshotMaxEntryBytes = 8 << 20
+	// MaxSearchQueries bounds one batched web_search call (slice 2).
+	MaxSearchQueries = 5
 )
 
 const (
@@ -34,6 +42,7 @@ const (
 	contentTypeMarkdown        = "text/markdown"
 	providerBrave              = "brave"
 	providerExa                = "exa"
+	providerTavily             = "tavily"
 	providerSearXNG            = "searxng"
 	sourceReader               = "reader"
 	sourceImage                = "image"
@@ -52,15 +61,21 @@ type Config struct {
 	JinaAPIKey            string
 	BraveAPIKey           string
 	ExaAPIKey             string
+	TavilyAPIKey          string
 	ReaderMode            string
 	ReaderEndpoint        string
 	SearchEndpoint        string
 	ExaSearchEndpoint     string
+	TavilySearchEndpoint  string
 	SearXNGSearchEndpoint string
 	SearXNGAPIKey         string
 	SearchProvider        string
 	URLCacheTTL           time.Duration
 	URLCacheDir           string
+	// SnapshotDir overrides the durable snapshot store directory; empty
+	// derives a sibling of URLCacheDir (or the default cache home).
+	SnapshotDir           string
+	SnapshotTTL           time.Duration
 	Timeout               time.Duration
 	MaxBodyBytes          int64
 	AllowPrivateNetworks  bool
@@ -113,7 +128,11 @@ type Document struct {
 	Warnings    []string
 	// Quality is the extraction-quality signal ("content" or "chrome_only")
 	// computed from the extracted body at assembly time.
-	Quality       string
+	Quality string
+	// Outcome is the standardized fetch-outcome taxonomy (slice 5):
+	// content, suspected_challenge, empty_extraction, or unsupported_media
+	// on success paths; auth/rate-limit map from coded error codes.
+	Outcome       string
 	Content       string
 	ImageBytes    []byte
 	ImageMimeType string
@@ -121,7 +140,16 @@ type Document struct {
 
 // SearchRequest describes one web search.
 type SearchRequest struct {
-	Query              string
+	Query string
+	// Queries, when non-empty, replaces Query with a bounded batch
+	// (max MaxSearchQueries). Query and Queries are mutually exclusive.
+	Queries []string
+	// Providers, when non-empty, restricts the search to an explicit
+	// ordered subset of the configured provider chain (slice 2).
+	Providers []string
+	// Workflow selects "results" (default) or "extractive_summary"
+	// (slice 4): a deterministic, cited digest alongside the results.
+	Workflow           string
 	Limit              int
 	Category           string
 	IncludeDomains     []string
@@ -135,22 +163,58 @@ type SearchRequest struct {
 	Combine bool
 }
 
+// Search workflow values accepted by web_search.
+const (
+	SearchWorkflowResults           = "results"
+	SearchWorkflowExtractiveSummary = "extractive_summary"
+)
+
+// SearchSummary is the deterministic extractive digest (slice 4). It
+// selects source-provided snippets with result citations; it never calls
+// a model.
+type SearchSummary struct {
+	Status    string `json:"status"` // "ok" or "insufficient_evidence"
+	Text      string `json:"text"`
+	Citations []int  `json:"citations,omitempty"` // 1-based result indexes
+}
+
 // SearchResponse is the normalized search result.
 type SearchResponse struct {
 	Query    string         `json:"query"`
 	Provider string         `json:"provider,omitempty"`
 	Results  []SearchResult `json:"results"`
 	// Fallbacks records each provider skipped before the answering one,
-	// with the reason (error code, "empty", or "domain-miss").
+	// with the reason (error code, "empty", or "domain-miss") and the
+	// normalized routing category (unsupported, transient, quota,
+	// network, invalid_response, or empty).
 	Fallbacks []SearchFallback `json:"fallbacks,omitempty"`
 	// Combine reports whether the results were fused from several backends.
 	Combine bool `json:"combine,omitempty"`
+	// Queries holds per-query outcomes for batched searches. When set,
+	// Query/Results stay empty and each entry is independent: one failed
+	// query never discards the others.
+	Queries []SearchQueryOutcome `json:"queries,omitempty"`
+	// Summary is the extractive digest when Workflow is extractive_summary.
+	Summary *SearchSummary `json:"summary,omitempty"`
+}
+
+// SearchQueryOutcome is one query result inside a batched search.
+type SearchQueryOutcome struct {
+	Query     string           `json:"query"`
+	Provider  string           `json:"provider,omitempty"`
+	Results   []SearchResult   `json:"results"`
+	Fallbacks []SearchFallback `json:"fallbacks,omitempty"`
+	Error     string           `json:"error,omitempty"`
+	// Summary is the extractive digest for this query when requested.
+	Summary *SearchSummary `json:"summary,omitempty"`
 }
 
 // SearchFallback records one provider that did not answer a search.
 type SearchFallback struct {
 	Provider string `json:"provider"`
 	Reason   string `json:"reason"`
+	// Category is the normalized routing category for this fallback.
+	Category string `json:"category,omitempty"`
 }
 
 // SearchResult is one search hit.

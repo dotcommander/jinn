@@ -29,6 +29,10 @@ const (
 	ErrorCodeRenderFailed       = "render_failed"
 	ErrorCodeRenderBudget       = "render_budget_exceeded"
 	ErrorCodeCrossHostRedirect  = "cross_host_redirect"
+	// Snapshot store (slice 1) error codes.
+	ErrorCodeSnapshotNotFound = "snapshot_not_found"
+	ErrorCodeSnapshotExpired  = "snapshot_expired"
+	ErrorCodeSnapshotInvalid  = "snapshot_invalid"
 )
 
 // CodedError preserves the original error while exposing stable, actionable

@@ -26,9 +26,9 @@ func webConfig() webfetch.Config {
 		cacheDir = defaultJinnWebCacheDir()
 	}
 	return webfetch.Config{
-		UserAgent: "jinn/" + jinn.ResolveVersion(version), JinaAPIKey: strings.TrimSpace(os.Getenv("JINA_API_KEY")), BraveAPIKey: strings.TrimSpace(os.Getenv("BRAVE_API_KEY")), ExaAPIKey: strings.TrimSpace(os.Getenv("EXA_API_KEY")), SearXNGAPIKey: strings.TrimSpace(os.Getenv("SEARXNG_API_KEY")),
-		ReaderMode: strings.TrimSpace(os.Getenv("JINN_WEB_READER")), ReaderEndpoint: strings.TrimSpace(os.Getenv("JINN_WEB_READER_ENDPOINT")), SearchEndpoint: strings.TrimSpace(os.Getenv("JINN_WEB_SEARCH_ENDPOINT")), ExaSearchEndpoint: strings.TrimSpace(os.Getenv("JINN_WEB_EXA_SEARCH_ENDPOINT")), SearXNGSearchEndpoint: strings.TrimSpace(os.Getenv("JINN_WEB_SEARXNG_SEARCH_ENDPOINT")), SearchProvider: strings.TrimSpace(os.Getenv("JINN_WEB_SEARCH_PROVIDER")),
-		URLCacheTTL: webDurationEnv("JINN_WEB_CACHE_TTL"), URLCacheDir: cacheDir, Timeout: webDurationEnv("JINN_WEB_TIMEOUT"), MaxBodyBytes: webInt64Env("JINN_WEB_MAX_BODY_BYTES"), AllowPrivateNetworks: webBoolEnv("JINN_WEB_ALLOW_PRIVATE_NETWORKS"),
+		UserAgent: "jinn/" + jinn.ResolveVersion(version), JinaAPIKey: strings.TrimSpace(os.Getenv("JINA_API_KEY")), BraveAPIKey: strings.TrimSpace(os.Getenv("BRAVE_API_KEY")), ExaAPIKey: strings.TrimSpace(os.Getenv("EXA_API_KEY")), TavilyAPIKey: strings.TrimSpace(os.Getenv("TAVILY_API_KEY")), SearXNGAPIKey: strings.TrimSpace(os.Getenv("SEARXNG_API_KEY")),
+		ReaderMode: strings.TrimSpace(os.Getenv("JINN_WEB_READER")), ReaderEndpoint: strings.TrimSpace(os.Getenv("JINN_WEB_READER_ENDPOINT")), SearchEndpoint: strings.TrimSpace(os.Getenv("JINN_WEB_SEARCH_ENDPOINT")), ExaSearchEndpoint: strings.TrimSpace(os.Getenv("JINN_WEB_EXA_SEARCH_ENDPOINT")), TavilySearchEndpoint: strings.TrimSpace(os.Getenv("TAVILY_SEARCH_ENDPOINT")), SearXNGSearchEndpoint: strings.TrimSpace(os.Getenv("JINN_WEB_SEARXNG_SEARCH_ENDPOINT")), SearchProvider: strings.TrimSpace(os.Getenv("JINN_WEB_SEARCH_PROVIDER")),
+		URLCacheTTL: webDurationEnv("JINN_WEB_CACHE_TTL"), URLCacheDir: cacheDir, SnapshotDir: strings.TrimSpace(os.Getenv("JINN_WEB_SNAPSHOT_DIR")), Timeout: webDurationEnv("JINN_WEB_TIMEOUT"), MaxBodyBytes: webInt64Env("JINN_WEB_MAX_BODY_BYTES"), AllowPrivateNetworks: webBoolEnv("JINN_WEB_ALLOW_PRIVATE_NETWORKS"),
 		RenderTimeout: webDurationEnv("JINN_WEB_RENDER_TIMEOUT"), RenderMaxConcurrency: webIntEnv("JINN_WEB_RENDER_MAX_CONCURRENCY"), RenderMaxRequests: webIntEnv("JINN_WEB_RENDER_MAX_REQUESTS"), RenderMaxNetworkBytes: webInt64Env("JINN_WEB_RENDER_MAX_NETWORK_BYTES"), RenderMaxHTMLBytes: webInt64Env("JINN_WEB_RENDER_MAX_HTML_BYTES"), ChromePath: strings.TrimSpace(os.Getenv("JINN_WEB_CHROME_PATH")),
 	}
 }
@@ -88,7 +88,7 @@ func runWeb(ctx context.Context, args []string) error {
 	}
 }
 
-const webHelp = "Usage:\n  jinn web fetch [flags] URL\n  jinn web search [flags] QUERY\n\nUse --help after either subcommand for its flags. Web configuration uses JINN_WEB_* variables plus JINA_API_KEY, BRAVE_API_KEY, EXA_API_KEY, and SEARXNG_API_KEY.\n"
+const webHelp = "Usage:\n  jinn web fetch [flags] URL\n  jinn web search [flags] QUERY\n\nUse --help after either subcommand for its flags. Web configuration uses JINN_WEB_* variables plus JINA_API_KEY, BRAVE_API_KEY, EXA_API_KEY, TAVILY_API_KEY, and SEARXNG_API_KEY. JINN_WEB_SNAPSHOT_DIR overrides the durable snapshot store directory (default: snapshots beside the URL cache).\n"
 
 func runWebFetch(ctx context.Context, args []string) error {
 	flags := flag.NewFlagSet("jinn web fetch", flag.ContinueOnError)
@@ -104,6 +104,7 @@ func runWebFetch(ctx context.Context, args []string) error {
 	startLineByte := flags.Int("start-line-byte", 0, "UTF-8 byte offset within start-line")
 	cacheTTL := flags.String("cache-ttl", "", "reader cache TTL")
 	cacheDir := flags.String("cache-dir", "", "reader cache directory")
+	persistSnapshot := flags.Bool("persist-snapshot", false, "store the fetched document as a durable snapshot for web_content")
 	if err := flags.Parse(args); errors.Is(err, flag.ErrHelp) {
 		flags.SetOutput(os.Stdout)
 		flags.PrintDefaults()
@@ -138,14 +139,20 @@ func runWebFetch(ctx context.Context, args []string) error {
 	if err != nil {
 		return webCLIError{err: err, asJSON: *asJSON}
 	}
-	return renderWebFetchProjection(os.Stdout, doc, *asJSON, limits, projection)
+	if err := renderWebFetchProjection(os.Stdout, doc, *asJSON, limits, projection); err != nil {
+		return err
+	}
+	if *persistSnapshot {
+		printWebSnapshot(service.SaveDocumentSnapshot(doc))
+	}
+	return nil
 }
 
 func runWebSearch(ctx context.Context, args []string) error {
 	flags := flag.NewFlagSet("jinn web search", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	asJSON := flags.Bool("json", false, "emit flat JSON")
-	provider := flags.String("provider", "", "search provider: brave or exa")
+	provider := flags.String("provider", "", "search provider: brave, exa, tavily, or searxng (comma-separated for an ordered chain)")
 	limit := flags.Int("limit", webfetch.DefaultSearchLimit, "maximum results")
 	category := flags.String("category", "", "provider category")
 	var domains webStringSlice
@@ -153,6 +160,7 @@ func runWebSearch(ctx context.Context, args []string) error {
 	startDate := flags.String("start-published-date", "", "RFC3339 or YYYY-MM-DD lower bound")
 	highlights := flags.Bool("include-highlights", false, "request provider highlights")
 	highlightSentences := flags.Int("highlight-sentences", 0, "number of highlight sentences")
+	persistSnapshot := flags.Bool("persist-snapshot", false, "store the search results as a durable snapshot for web_content")
 	if err := flags.Parse(args); errors.Is(err, flag.ErrHelp) {
 		flags.SetOutput(os.Stdout)
 		flags.PrintDefaults()
@@ -173,7 +181,23 @@ func runWebSearch(ctx context.Context, args []string) error {
 	if err != nil {
 		return webCLIError{err: err, asJSON: *asJSON}
 	}
-	return renderWebSearch(os.Stdout, result, *asJSON)
+	if err := renderWebSearch(os.Stdout, result, *asJSON); err != nil {
+		return err
+	}
+	if *persistSnapshot {
+		printWebSnapshot(service.SaveSearchSnapshot(result))
+	}
+	return nil
+}
+
+// printWebSnapshot reports the persistence outcome on stderr so stdout
+// stays machine-readable.
+func printWebSnapshot(info webfetch.SnapshotInfo) {
+	if info.Status == "stored" {
+		_, _ = fmt.Fprintf(os.Stderr, "[snapshot: %s (%s)]\n", info.ID, info.Status)
+		return
+	}
+	_, _ = fmt.Fprintf(os.Stderr, "[snapshot: %s]\n", info.Status)
 }
 
 type webStringSlice []string

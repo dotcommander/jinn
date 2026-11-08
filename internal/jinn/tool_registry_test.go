@@ -65,7 +65,9 @@ func TestToolRegistryFeatureMap(t *testing.T) {
 		"lsp_query":      {"definition", "references", "hover", "symbols", "diagnostics", "rename", "symbol_column", "context_lines"},
 		"lsp_batch":      {"shared_server", "partial_success", "input_order"},
 		"web_fetch":      {"url_safety", "reader", "render", "cache"},
-		"web_search":     {"brave", "exa", "domain_filters", "result_limit"},
+		"web_search":     {"brave", "exa", "tavily", "searxng", "domain_filters", "result_limit"},
+		"web_content":    {"snapshots"},
+		"source_check":   {"lexical_evidence"},
 	}
 	got := registeredToolFeatures()
 	if !reflect.DeepEqual(got, want) {

@@ -143,7 +143,8 @@ const (
 	fallbackReasonDomainMiss = "domain-miss"
 )
 
-// Search runs one normalized query against the configured provider chain.
+// Search runs one normalized query (or a bounded batch) against the
+// configured provider chain.
 //
 //nolint:gocognit,gocyclo,revive // branchy by design; splitting would scatter one sequential algorithm
 func (s *Service) Search(ctx context.Context, req SearchRequest) (SearchResponse, error) {
@@ -164,11 +165,85 @@ func (s *Service) Search(ctx context.Context, req SearchRequest) (SearchResponse
 		}
 		chain = []searchProvider{s.search}
 	}
+	if len(validated.Providers) > 0 {
+		filtered, filterErr := filterSearchChain(chain, validated.Providers)
+		if filterErr != nil {
+			return SearchResponse{}, filterErr
+		}
+		chain = filtered
+	}
 	if s.searchTimeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, s.searchTimeout)
 		defer cancel()
 	}
+	if len(validated.Queries) > 0 {
+		return s.searchBatch(ctx, chain, validated), nil
+	}
+	resp, err := s.searchOne(ctx, chain, validated)
+	if err != nil {
+		return SearchResponse{}, err
+	}
+	if validated.Workflow == SearchWorkflowExtractiveSummary {
+		resp.Summary = extractiveSummary(resp.Results)
+	}
+	return resp, nil
+}
+
+// searchBatch runs each query sequentially with independent outcomes: one
+// failed query never discards the others.
+func (s *Service) searchBatch(ctx context.Context, chain []searchProvider, req SearchRequest) SearchResponse {
+	outcomes := make([]SearchQueryOutcome, 0, len(req.Queries))
+	for _, query := range req.Queries {
+		single := req
+		single.Query = query
+		single.Queries = nil
+		resp, searchErr := s.searchOne(ctx, chain, single)
+		outcome := SearchQueryOutcome{Query: query}
+		if searchErr != nil {
+			outcome.Error = searchErr.Error()
+		} else {
+			outcome.Provider = resp.Provider
+			outcome.Results = resp.Results
+			outcome.Fallbacks = resp.Fallbacks
+			if req.Workflow == SearchWorkflowExtractiveSummary {
+				outcome.Summary = extractiveSummary(resp.Results)
+			}
+		}
+		outcomes = append(outcomes, outcome)
+		if ctx.Err() != nil {
+			break
+		}
+	}
+	return SearchResponse{Queries: outcomes}
+}
+
+// filterSearchChain restricts the configured chain to an explicit ordered
+// provider selection. Selected providers must be configured; selecting an
+// unconfigured provider fails precisely instead of silently widening.
+func filterSearchChain(chain []searchProvider, names []string) ([]searchProvider, error) {
+	byName := make(map[string]searchProvider, len(chain))
+	for _, provider := range chain {
+		byName[provider.name()] = provider
+	}
+	filtered := make([]searchProvider, 0, len(names))
+	for _, name := range names {
+		provider, ok := byName[name]
+		if !ok {
+			return nil, newCodedError(fmt.Errorf("search provider %q is not configured", name), ErrorCodeInvalidArgument, "configure the selected provider or remove it from the selection")
+		}
+		filtered = append(filtered, provider)
+	}
+	return filtered, nil
+}
+
+// searchOne executes one normalized query against the ordered chain. A
+// provider that errors or returns zero results falls through to the next
+// with a recorded reason and normalized routing category; the last
+// provider's error or empty result is returned as-is.
+//
+//nolint:gocognit,gocyclo,revive // branchy by design; splitting would scatter one sequential algorithm
+func (s *Service) searchOne(ctx context.Context, chain []searchProvider, validated SearchRequest) (SearchResponse, error) {
 	if validated.Combine && len(chain) > 1 {
 		return s.combineSearch(ctx, chain, validated)
 	}
@@ -188,7 +263,7 @@ func (s *Service) Search(ctx context.Context, req SearchRequest) (SearchResponse
 			if last {
 				return SearchResponse{}, searchErr
 			}
-			fallbacks = append(fallbacks, SearchFallback{Provider: provider.name(), Reason: searchErrorReason(searchErr)})
+			fallbacks = append(fallbacks, SearchFallback{Provider: provider.name(), Reason: searchErrorReason(searchErr), Category: searchFallbackCategory(searchErr)})
 		default: // empty results
 			if last {
 				return SearchResponse{Query: validated.Query, Provider: provider.name(), Results: []SearchResult{}, Fallbacks: fallbacks}, nil
@@ -197,10 +272,79 @@ func (s *Service) Search(ctx context.Context, req SearchRequest) (SearchResponse
 			if len(validated.IncludeDomains) > 0 {
 				reason = "domain-miss"
 			}
-			fallbacks = append(fallbacks, SearchFallback{Provider: provider.name(), Reason: reason})
+			fallbacks = append(fallbacks, SearchFallback{Provider: provider.name(), Reason: reason, Category: "empty"})
 		}
 	}
 	return SearchResponse{}, newCodedError(errors.New("search provider is not configured"), ErrorCodeInvalidArgument, "configure a search provider before calling Search")
+}
+
+// Routing categories (slice 2) for fallback entries.
+const (
+	fallbackCategoryUnsupported     = "unsupported"
+	fallbackCategoryTransient       = "transient"
+	fallbackCategoryQuota           = "quota"
+	fallbackCategoryNetwork         = "network"
+	fallbackCategoryInvalidResponse = "invalid_response"
+	fallbackCategoryEmpty           = "empty"
+)
+
+// searchFallbackCategory maps a provider error to its normalized routing
+// category. Successful empty results (handled inline) use "empty".
+func searchFallbackCategory(err error) string {
+	var coded *CodedError
+	if errors.As(err, &coded) {
+		switch coded.Code {
+		case ErrorCodeUnsupportedSearch:
+			return fallbackCategoryUnsupported
+		case ErrorCodeRateLimited:
+			return fallbackCategoryQuota
+		case ErrorCodeProviderResponse, ErrorCodeInvalidJSON:
+			return fallbackCategoryInvalidResponse
+		case ErrorCodeRequestTimeout:
+			return fallbackCategoryTransient
+		case ErrorCodeInvalidArgument:
+			return fallbackCategoryUnsupported
+		}
+	}
+	message := strings.ToLower(err.Error())
+	for _, networkHint := range []string{"connection refused", "no such host", "dial tcp", "network is unreachable", "connection reset", "eof", "tls handshake", "server misbehaving"} {
+		if strings.Contains(message, networkHint) {
+			return fallbackCategoryNetwork
+		}
+	}
+	return fallbackCategoryTransient
+}
+
+// normalizeSearchQueries trims batch entries, dropping none (empty entries
+// are validation errors, not silently discarded).
+func normalizeSearchQueries(queries []string) []string {
+	if len(queries) == 0 {
+		return nil
+	}
+	normalized := make([]string, len(queries))
+	for i, query := range queries {
+		normalized[i] = strings.TrimSpace(query)
+	}
+	return normalized
+}
+
+// normalizeProviderNames lowercases and deduplicates an explicit provider
+// selection, preserving order.
+func normalizeProviderNames(names []string) []string {
+	if len(names) == 0 {
+		return nil
+	}
+	seen := make(map[string]bool, len(names))
+	normalized := make([]string, 0, len(names))
+	for _, name := range names {
+		name = strings.ToLower(strings.TrimSpace(name))
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		normalized = append(normalized, name)
+	}
+	return normalized
 }
 
 // searchErrorReason reduces a provider error to its stable code, or "error".
@@ -212,14 +356,66 @@ func searchErrorReason(err error) string {
 	return "error"
 }
 
+// validateSearchQueries checks the single/batch query shape.
+func validateSearchQueries(req *SearchRequest) error {
+	if req.Query != "" && len(req.Queries) > 0 {
+		return newCodedError(errors.New("search: 'query' and 'queries' are mutually exclusive"), ErrorCodeInvalidArgument, "pass either a single query or a queries batch, not both")
+	}
+	if len(req.Queries) > MaxSearchQueries {
+		return newCodedError(fmt.Errorf("search queries may contain at most %d entries", MaxSearchQueries), ErrorCodeInvalidArgument, "split the batch across calls")
+	}
+	if len(req.Queries) == 0 && req.Query == "" {
+		return newCodedError(errors.New("search query is required"), ErrorCodeInvalidArgument, "provide a non-empty search query")
+	}
+	for _, query := range req.Queries {
+		if query == "" {
+			return newCodedError(errors.New("search queries must not contain empty entries"), ErrorCodeInvalidArgument, "provide non-empty search queries")
+		}
+		if len(query) > 4096 {
+			return newCodedError(errors.New("search query must be at most 4096 characters"), ErrorCodeInvalidArgument, "shorten the query before retrying")
+		}
+	}
+	if len(req.Query) > 4096 {
+		return newCodedError(errors.New("search query must be at most 4096 characters"), ErrorCodeInvalidArgument, "shorten the query before retrying")
+	}
+	return nil
+}
+
+// validateSearchProviders normalizes and checks an explicit provider selection.
+func validateSearchProviders(req *SearchRequest) error {
+	req.Providers = normalizeProviderNames(req.Providers)
+	for _, name := range req.Providers {
+		if _, ok := searchProviderRegistry[name]; !ok {
+			return unsupportedSearchProviderError(name)
+		}
+	}
+	return nil
+}
+
+// validateSearchWorkflow normalizes and checks the search workflow.
+func validateSearchWorkflow(req *SearchRequest) error {
+	req.Workflow = strings.TrimSpace(req.Workflow)
+	if req.Workflow == "" {
+		req.Workflow = SearchWorkflowResults
+	}
+	if req.Workflow != SearchWorkflowResults && req.Workflow != SearchWorkflowExtractiveSummary {
+		return newCodedError(fmt.Errorf("unsupported search workflow %q", req.Workflow), ErrorCodeInvalidArgument, "use workflow results or extractive_summary")
+	}
+	return nil
+}
+
 //nolint:gocyclo // Sequential validation preserves precise field-specific errors.
 func validateSearchRequest(req SearchRequest, defaultLimit int) (SearchRequest, error) {
 	req.Query = strings.TrimSpace(req.Query)
-	if req.Query == "" {
-		return SearchRequest{}, newCodedError(errors.New("search query is required"), ErrorCodeInvalidArgument, "provide a non-empty search query")
+	req.Queries = normalizeSearchQueries(req.Queries)
+	if err := validateSearchQueries(&req); err != nil {
+		return SearchRequest{}, err
 	}
-	if len(req.Query) > 4096 {
-		return SearchRequest{}, newCodedError(errors.New("search query must be at most 4096 characters"), ErrorCodeInvalidArgument, "shorten the query before retrying")
+	if err := validateSearchProviders(&req); err != nil {
+		return SearchRequest{}, err
+	}
+	if err := validateSearchWorkflow(&req); err != nil {
+		return SearchRequest{}, err
 	}
 	if req.Limit == 0 {
 		req.Limit = defaultLimit

@@ -555,7 +555,7 @@
           },
           "if_checksum": {
             "type": "string",
-            "description": "SHA-256 hex digest from a previous read_file response (meta.sha256). When set and the file's current checksum matches, returns {\"unchanged\":true,\"path\":\"...\",\"checksum\":\"...\"} instead of file content \u2014 saves tokens in build\u2192fix\u2192build loops. Mismatched or absent checksum falls through to a normal full read."
+            "description": "SHA-256 hex digest from a previous read_file response (meta.sha256). When set and the file's current checksum matches, returns {\"unchanged\":true,\"path\":\"...\",\"checksum\":\"...\"} instead of file content — saves tokens in build→fix→build loops. Mismatched or absent checksum falls through to a normal full read."
           }
         },
         "required": [
@@ -698,7 +698,7 @@
           },
           "if_checksum": {
             "type": "string",
-            "description": "Required for existing files. SHA-256 hex digest from a previous read_file response (meta.sha256). When set, the edit is rejected with error_code=stale_file if the file's current content no longer hashes to this digest \u2014 protects against lost updates when the file changed since you read it."
+            "description": "Required for existing files. SHA-256 hex digest from a previous read_file response (meta.sha256). When set, the edit is rejected with error_code=stale_file if the file's current content no longer hashes to this digest — protects against lost updates when the file changed since you read it."
           }
         },
         "required": [
@@ -990,12 +990,19 @@
           },
           "risk": {
             "type": "string",
-            "enum": ["read_only", "mutating", "shell", "network"],
+            "enum": [
+              "read_only",
+              "mutating",
+              "shell",
+              "network"
+            ],
             "description": "Restrict the listing to tools with this route risk."
           },
           "names": {
             "type": "array",
-            "items": {"type": "string"},
+            "items": {
+              "type": "string"
+            },
             "description": "Restrict the listing to these tool names."
           },
           "query": {
@@ -1163,7 +1170,7 @@
           },
           "line": {
             "type": "integer",
-            "description": "1-based line number. Optional when 'symbol' is set \u2014 jinn resolves the line from the file's document symbols. Otherwise required for definition/references/hover/rename."
+            "description": "1-based line number. Optional when 'symbol' is set — jinn resolves the line from the file's document symbols. Otherwise required for definition/references/hover/rename."
           },
           "character": {
             "type": "integer",
@@ -1282,7 +1289,7 @@
         "properties": {
           "pattern": {
             "type": "string",
-            "description": "Regex pattern to search for. Supports capture groups referenced as $1, $2, etc. in replacement. Default flags: multiline (m) \u2014 ^/$ match line boundaries."
+            "description": "Regex pattern to search for. Supports capture groups referenced as $1, $2, etc. in replacement. Default flags: multiline (m) — ^/$ match line boundaries."
           },
           "replacement": {
             "type": "string",
@@ -1342,7 +1349,7 @@
     "type": "function",
     "function": {
       "name": "web_fetch",
-      "description": "Fetch an http or https URL as extracted text. Private networks and unsafe redirects are blocked by default. Redirects to a different host are not followed; the target is reported so it can be fetched explicitly.",
+      "description": "Fetch an http or https URL as extracted text. Private networks and unsafe redirects are blocked by default. Redirects to a different host are not followed; the target is reported so it can be fetched explicitly. With persist_snapshot, the fetched document is stored for later verbatim retrieval with web_content; the result meta carries the fetch outcome taxonomy (content, suspected_challenge, empty_extraction,).",
       "parameters": {
         "type": "object",
         "properties": {
@@ -1450,6 +1457,11 @@
                 "boolean"
               ]
             }
+          },
+          "persist_snapshot": {
+            "type": "boolean",
+            "description": "Store the fetched document as a durable snapshot for later web_content retrieval (never refetches)",
+            "default": false
           }
         },
         "required": [
@@ -1462,7 +1474,7 @@
     "type": "function",
     "function": {
       "name": "web_search",
-      "description": "Search the public web with the configured Brave or Exa provider. Requires BRAVE_API_KEY or EXA_API_KEY. When several providers are configured (JINN_WEB_SEARCH_PROVIDER as an ordered comma-separated list), the next provider is tried on error or zero results and each fallback reason is reported.",
+      "description": "Search the public web with the configured Brave, Exa, Tavily, or SearXNG provider. Requires BRAVE_API_KEY, EXA_API_KEY, or TAVILY_API_KEY (SearXNG is keyless when self-hosted). When several providers are configured (JINN_WEB_SEARCH_PROVIDER as an ordered comma-separated list), the next provider is tried on error or zero results and each fallback reason and routing category is reported. Pass queries for a bounded batch (max 5) instead of query, providers for an explicit ordered provider subset, workflow extractive_summary for a deterministic cited digest, and persist_snapshot to store results for web_content.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -1508,10 +1520,141 @@
             "maximum": 10,
             "default": 3,
             "description": "Requested number of highlight sentences"
+          },
+          "queries": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 5,
+            "description": "Batched queries (max 5); mutually exclusive with query. Each query returns an independent outcome"
+          },
+          "providers": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "brave",
+                "exa",
+                "tavily",
+                "searxng"
+              ]
+            },
+            "description": "Explicit ordered subset of the configured provider chain"
+          },
+          "workflow": {
+            "type": "string",
+            "enum": [
+              "results",
+              "extractive_summary"
+            ],
+            "description": "results (default) returns raw results; extractive_summary adds a deterministic cited digest",
+            "default": "results"
+          },
+          "persist_snapshot": {
+            "type": "boolean",
+            "description": "Store the search results as a durable snapshot for later web_content retrieval (never refetches)",
+            "default": false
           }
         },
         "required": [
           "query"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "web_content",
+      "description": "Retrieve a durable snapshot (search results or fetched document) verbatim without refetching. Snapshots are created with persist_snapshot on web_search or web_fetch; unknown, expired, and malformed ids produce distinct errors.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "snapshot_id": {
+            "type": "string",
+            "description": "Snapshot id from a previous persist_snapshot result"
+          },
+          "item": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "For search snapshots: return only the result at this zero-based index"
+          },
+          "find_text": {
+            "type": "string",
+            "description": "Case-insensitive substring filter over stored results or document lines"
+          },
+          "start_line": {
+            "type": "integer",
+            "minimum": 0,
+            "default": 0,
+            "description": "Zero-based line offset within a document snapshot"
+          },
+          "start_line_byte": {
+            "type": "integer",
+            "minimum": 0,
+            "default": 0,
+            "description": "UTF-8 byte offset within start_line"
+          },
+          "max_bytes": {
+            "type": "integer",
+            "minimum": 0,
+            "default": 0,
+            "description": "Maximum projected UTF-8 bytes; zero is unlimited"
+          },
+          "max_lines": {
+            "type": "integer",
+            "minimum": 0,
+            "default": 0,
+            "description": "Maximum projected lines; zero is unlimited"
+          }
+        },
+        "required": [
+          "snapshot_id"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "source_check",
+      "description": "Check lexical term evidence across up to 5 explicit URLs or document snapshots. Returns reproducible excerpts with line numbers and exact_match/normalized_match/not_found per term; partial retrieval failures are recorded per source. This tool does not make semantic true/false verdicts about a claim.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "claim": {
+            "type": "string",
+            "description": "Optional label for the caller's review; not verified by this tool"
+          },
+          "urls": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 5,
+            "description": "URLs to fetch and check (max 5 total sources)"
+          },
+          "snapshot_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 5,
+            "description": "Document snapshot ids to check (max 5 total sources)"
+          },
+          "terms": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "maxItems": 8,
+            "description": "Terms to check verbatim (max 8)"
+          }
+        },
+        "required": [
+          "terms"
         ]
       }
     }

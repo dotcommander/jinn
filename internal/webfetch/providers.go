@@ -40,6 +40,16 @@ var searchProviderRegistry = map[string]providerDescriptor{
 			return exaProvider{client: client, endpoint: endpoint, apiKey: apiKey}
 		},
 	},
+	providerTavily: {
+		name:        providerTavily,
+		endpointEnv: "TAVILY_SEARCH_ENDPOINT",
+		keyEnv:      "TAVILY_API_KEY",
+		defaultEP:   DefaultTavilyEndpoint,
+		requiresKey: true,
+		build: func(client *Client, endpoint, apiKey string) searchProvider {
+			return tavilyProvider{client: client, endpoint: endpoint, apiKey: apiKey}
+		},
+	},
 	providerSearXNG: {
 		name:        providerSearXNG,
 		endpointEnv: "SEARXNG_URL",
@@ -78,6 +88,8 @@ func apiKeyFor(cfg Config, name string) string {
 		return cfg.BraveAPIKey
 	case providerExa:
 		return cfg.ExaAPIKey
+	case providerTavily:
+		return cfg.TavilyAPIKey
 	case providerSearXNG:
 		return cfg.SearXNGAPIKey
 	default:
@@ -91,6 +103,8 @@ func endpointFor(cfg Config, name string) string {
 		return cfg.SearchEndpoint
 	case providerExa:
 		return cfg.ExaSearchEndpoint
+	case providerTavily:
+		return cfg.TavilySearchEndpoint
 	case providerSearXNG:
 		return cfg.SearXNGSearchEndpoint
 	default:

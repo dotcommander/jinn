@@ -27,6 +27,10 @@ type Service struct {
 	searchTimeout time.Duration
 	searchConfig  error
 	cache         *urlCache
+	// snapshots is the durable opt-in result store (slice 1); nil when no
+	// snapshot directory could be derived, in which case persistence
+	// reports "unavailable" without failing retrieval.
+	snapshots     *snapshotStore
 	renderConfig  rendererConfig
 	renderMu      sync.Mutex
 	renderFactory func(rendererConfig) (pageRenderer, error)
@@ -86,7 +90,7 @@ func NewService(cfg Config) *Service {
 		providerNames = []string{providerBrave}
 	}
 	for _, name := range providerNames {
-		if name != providerBrave && name != providerExa && name != providerSearXNG {
+		if _, ok := searchProviderRegistry[name]; !ok {
 			searchConfig = unsupportedSearchProviderError(name)
 			break
 		}
@@ -120,6 +124,7 @@ func NewService(cfg Config) *Service {
 		searchTimeout: timeout,
 		searchConfig:  searchConfig,
 		cache:         newURLCache(cfg.URLCacheTTL, cfg.URLCacheDir, maxBodyBytes),
+		snapshots:     newSnapshotStore(resolveSnapshotDir(cfg), cfg.SnapshotTTL),
 		renderFactory: newChromedpRenderer,
 		renderConfig: rendererConfig{
 			Timeout:              renderTimeout,
@@ -135,9 +140,17 @@ func NewService(cfg Config) *Service {
 }
 
 // Fetch retrieves and normalizes one URL according to the requested reader and render policy.
-//
-//nolint:gocognit,gocyclo,revive // branchy by design; splitting would scatter one sequential algorithm
+// Successful documents carry the standardized Outcome taxonomy (slice 5).
 func (s *Service) Fetch(ctx context.Context, req FetchRequest) (Document, error) {
+	doc, err := s.fetch(ctx, req)
+	if err == nil {
+		doc.Outcome = OutcomeForDocument(doc)
+	}
+	return doc, err
+}
+
+//nolint:gocognit,gocyclo,revive // branchy by design; splitting would scatter one sequential algorithm
+func (s *Service) fetch(ctx context.Context, req FetchRequest) (Document, error) {
 	if s == nil {
 		return Document{}, newCodedError(errors.New("webfetch service is nil"), ErrorCodeInvalidArgument, "initialize the webfetch service before calling Fetch")
 	}

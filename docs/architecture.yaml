@@ -69,6 +69,8 @@ phases:
             - { condition: "run_plan", label: "runPlan", subtitle: "condition-gated plan tree · mutation authorization stays invocation-specific", wide: true }
             - { condition: "web_fetch", label: "webService", subtitle: "lazy public-network service · URL/redirect guard · cache/render/providers", wide: true }
             - { condition: "web_search", label: "webService", subtitle: "lazy public-network service · URL/redirect guard · cache/render/providers", wide: true }
+            - { condition: "web_content", label: "webService", subtitle: "durable snapshot retrieval · never refetches", wide: true }
+            - { condition: "source_check", label: "webService", subtitle: "lexical term evidence · explicit sources only", wide: true }
             - { condition: "read_file", label: "readFile", subtitle: "50 MB guard · windowed lines · exact continuation" }
             - { condition: "multi_read", label: "multiRead", subtitle: "batch ≤20 files · partial success · continuations", wide: true }
             - { condition: "write_file", label: "writeFile", subtitle: "stale check → atomic write → rename" }

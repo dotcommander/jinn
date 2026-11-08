@@ -153,8 +153,8 @@ host supports elicitation, without widening execution authority. See the
 and [JCode configuration](docs/harness-integrations.md#jcode-mcp-configuration).
 
 `--mcp-profile=network` keeps this compact routed surface while allowing only
-local read-only tools plus `web_fetch` and `web_search`. Network calls leave the
-machine and may consume provider quota; `jinn_call` remains read-only,
+local read-only tools plus `web_fetch`, `web_search`, `web_content`, and `source_check`. Network calls (`web_fetch`, `web_search`, and URL-based `source_check`) leave the
+machine and may consume provider quota; `web_content` reads local snapshots only; `jinn_call` remains read-only,
 non-destructive, and open-world.
 
 ```bash
@@ -266,7 +266,9 @@ Security is not an opt-in feature; it is the core of the engine.
 
 ## Public web tools
 
-`web_fetch` and `web_search` are opt-in network tools in the normal one-shot schema. Fetch can project Markdown, headings, or links and paginate the projection with zero-based `start_line`, `max_bytes`, and `max_lines`; text carries the selected content while snake-case metadata reports document fields, counts, truncation, and `next_start_line`. Search returns compact JSON text plus `provider` and `count` metadata. Both block private targets and unsafe redirects by default. They are never executable from `run_plan`, even in a mutating node.
+`web_fetch` and `web_search` are opt-in network tools in the normal one-shot schema. Fetch can project Markdown, headings, or links and paginate the projection with zero-based `start_line`, `max_bytes`, and `max_lines`; text carries the selected content while snake-case metadata reports document fields, counts, truncation, `next_start_line`, and the fetch `outcome` (`content`, `suspected_challenge`, or `empty_extraction`). Search returns compact JSON text plus `provider` and `count` metadata; it accepts a bounded `queries` batch (max 5), an explicit ordered `providers` subset, and `workflow: "extractive_summary"` for a deterministic cited digest. Both block private targets and unsafe redirects by default. They are never executable from `run_plan`, even in a mutating node.
+
+Pass `persist_snapshot: true` to either tool to store the result durably (24h TTL, max 50 snapshots/64MiB); the result meta carries `snapshot` with its id and status. `web_content` retrieves a snapshot verbatim — search results (optionally one `item`, or `find_text` filtered) or document text (paginated, or `find_text` matched lines) — without refetching. `source_check` checks lexical `terms` across up to 5 explicit `urls` or document `snapshot_ids`, returning reproducible excerpts with line numbers and `exact_match`/`normalized_match`/`not_found` per term; it makes no semantic verdicts.
 
 ```bash
 jinn web fetch --reader=defuddle https://example.com/article
@@ -276,13 +278,13 @@ jinn web search --include-domain=go.dev "Go context cancellation"
 
 The fetch CLI supports human output and flat `--json` success shapes. Human output appends an explicit marker when `--max-bytes` or `--max-lines` truncates content; JSON includes the corresponding byte/line totals and truncation fields.
 
-The CLI uses `JINN_WEB_*` configuration only: `JINN_WEB_READER`, `JINN_WEB_SEARCH_PROVIDER`, `JINN_WEB_CACHE_TTL`, `JINN_WEB_CACHE_DIR`, `JINN_WEB_TIMEOUT`, `JINN_WEB_CHROME_PATH`, render limits, endpoint overrides, and `JINN_WEB_ALLOW_PRIVATE_NETWORKS`. Search credentials remain `JINA_API_KEY`, `BRAVE_API_KEY`, `EXA_API_KEY`, and `SEARXNG_API_KEY`. Reader cache files default to `$XDG_CACHE_HOME/jinn/web/urls`, falling back to `~/.cache/jinn/web/urls`; temporary cache writes use the `.jinn-web-cache-` prefix.
+The CLI uses `JINN_WEB_*` configuration only: `JINN_WEB_READER`, `JINN_WEB_SEARCH_PROVIDER`, `JINN_WEB_CACHE_TTL`, `JINN_WEB_CACHE_DIR`, `JINN_WEB_SNAPSHOT_DIR`, `JINN_WEB_TIMEOUT`, `JINN_WEB_CHROME_PATH`, render limits, endpoint overrides, and `JINN_WEB_ALLOW_PRIVATE_NETWORKS`. Search credentials remain `JINA_API_KEY`, `BRAVE_API_KEY`, `EXA_API_KEY`, `TAVILY_API_KEY`, and `SEARXNG_API_KEY`. Reader cache files default to `$XDG_CACHE_HOME/jinn/web/urls`, falling back to `~/.cache/jinn/web/urls`; temporary cache writes use the `.jinn-web-cache-` prefix. Snapshot files default to the sibling `snapshots` directory; `--persist-snapshot` on `jinn web fetch`/`search` reports the snapshot id on stderr.
 
-`web_search` backends: Brave and Exa (keyed), plus SearXNG for keyless self-hosted search. Set `JINN_WEB_SEARCH_PROVIDER=searxng` and point `JINN_WEB_SEARXNG_SEARCH_ENDPOINT` at your instance (default `http://localhost:8080/search`); the instance must have `json` enabled under `search.formats` in its `settings.yml`. No key is required; set `SEARXNG_API_KEY` only for reverse-proxied instances that demand a Bearer token.
+`web_search` backends: Brave, Exa, and Tavily (keyed), plus SearXNG for keyless self-hosted search. Set `JINN_WEB_SEARCH_PROVIDER=searxng` and point `JINN_WEB_SEARXNG_SEARCH_ENDPOINT` at your instance (default `http://localhost:8080/search`); the instance must have `json` enabled under `search.formats` in its `settings.yml`. No key is required; set `SEARXNG_API_KEY` only for reverse-proxied instances that demand a Bearer token. Set `JINN_WEB_SEARCH_PROVIDER=exa,brave,tavily` for an ordered fallback chain; each fallback reports its reason and routing category (`unsupported`, `transient`, `quota`, `network`, `invalid_response`, `empty`).
 
 `web_fetch` intercepts `github.com` repository URLs: roots and `/tree/<ref>/<path>` URLs return a capped file tree resolved against the URL's ref (multi-segment branch names are disambiguated) and path, authenticated with `GITHUB_TOKEN` when set. `/blob/` URLs are rewritten to `raw.githubusercontent.com` and fetched as raw file content; non-code URLs (issues, pull requests, wiki, …) fall through to the generic fetch.
 
-MCP stays non-executing by default: `jinn_route` discovers capabilities and `ask_user_question` uses form elicitation. `--mcp-profile=read-only` exposes local read-only execution only; `--mcp-profile=network` exposes the same compact tools but permits only local read-only tools plus `web_fetch` and `web_search`. In the network profile, local read-only tools default to compression while `web_fetch` and `web_search` default to uncompressed output; `compress` explicitly overrides either default.
+MCP stays non-executing by default: `jinn_route` discovers capabilities and `ask_user_question` uses form elicitation. `--mcp-profile=read-only` exposes local read-only execution only; `--mcp-profile=network` exposes the same compact tools but permits only local read-only tools plus `web_fetch`, `web_search`, `web_content`, and `source_check`. Stored web content stays unavailable in the read-only profile. In the network profile, local read-only tools default to compression while the web tools default to uncompressed output; `compress` explicitly overrides either default.
 
 1. **Rooted File Access:** File operations use a workspace `os.Root`; traversal attempts and special-file reads are blocked. Recursive tools never follow directory symlinks.
 2. **Sensitive Blocklist:** Direct access to `.git`, `.ssh`, `.aws`, `.env`, and `.gnupg` is always denied.

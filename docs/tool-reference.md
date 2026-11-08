@@ -1,6 +1,6 @@
 # Tool Reference
 
-jinn exposes 21 tools by default, or 22 when started with
+jinn exposes 23 tools by default, or 24 when started with
 `--shell-mode=sandboxed` or `--shell-mode=unsafe`. The protocol accepts exactly
 one JSON object of at most 16 MiB and rejects duplicate keys, trailing values,
 unknown fields, invalid types, and unknown tool arguments.
@@ -31,6 +31,7 @@ echo '{"tool":"web_fetch","args":{"url":"https://example.com","reader":"defuddle
 | `start_line_byte` | integer | `0` | UTF-8 byte offset within `start_line`. |
 | `max_bytes` | integer | `0` | Maximum projected UTF-8 bytes; zero is unlimited. |
 | `max_lines` | integer | `0` | Maximum projected lines; zero is unlimited. |
+| `persist_snapshot` | bool | `false` | Store the fetched document for later `web_content` retrieval; meta carries `snapshot` and `outcome`. |
 
 The text result is projected document content. Metadata uses snake case for document fields plus `format`, `truncated`, `truncated_by`, `total_bytes`, `output_bytes`, `total_lines`, `output_lines`, `max_bytes`, `max_lines`, `start_line`, `start_line_byte`, `next_start_line`, and `next_start_line_byte`. To continue a capped page, pass both next cursor fields as the corresponding start fields; zero for both next fields indicates EOF. Byte offsets refer to the selected projection and must be UTF-8 boundaries. Private/local addresses and redirect hops are denied unless `JINN_WEB_ALLOW_PRIVATE_NETWORKS=true` is intentionally set at process start.
 
@@ -49,8 +50,43 @@ echo '{"tool":"web_search","args":{"query":"Go release notes","max_results":5}}'
 | `start_published_date` | string | omitted | RFC3339 or YYYY-MM-DD lower bound. |
 | `include_highlights` | bool | `true` | Include provider highlights where supported. |
 | `highlight_sentences` | integer | `3` | Requested highlight sentence count, 1 through 10. |
+| `queries` | string array | omitted | Bounded batch (max 5); mutually exclusive with `query`. |
+| `providers` | string array | omitted | Explicit ordered subset of the configured chain. |
+| `workflow` | string | `results` | `results` or `extractive_summary` (deterministic cited digest). |
+| `persist_snapshot` | bool | `false` | Store results for later `web_content`; meta carries `snapshot`. |
 
-Search uses Brave by default (`BRAVE_API_KEY`) or Exa when `JINN_WEB_SEARCH_PROVIDER=exa` (`EXA_API_KEY`). `max_results` sizes one provider request; it is not multi-page provider pagination. Its text is compact JSON with `query` and `results`; metadata contains `provider` and `count`.
+Search uses Brave by default (`BRAVE_API_KEY`), Exa (`EXA_API_KEY`), Tavily (`TAVILY_API_KEY`), or keyless SearXNG; `JINN_WEB_SEARCH_PROVIDER` names an ordered fallback chain, and each fallback reports its reason and routing category (`unsupported`, `transient`, `quota`, `network`, `invalid_response`, `empty`). `max_results` sizes one provider request; it is not multi-page provider pagination. Its text is compact JSON with `query` and `results`; metadata contains `provider` and `count`.
+
+### web_content
+
+```bash
+echo '{"tool":"web_content","args":{"snapshot_id":"<id from persist_snapshot>"}}' | jinn
+```
+
+| Argument | Type | Default | Meaning |
+|---|---|---|---|
+| `snapshot_id` | string | required | Snapshot id from a previous `persist_snapshot` result. |
+| `item` | integer | omitted | Search snapshots only: return just the result at this index. |
+| `find_text` | string | omitted | Case-insensitive substring filter over results or document lines. |
+| `start_line` | integer | `0` | Document snapshots: zero-based line offset. |
+| `start_line_byte` | integer | `0` | Document snapshots: UTF-8 byte offset within `start_line`. |
+| `max_bytes` | integer | `0` | Maximum projected bytes; zero is unlimited. |
+| `max_lines` | integer | `0` | Maximum projected lines; zero is unlimited. |
+
+Snapshots are immutable and never refetch; unknown, expired, and malformed ids produce distinct `snapshot_not_found`, `snapshot_expired`, and `snapshot_invalid` errors. Default retention is 24h, max 50 snapshots/64MiB; `JINN_WEB_SNAPSHOT_DIR` overrides the store directory.
+
+### source_check
+
+```bash
+echo '{"tool":"source_check","args":{"urls":["https://example.com/docs"],"terms":["streaming","rate limit"]}}' | jinn
+```
+
+| Argument | Type | Default | Meaning |
+|---|---|---|---|
+| `claim` | string | omitted | Optional label for the caller's review; not verified. |
+| `urls` | string array | omitted | URLs to fetch and check (max 5 total sources). |
+| `snapshot_ids` | string array | omitted | Document snapshot ids (max 5 total sources). |
+| `terms` | string array | required | Verbatim terms to check (max 8). |
 
 ## Response Envelope
 
@@ -864,8 +900,8 @@ real endpoint check.
 
 `jinn --mcp-profile=network --mcp` keeps the compact `jinn_route` and
 `jinn_call` surface. `jinn_call` is read-only, non-destructive, and open-world:
-its `web_fetch` and `web_search` requests leave the machine and may consume
-provider quota. Web output defaults to uncompressed; local read-only output
+its `web_fetch`, `web_search`, and URL-based `source_check` requests leave the machine and may consume
+provider quota (`web_content` reads local snapshots only). Web output defaults to uncompressed; local read-only output
 keeps compression by default.
 
 ```bash

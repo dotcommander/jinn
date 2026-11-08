@@ -40,7 +40,7 @@ func TestListToolsRiskFilter(t *testing.T) {
 func TestListToolsNetworkFilter(t *testing.T) {
 	t.Parallel()
 	caps := listToolsCaps(t, map[string]any{"risk": "network"})
-	if len(caps.Tools) != 2 || caps.Tools[0] != webFetchTool || caps.Tools[1] != webSearchTool {
+	if len(caps.Tools) != 4 || caps.Tools[0] != webFetchTool || caps.Tools[1] != webSearchTool || caps.Tools[2] != webContentTool || caps.Tools[3] != sourceCheckTool {
 		t.Fatalf("network tools = %v", caps.Tools)
 	}
 }

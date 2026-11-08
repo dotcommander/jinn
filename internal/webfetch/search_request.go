@@ -16,9 +16,24 @@ const (
 // ParseSearchRequest validates the provider-neutral arguments used by the
 // machine protocol and applies its larger result-limit default.
 func ParseSearchRequest(args map[string]any) (SearchRequest, error) {
-	query, ok := args["query"].(string)
-	if !ok || strings.TrimSpace(query) == "" {
-		return SearchRequest{}, newCodedError(errors.New("web_search: 'query' is required"), ErrorCodeInvalidArgument, `valid shape: {"query":"search terms"}`)
+	query, _ := args["query"].(string)
+	queries, err := stringSliceSearchArg(args, "queries")
+	if err != nil {
+		return SearchRequest{}, err
+	}
+	if strings.TrimSpace(query) != "" && len(queries) > 0 {
+		return SearchRequest{}, newCodedError(errors.New("web_search: 'query' and 'queries' are mutually exclusive"), ErrorCodeInvalidArgument, "pass either a single query or a queries batch, not both")
+	}
+	if strings.TrimSpace(query) == "" && len(queries) == 0 {
+		return SearchRequest{}, newCodedError(errors.New("web_search: 'query' or 'queries' is required"), ErrorCodeInvalidArgument, `valid shape: {"query":"search terms"} or {"queries":["a","b"]}`)
+	}
+	providers, err := stringSliceSearchArg(args, "providers")
+	if err != nil {
+		return SearchRequest{}, err
+	}
+	workflow, err := stringSearchArg(args, "workflow", "")
+	if err != nil {
+		return SearchRequest{}, err
 	}
 	maxResults, err := intSearchArg(args, "max_results", defaultProtocolSearchLimit)
 	if err != nil {
@@ -50,6 +65,9 @@ func ParseSearchRequest(args map[string]any) (SearchRequest, error) {
 	}
 	return validateSearchRequest(SearchRequest{
 		Query:              query,
+		Queries:            queries,
+		Providers:          providers,
+		Workflow:           workflow,
 		Limit:              maxResults,
 		Category:           category,
 		IncludeDomains:     domains,

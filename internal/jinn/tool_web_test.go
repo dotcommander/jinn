@@ -129,11 +129,11 @@ func TestWebSearchSchemaMatchesHighlightSentenceLimit(t *testing.T) {
 func TestNetworkToolNamesAndReadOnlySurface(t *testing.T) {
 	t.Parallel()
 	got := NetworkToolNames()
-	if len(got) != 2 || got[0] != webFetchTool || got[1] != webSearchTool {
+	if len(got) != 4 || got[0] != webFetchTool || got[1] != webSearchTool || got[2] != webContentTool || got[3] != sourceCheckTool {
 		t.Fatalf("NetworkToolNames() = %v", got)
 	}
 	for _, name := range ReadOnlyToolNames() {
-		if name == webFetchTool || name == webSearchTool {
+		if name == webFetchTool || name == webSearchTool || name == webContentTool || name == sourceCheckTool {
 			t.Fatalf("read-only surface includes %q", name)
 		}
 	}

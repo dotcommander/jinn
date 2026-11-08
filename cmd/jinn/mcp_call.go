@@ -172,7 +172,7 @@ func mcpCallCompressionEnabled(tool string, explicit *bool) bool {
 	if explicit != nil {
 		return *explicit
 	}
-	return tool != "web_fetch" && tool != "web_search"
+	return tool != "web_fetch" && tool != "web_search" && tool != "web_content" && tool != "source_check"
 }
 
 func mergeMCPResultMeta(resultMeta, dispatchMeta map[string]any) map[string]any {

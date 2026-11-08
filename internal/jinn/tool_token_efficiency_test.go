@@ -443,8 +443,10 @@ func TestTokenEfficiency_ListTools_OutputSize(t *testing.T) {
 	}
 
 	tokens := estimateTokens(result.Text)
-	if tokens > 500 {
-		t.Errorf("list_tools output is %.0f tokens, expected < 500", tokens)
+	// Budget raised when web_content/source_check joined the four network
+	// tools; the list grows with each registered tool by design.
+	if tokens > 550 {
+		t.Errorf("list_tools output is %.0f tokens, expected < 550", tokens)
 	}
 }
 

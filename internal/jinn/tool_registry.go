@@ -45,7 +45,9 @@ var toolCatalog = [...]toolDescriptor{
 	{name: "diff_files", features: []string{"context_lines"}, routeRisk: toolRouteRiskReadOnly},
 	{name: "search_replace", features: []string{"regex", "capture_groups", "multi_file", "glob_patterns", "replace_all", "dry_run", "case_insensitive", "multiline"}, routeRisk: toolRouteRiskMutating},
 	{name: webFetchTool, features: []string{"url_safety", "reader", "render", "cache"}, routeRisk: toolRouteRiskNetwork},
-	{name: webSearchTool, features: []string{"brave", "exa", "domain_filters", "result_limit"}, routeRisk: toolRouteRiskNetwork},
+	{name: webSearchTool, features: []string{"brave", "exa", "tavily", "searxng", "domain_filters", "result_limit"}, routeRisk: toolRouteRiskNetwork},
+	{name: webContentTool, features: []string{"snapshots"}, routeRisk: toolRouteRiskNetwork},
+	{name: sourceCheckTool, features: []string{"lexical_evidence"}, routeRisk: toolRouteRiskNetwork},
 }
 
 // toolDescriptorByName is built once at package init; lookup is O(1).
